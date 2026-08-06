@@ -237,6 +237,7 @@ function renderProfileDetail(root) {
     <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap">
       <button class="btn primary" id="dLaunch">${p.running ? 'Reopen Gmail' : ICONS.play + ' Launch'}</button>
       <button class="btn" id="dScan">${ICONS.scan}<span>Scan</span></button>
+      ${p.running ? '<button class="btn" id="dTest">' + ICONS.send + ' Test send</button>' : ''}
       ${p.running ? '<button class="btn" id="dStop">' + ICONS.stop + ' Stop</button>' : ''}
       <button class="btn danger" id="dDel">${ICONS.trash}<span>Delete</span></button>
     </div>
@@ -246,6 +247,20 @@ function renderProfileDetail(root) {
     toast('Scanning Gmail…');
     try { await api.profiles.scan(p.id); await refreshProfiles(); toast('Scan complete', 'success'); }
     catch (e) { toast('Scan failed: ' + e.message, 'error'); }
+  });
+  const testBtn = card.querySelector('#dTest');
+  if (testBtn) testBtn.addEventListener('click', async () => {
+    const to = prompt('Send a test email to (recipient address):', p.email || '');
+    if (!to) return;
+    toast('Sending test email…');
+    try {
+      const res = await api.gmail.testSend(p.id, {
+        to,
+        subject: 'Gmail Manager test',
+        body: 'This is a test message sent via Gmail Manager (CDP compose).',
+      });
+      toast(res && res.ok ? 'Test email sent' : 'Send not confirmed - check the logs', res && res.ok ? 'success' : 'error');
+    } catch (e) { toast('Test send failed: ' + e.message, 'error'); }
   });
   const stopBtn = card.querySelector('#dStop');
   if (stopBtn) stopBtn.addEventListener('click', async () => { await api.profiles.stop(p.id); await refreshProfiles(); });

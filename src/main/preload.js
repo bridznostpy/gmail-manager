@@ -36,6 +36,9 @@ contextBridge.exposeInMainWorld('api', {
   telegram: {
     test: (botToken) => ipcRenderer.invoke('telegram:test', { botToken }),
   },
+  gmail: {
+    testSend: (id, payload) => ipcRenderer.invoke('gmail:testSend', { id, ...payload }),
+  },
   cdp: {
     detectChrome: () => ipcRenderer.invoke('cdp:detectChrome'),
   },

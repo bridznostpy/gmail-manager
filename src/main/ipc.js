@@ -68,6 +68,13 @@ function register(ctx) {
   ipcMain.handle('run:status', () => sender.status());
   ipcMain.handle('logs:recent', (_e, n) => logger.recent(n || 200));
 
+  // ── gmail (manual test send against a live logged-in profile) ─────
+  ipcMain.handle('gmail:testSend', async (_e, { id, to, subject, body }) => {
+    const p = profileStore.get(id);
+    if (!p) throw new Error('Profile not found');
+    return chrome.gmailCompose(id, { to, subject, body });
+  });
+
   // ── integrations ──────────────────────────────────────────────────
   ipcMain.handle('telegram:test', (_e, { botToken }) => telegram.test(botToken));
   ipcMain.handle('cdp:detectChrome', () => resolveChrome(store.get('cdp').chromePath) || '');

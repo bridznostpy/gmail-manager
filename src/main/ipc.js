@@ -1,0 +1,78 @@
+'use strict';
+/**
+ * All IPC handlers. The renderer only ever talks to main through these named
+ * channels (see preload.js). Keeps the privileged surface small and explicit.
+ */
+const { ipcMain } = require('electron');
+const logger = require('./logger');
+const telegram = require('./telegram/telegram');
+const { resolveChrome } = require('./cdp/chromeManager');
+
+function register(ctx) {
+  const { store, profileStore, chrome, parser, sender, mainWindow } = ctx;
+
+  const send = (channel, payload) => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload);
+  };
+
+  // Stream log entries to the renderer.
+  logger.onLog((entry) => send('log:entry', entry));
+
+  // ── settings ──────────────────────────────────────────────────────
+  ipcMain.handle('settings:getAll', () => store.all());
+  ipcMain.handle('settings:setSection', (_e, { key, value }) => store.set(key, value));
+  ipcMain.handle('settings:loadTexts', (_e, json) => {
+    store.set('texts', json);
+    logger.success('system', 'Broadcast texts loaded');
+    return store.get('texts');
+  });
+
+  // ── profiles ──────────────────────────────────────────────────────
+  ipcMain.handle('profiles:list', () => profileStore.list());
+  ipcMain.handle('profiles:stats', () => {
+    const s = profileStore.stats();
+    s.portsOpen = chrome.openPortsCount() || s.portsOpen;
+    return s;
+  });
+  ipcMain.handle('profiles:create', async (_e, { label }) => {
+    const p = profileStore.create(label);
+    logger.success('system', `Created profile "${p.label}"`);
+    return p;
+  });
+  ipcMain.handle('profiles:remove', async (_e, { id }) => {
+    await chrome.stop(id).catch(() => {});
+    return profileStore.remove(id);
+  });
+  ipcMain.handle('profiles:launch', async (_e, { id, openGmail }) => {
+    const p = profileStore.get(id);
+    if (!p) throw new Error('Profile not found');
+    const url = openGmail ? 'https://mail.google.com/mail/' : undefined;
+    const inst = await chrome.launch(p, { url });
+    profileStore.update(id, { running: true, port: inst.port });
+    return profileStore.get(id);
+  });
+  ipcMain.handle('profiles:stop', async (_e, { id }) => {
+    await chrome.stop(id);
+    profileStore.update(id, { running: false, port: null });
+    return profileStore.get(id);
+  });
+  ipcMain.handle('profiles:scan', async (_e, { id }) => {
+    const res = await chrome.scanGmail(id);
+    profileStore.update(id, { gmailStatus: res.status, email: res.email || profileStore.get(id).email });
+    return profileStore.get(id);
+  });
+
+  // ── run control ───────────────────────────────────────────────────
+  ipcMain.handle('run:start', () => sender.start());
+  ipcMain.handle('run:stop', () => sender.stop());
+  ipcMain.handle('run:status', () => sender.status());
+  ipcMain.handle('logs:recent', (_e, n) => logger.recent(n || 200));
+
+  // ── integrations ──────────────────────────────────────────────────
+  ipcMain.handle('telegram:test', (_e, { botToken }) => telegram.test(botToken));
+  ipcMain.handle('cdp:detectChrome', () => resolveChrome(store.get('cdp').chromePath) || '');
+
+  logger.info('system', 'IPC handlers registered');
+}
+
+module.exports = { register };

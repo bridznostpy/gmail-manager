@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self';" />
+  <title>Gmail Manager</title>
+  <link rel="stylesheet" href="styles/theme.css" />
+  <link rel="stylesheet" href="styles/layout.css" />
+  <link rel="stylesheet" href="styles/components.css" />
+</head>
+<body>
+  <div id="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="logo">G</div>
+        <div>
+          <div class="name">Gmail Manager</div>
+          <div class="ver">v0.1.0</div>
+        </div>
+      </div>
+      <nav id="nav"></nav>
+      <div class="sidebar-footer">
+        <div class="theme-toggle" id="themeToggle">
+          <span class="lbl">Theme</span>
+          <span class="icon" id="themeIcon"></span>
+        </div>
+      </div>
+    </aside>
+    <main class="main" id="main"></main>
+  </div>
+  <div class="toast" id="toast"></div>
+
+  <script src="icons.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

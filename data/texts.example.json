@@ -1,0 +1,16 @@
+{
+  "_comment": "Broadcast texts loaded by the user. Replace with the real structure from the attached example when available. `subjects` and `bodies` are picked at random (or rotated) per message. `{link}` is replaced by the generated order link; `{name}` by the recipient display name if known.",
+  "version": 1,
+  "subjects": [
+    "Your order is ready",
+    "Quick question about your listing"
+  ],
+  "bodies": [
+    "Hi {name},\n\nI'm interested in your item. You can confirm here: {link}\n\nThanks!",
+    "Hello,\n\nIs this still available? Details: {link}"
+  ],
+  "autoReply": {
+    "enabled": true,
+    "text": "Thanks for the reply! Here is the secure link to continue: {link}"
+  }
+}

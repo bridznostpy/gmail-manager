@@ -1,0 +1,21 @@
+# deps
+node_modules/
+
+# electron build output
+dist/
+out/
+
+# runtime data (settings, profiles, chrome user-data dirs)
+userdata/
+chrome-profiles/
+*.log
+
+# secrets — never commit real tokens/keys
+.env
+secrets.json
+
+# os / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

@@ -262,6 +262,158 @@ class ChromeManager {
     await inst.pageCdp.send('Page.navigate', { url });
   }
 
+  // ── Gmail automation over CDP ───────────────────────────────────────
+  // TODO(gmail-dom): all selectors below are best-effort and must be validated
+  // against a live logged-in Gmail. We only drive stable, non-reversed Gmail
+  // mechanisms (compose-in-URL + Ctrl+Enter, DOM read of unread rows). No Gmail
+  // API, no credentials — the user logs in by hand (Rules 4/6).
+
+  /** Attach a fresh CDPSession to a specific page target by id. */
+  async _attachTarget(port, targetId, tries = 40) {
+    for (let i = 0; i < tries; i++) {
+      try {
+        const targets = await httpJson(`http://127.0.0.1:${port}/json`);
+        const t = targets.find((x) => x.id === targetId && x.webSocketDebuggerUrl);
+        if (t) {
+          const cdp = new CDPSession(t.webSocketDebuggerUrl);
+          await cdp.connect();
+          return cdp;
+        }
+      } catch (_e) { /* not ready yet */ }
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    throw new Error(`Could not attach to target ${targetId}`);
+  }
+
+  /** Evaluate an expression in the page and return its value by value. */
+  async _eval(cdp, expression) {
+    const res = await cdp.send('Runtime.evaluate', {
+      expression, returnByValue: true, awaitPromise: true,
+    });
+    if (res && res.exceptionDetails) {
+      throw new Error(res.exceptionDetails.text || 'page evaluation failed');
+    }
+    return res && res.result ? res.result.value : undefined;
+  }
+
+  /** Poll a boolean predicate expression in the page until true (or give up). */
+  async _waitFor(cdp, predicateExpr, tries = 40, delayMs = 250) {
+    for (let i = 0; i < tries; i++) {
+      try {
+        if (await this._eval(cdp, predicateExpr)) return true;
+      } catch (_e) { /* keep polling */ }
+      await new Promise((r) => setTimeout(r, delayMs));
+    }
+    return false;
+  }
+
+  /** Dispatch Ctrl+Enter — Gmail's send shortcut (works regardless of the
+   *  keyboard-shortcuts setting). Focuses the body first. */
+  async _sendCtrlEnter(cdp) {
+    await this._eval(cdp, `(function(){var t=document.querySelector('div[role=textbox][aria-label*=Body], div[role=textbox]'); if(t)t.focus(); return true;})()`);
+    const key = { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13, modifiers: 2 };
+    await cdp.send('Input.dispatchKeyEvent', Object.assign({ type: 'rawKeyDown' }, key));
+    await cdp.send('Input.dispatchKeyEvent', Object.assign({ type: 'keyUp' }, key));
+  }
+
+  /**
+   * Send a first-message from a running profile. Opens Gmail's compose window
+   * in a SEPARATE target (so the inbox tab used for reply-scanning stays put),
+   * clicks Send (fallback Ctrl+Enter), waits for confirmation, then closes it.
+   */
+  async gmailCompose(profileId, { to, subject, body } = {}) {
+    const inst = this.instances.get(profileId);
+    if (!inst || !inst.cdp) throw new Error('Profile is not running');
+    if (!to) throw new Error('No recipient email');
+    const q = (s) => encodeURIComponent(String(s == null ? '' : s));
+    const url = 'https://mail.google.com/mail/u/0/?view=cm&fs=1&tf=1'
+      + `&to=${q(to)}&su=${q(subject)}&body=${q(body)}`;
+
+    const { targetId } = await inst.cdp.send('Target.createTarget', { url });
+    let pageCdp = null;
+    try {
+      pageCdp = await this._attachTarget(inst.port, targetId);
+      await pageCdp.send('Page.enable');
+      await pageCdp.send('Runtime.enable');
+
+      const ready = await this._waitFor(pageCdp,
+        `!!document.querySelector('div[role=button][aria-label^=Send], div[role=button][data-tooltip^=Send]')`, 40);
+      if (!ready) throw new Error('compose window did not render (account not logged in?)');
+
+      const clicked = await this._eval(pageCdp,
+        `(function(){var b=document.querySelector('div[role=button][aria-label^=Send], div[role=button][data-tooltip^=Send]'); if(b){b.click(); return true;} return false;})()`);
+      if (!clicked) await this._sendCtrlEnter(pageCdp);
+
+      const sent = await this._waitFor(pageCdp,
+        `(function(){ if(!document.querySelector('div[role=button][aria-label^=Send]')) return true; var e=document.querySelectorAll('span'); for(var i=0;i<e.length;i++){ if(/message sent|your message has been sent/i.test(e[i].textContent||'')) return true; } return false; })()`, 24);
+      if (sent) logger.success('gmail', `Message sent to ${to}`);
+      else logger.warn('gmail', `Send to ${to} not confirmed (compose left open)`);
+      return { ok: !!sent };
+    } finally {
+      try { pageCdp && pageCdp.close(); } catch (_e) {}
+      try { await inst.cdp.send('Target.closeTarget', { targetId }); } catch (_e) {}
+    }
+  }
+
+  /**
+   * Read unread conversations from the profile's inbox tab. Returns a shallow
+   * list of { threadId, from, subject } for the auto-responder to act on.
+   */
+  async gmailListUnread(profileId, max = 25) {
+    const inst = this.instances.get(profileId);
+    if (!inst || !inst.pageCdp) throw new Error('Profile is not running');
+    const cdp = inst.pageCdp;
+    const href = await this._eval(cdp, 'location.href');
+    if (!/mail\.google\.com/.test(String(href || ''))) {
+      await cdp.send('Page.navigate', { url: 'https://mail.google.com/mail/u/0/#inbox' });
+      await this._waitFor(cdp, `/mail\\.google\\.com/.test(location.href)`, 24);
+    }
+    const expr = `(function(){try{`
+      + `var rows=document.querySelectorAll('tr.zA.zE');var out=[];`
+      + `for(var i=0;i<rows.length && out.length<${max};i++){var r=rows[i];`
+      + `var id=r.getAttribute('data-legacy-thread-id')||r.getAttribute('id')||'';`
+      + `var f=r.querySelector('span[email]');var from=f?(f.getAttribute('email')||f.textContent):'';`
+      + `var s=r.querySelector('.bog, .y6 span');var subj=s?s.textContent:'';`
+      + `out.push({threadId:id,from:from,subject:subj});}`
+      + `return JSON.stringify(out);}catch(e){return '[]';}})()`;
+    let list = [];
+    try { list = JSON.parse((await this._eval(cdp, expr)) || '[]'); } catch (_e) {}
+    return list.filter((x) => x && x.threadId);
+  }
+
+  /**
+   * Open a thread on the inbox tab and send `text` as a reply. Used by the
+   * auto-responder. Best-effort DOM automation — see TODO(gmail-dom) above.
+   */
+  async gmailReply(profileId, thread, text) {
+    const inst = this.instances.get(profileId);
+    if (!inst || !inst.pageCdp) throw new Error('Profile is not running');
+    const cdp = inst.pageCdp;
+    const tid = typeof thread === 'string' ? thread : (thread && thread.threadId);
+    if (!tid) throw new Error('No thread id');
+
+    await cdp.send('Page.navigate', { url: 'https://mail.google.com/mail/u/0/#inbox/' + encodeURIComponent(tid) });
+    const opened = await this._waitFor(cdp, `!!document.querySelector('div.adn, div[role=listitem]')`, 40);
+    if (!opened) throw new Error('thread did not open');
+
+    await this._eval(cdp,
+      `(function(){var b=document.querySelector('div[role=button][aria-label^=Reply], span.ams.bkH, div.amn'); if(b)b.click(); return true;})()`);
+    const boxReady = await this._waitFor(cdp,
+      `!!document.querySelector('div[role=textbox][aria-label*=Body], div[role=textbox]')`, 40);
+    if (!boxReady) throw new Error('reply box did not open');
+
+    const put = JSON.stringify(String(text == null ? '' : text));
+    await this._eval(cdp,
+      `(function(){var t=document.querySelector('div[role=textbox][aria-label*=Body], div[role=textbox]'); if(!t)return false; t.focus(); try{document.execCommand('insertText',false,${put});}catch(e){t.textContent=${put};} t.dispatchEvent(new InputEvent('input',{bubbles:true})); return true;})()`);
+    await this._sendCtrlEnter(cdp);
+
+    const sent = await this._waitFor(cdp,
+      `!document.querySelector('div[role=textbox][aria-label*=Body]')`, 24);
+    if (sent) logger.success('gmail', `Auto-reply sent in thread ${tid}`);
+    else logger.warn('gmail', `Auto-reply in thread ${tid} not confirmed`);
+    return { ok: !!sent };
+  }
+
   async stop(profileId) {
     const inst = this.instances.get(profileId);
     if (!inst) return;

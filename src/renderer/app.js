@@ -50,6 +50,34 @@ async function saveSection(key, patch) {
 
 const debounce = (fn, ms = 400) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
 
+// Electron does not support window.prompt() (it throws), so use an in-app modal
+// text input. Resolves to the entered string, or null if cancelled.
+function askText(title, opts = {}) {
+  return new Promise((resolve) => {
+    const overlay = h(`<div class="modal-overlay">
+      <div class="modal card">
+        <h3>${esc(title)}</h3>
+        <div class="field"><input type="text" id="askInput" value="${esc(opts.value || '')}" placeholder="${esc(opts.placeholder || '')}"/></div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px">
+          <button class="btn" id="askCancel">Cancel</button>
+          <button class="btn primary" id="askOk">OK</button>
+        </div>
+      </div></div>`);
+    document.body.appendChild(overlay);
+    const input = overlay.querySelector('#askInput');
+    input.focus();
+    input.select();
+    const done = (val) => { overlay.remove(); resolve(val); };
+    overlay.querySelector('#askOk').addEventListener('click', () => done(input.value));
+    overlay.querySelector('#askCancel').addEventListener('click', () => done(null));
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') done(input.value);
+      else if (e.key === 'Escape') done(null);
+    });
+    overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) done(null); });
+  });
+}
+
 // ── theme ──────────────────────────────────────────────────────────
 function applyTheme(theme) {
   document.documentElement.setAttribute('data-theme', theme);
@@ -181,7 +209,7 @@ VIEWS.profiles = () => {
   </div>`);
 
   wrap.querySelector('#newProfile').addEventListener('click', async () => {
-    const label = prompt('Profile name:', 'Profile ' + (state.profiles.length + 1));
+    const label = await askText('New profile name', { value: 'Profile ' + (state.profiles.length + 1) });
     if (label === null) return;
     const p = await api.profiles.create(label);
     toast('Profile created — launch it to open Gmail for login', 'success');
@@ -256,7 +284,7 @@ function renderProfileDetail(root) {
   });
   const testBtn = card.querySelector('#dTest');
   if (testBtn) testBtn.addEventListener('click', async () => {
-    const to = prompt('Send a test email to (recipient address):', p.email || '');
+    const to = await askText('Send a test email to', { value: p.email || '', placeholder: 'recipient@example.com' });
     if (!to) return;
     toast('Sending test email…');
     try {

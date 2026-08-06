@@ -1,6 +1,12 @@
 'use strict';
 /* Renderer app: navigation + all module views. Vanilla JS, no framework.
-   Talks to main only through window.api (see preload.js). */
+   Talks to main only through window.api (see preload.js).
+
+   Wrapped in an IIFE: `window.api` is exposed by contextBridge as a
+   non-configurable global property, so a top-level `const api` would throw
+   "Identifier 'api' has already been declared". Function scope avoids that. */
+
+(() => {
 
 const api = window.api;
 const ICONS = window.ICONS;
@@ -478,3 +484,5 @@ async function boot() {
 }
 
 boot();
+
+})();

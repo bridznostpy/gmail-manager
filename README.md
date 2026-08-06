@@ -73,19 +73,22 @@ data/texts.example.json       broadcast-texts template
 5. When every account hits its limit, the user is notified via Telegram and the
    system stays in auto-reply-only mode until stopped.
 
-## What still needs the attached docs
+## External API clients (wired from the provided docs)
 
-These arrive from documentation referenced in the brief but not yet provided.
-Each is isolated to one file with a `CONFIG` block and `TODO(docs)` markers:
+Each client keeps its base URL, endpoints and auth in a `CONFIG` block (Rules 4):
 
-| Integration | File | Needs |
+| Integration | File | Base / shape |
 |---|---|---|
-| XProject Parser API | `src/main/parser/apis/xproject.js` | endpoints, auth, response schema |
-| VVS Parser API | `src/main/parser/apis/vvs.js` | endpoints, auth, response schema |
-| Haron Rent API | `src/main/link/haronRent.js` | link/listing/profile/domain endpoints |
-| Broadcast texts JSON | `data/texts.example.json` | confirm the real structure |
+| XProject Parser API | `src/main/parser/apis/xproject.js` | `https://api.xproject.icu`, header `X-API-Key`; task-based (start -> cursor-paged poll) |
+| VVS Parser API | `src/main/parser/apis/vvs.js` | `http://vvsproject.xyz`, header `api-key`; one-shot `GET /ads/{platform}` |
+| Haron Rent API | `src/main/link/haronRent.js` | `https://haronrent.xyz/api/v1`, `Bearer` token; `POST /createAd` (link mode = serviceCode) |
 
-Gmail send and auto-reply over CDP are now implemented in
+The parser's platform chips (USA / Poshmark) map onto each API's platform +
+country filter via a `platformMap` in `CONFIG`. Link generation fails soft: a
+missing key/serviceCode or API error yields a placeholder link so the pipeline
+keeps running.
+
+Gmail send and auto-reply over CDP are implemented in
 `src/main/cdp/chromeManager.js` (`gmailCompose` / `gmailListUnread` /
 `gmailReply`) and wired into `senderEngine.js`. They drive only stable Gmail
 mechanisms (compose-in-URL + Ctrl+Enter, DOM read of unread rows) and are marked

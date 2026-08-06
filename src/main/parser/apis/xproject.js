@@ -1,53 +1,123 @@
 'use strict';
 /**
  * XProject Parser API client.
+ * Docs: https://api.xproject.icu/docs (OpenAPI at /openapi.json).
  *
- * TODO(docs): endpoints, auth header shape and response schema come from the
- * attached "XProject Parser API documentation" (not yet provided). Everything
- * external lives in CONFIG below so wiring the real contract is a one-place
- * change. Until then `fetchBatch` returns [] and logs a clear warning instead
- * of inventing fields.
+ * Task-based: you start a parse task for one platform + a set of filters, then
+ * page the results with a row_id cursor. This client keeps a small per-key task
+ * registry so the engine's repeated fetchBatch() calls page through one running
+ * task instead of starting a new one each time. Everything external lives in
+ * CONFIG (Rules 4).
  */
 const logger = require('../../logger');
 
 const CONFIG = {
-  baseUrl: 'https://api.xproject.example', // TODO(docs)
+  baseUrl: 'https://api.xproject.icu',
   endpoints: {
-    // batch: '/v1/leads?platform={platform}&limit={limit}',  // TODO(docs)
+    start: '/api/v1/parser/start',
+    page: '/api/v1/parser/{task_id}', // ?cursor=<row_id>
+    stop: '/api/v1/parser/{task_id}/stop',
+    schema: '/api/v1/parser/schema',
   },
-  authHeader: 'Authorization', // TODO(docs): 'Authorization' | 'X-Api-Key' | ...
-  authPrefix: 'Bearer ', // TODO(docs)
+  authHeader: 'X-API-Key',
+  authPrefix: '',
+  defaultPlatform: 'poshmark',
+  // App platform chips -> real API platform / country filter.
+  platformMap: {
+    usa: { country: 'us' },
+    poshmark: { platform: 'poshmark' },
+  },
 };
+
+// "apiKey|platform|country" -> { taskId, cursor } for the process lifetime.
+const _tasks = new Map();
+
+function _headers(apiKey) {
+  return { [CONFIG.authHeader]: CONFIG.authPrefix + apiKey, 'Content-Type': 'application/json' };
+}
+
+/** Map the app's platform chips onto one API platform + filter set. */
+function _resolve(platforms) {
+  let platform = CONFIG.defaultPlatform;
+  const filters = {};
+  for (const p of platforms || []) {
+    const m = CONFIG.platformMap[p];
+    if (!m) continue;
+    if (m.platform) platform = m.platform;
+    if (m.country) filters.country = m.country;
+  }
+  return { platform, filters };
+}
+
+async function _startTask(apiKey, platform, filters) {
+  const res = await fetch(CONFIG.baseUrl + CONFIG.endpoints.start, {
+    method: 'POST', headers: _headers(apiKey),
+    body: JSON.stringify({ platform, filters }),
+  });
+  if (res.status === 409) {
+    logger.warn('parser', `XProject: task for ${platform} already active (409) - stop it on the panel or wait; it cannot be resumed without its id`);
+    return null;
+  }
+  if (!res.ok) {
+    logger.warn('parser', `XProject: start failed (HTTP ${res.status})`);
+    return null;
+  }
+  const data = await res.json();
+  return data && data.task_id != null ? data.task_id : null;
+}
 
 async function fetchBatch({ apiKey, platforms, limit }) {
   if (!apiKey) {
     logger.warn('parser', 'XProject: no API key set');
     return [];
   }
-  if (!CONFIG.endpoints.batch) {
-    logger.warn('parser', 'XProject: endpoint not wired yet (waiting on API docs) — returning empty batch');
+  const { platform, filters } = _resolve(platforms);
+  const key = `${apiKey}|${platform}|${filters.country || ''}`;
+  let task = _tasks.get(key);
+  try {
+    if (!task) {
+      const taskId = await _startTask(apiKey, platform, filters);
+      if (taskId == null) return [];
+      task = { taskId, cursor: null };
+      _tasks.set(key, task);
+      logger.success('parser', `XProject: task ${taskId} started for ${platform}`);
+    }
+    const path = CONFIG.endpoints.page.replace('{task_id}', String(task.taskId));
+    const url = CONFIG.baseUrl + path + (task.cursor != null ? `?cursor=${task.cursor}` : '');
+    const res = await fetch(url, { headers: _headers(apiKey) });
+    if (!res.ok) {
+      logger.warn('parser', `XProject: page fetch failed (HTTP ${res.status})`);
+      return [];
+    }
+    const data = await res.json();
+    const listings = (data && data.listings) || [];
+    // Advance the cursor so the next call returns the following page. When
+    // has_more is false we keep the last cursor and re-poll later for new rows.
+    if (data && data.next_cursor != null) task.cursor = data.next_cursor;
+    const leads = listings.map(normalizeLead).filter((l) => l.email);
+    return typeof limit === 'number' ? leads.slice(0, limit) : leads;
+  } catch (e) {
+    logger.error('parser', `XProject: ${e.message}`);
     return [];
   }
-  // Reference implementation once the contract is known:
-  //
-  //   const url = CONFIG.baseUrl + CONFIG.endpoints.batch
-  //     .replace('{platform}', platforms.join(','))
-  //     .replace('{limit}', String(limit));
-  //   const res = await fetch(url, { headers: { [CONFIG.authHeader]: CONFIG.authPrefix + apiKey } });
-  //   const data = await res.json();
-  //   return data.items.map(normalizeLead);
-  return [];
 }
 
-/** Map an API record to the app's internal lead shape. */
-function normalizeLead(_raw) {
+/** Map an API listing to the app's internal lead shape. */
+function normalizeLead(raw) {
+  raw = raw || {};
   return {
-    id: '',
-    email: '', // recipient
-    name: '',
-    platform: '',
-    listingUrl: '',
-    meta: {},
+    id: raw.row_id != null ? String(raw.row_id) : (raw.platform_id || ''),
+    email: raw.seller_email || '',
+    name: raw.seller_name || '',
+    platform: raw.platform || '',
+    listingUrl: raw.url || '',
+    meta: {
+      title: raw.title || '',
+      price: raw.price,
+      currency: raw.currency || '',
+      sellerUrl: raw.seller_url || '',
+      sellerChatUrl: raw.seller_chat_url || '',
+    },
   };
 }
 

@@ -371,13 +371,13 @@ VIEWS.link = () => {
           </div>
         </div>
         <div class="row">
-          <div class="field"><label>Link mode</label><input type="text" id="lMode" value="${esc(l.mode)}" placeholder="mode"/></div>
+          <div class="field"><label>Link mode (serviceCode)</label><input type="text" id="lMode" value="${esc(l.mode)}" placeholder="e.g. offerup_us"/></div>
           <div class="field"><label>Profile ID</label><input type="text" id="lPid" value="${esc(l.profileId)}"/></div>
           <div class="field" style="max-width:140px"><label>Country</label>
             <select id="lCountry"><option value="US" ${l.country === 'US' ? 'selected' : ''}>US</option></select>
           </div>
         </div>
-        <div class="hint">Endpoints wire in from the Haron Rent API docs (see src/main/link/haronRent.js).</div>
+        <div class="hint">Link mode is the Haron Rent serviceCode (from GET /getServices, e.g. offerup_us). Base/endpoints in src/main/link/haronRent.js.</div>
       </div>
     </div>
   </div>`);

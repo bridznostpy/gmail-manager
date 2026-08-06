@@ -84,7 +84,13 @@ Each is isolated to one file with a `CONFIG` block and `TODO(docs)` markers:
 | VVS Parser API | `src/main/parser/apis/vvs.js` | endpoints, auth, response schema |
 | Haron Rent API | `src/main/link/haronRent.js` | link/listing/profile/domain endpoints |
 | Broadcast texts JSON | `data/texts.example.json` | confirm the real structure |
-| Gmail compose / read-replies over CDP | `src/main/sender/senderEngine.js` | `TODO(gmail-dom)` — finalize against a live logged-in Gmail DOM |
+
+Gmail send and auto-reply over CDP are now implemented in
+`src/main/cdp/chromeManager.js` (`gmailCompose` / `gmailListUnread` /
+`gmailReply`) and wired into `senderEngine.js`. They drive only stable Gmail
+mechanisms (compose-in-URL + Ctrl+Enter, DOM read of unread rows) and are marked
+`TODO(gmail-dom)`: the selectors still need a final check against a live
+logged-in Gmail (use the profile "Test send" button to validate).
 
 Everything else — orchestration, limits, sequencing, queue, fingerprints,
 profile lifecycle, CDP launch/scan, theming, persistence — is complete and runs.

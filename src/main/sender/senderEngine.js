@@ -51,6 +51,11 @@ class SenderEngine {
     return this.profileStore.list().filter((p) => p.gmailStatus === 'ready');
   }
 
+  /** Ready accounts whose Chrome instance is actually up (for reply-scanning). */
+  _runningReady() {
+    return this._readyProfiles().filter((p) => this.chrome.isRunning(p.id));
+  }
+
   _allLimitsReached() {
     const limit = this.store.get('system').mailsPerAccount;
     const ready = this._readyProfiles();
@@ -123,6 +128,7 @@ class SenderEngine {
   }
 
   async _sendFirstMessage(account, lead) {
+    if (!lead || !lead.email) throw new Error('lead has no recipient email');
     const link = this.store.get('link');
     const gen = await haron.generateLink({
       apiKey: link.apiKey, mode: link.mode, profileId: link.profileId,
@@ -130,11 +136,10 @@ class SenderEngine {
     });
     const texts = this.store.get('texts');
     const { subject, body } = this._composeText(texts, lead, gen.url);
-    logger.info('sender', `"${account.label}" → ${lead.email || '(unknown)'} | subj: "${subject}"`);
-    // TODO(gmail-dom): drive Gmail compose over CDP:
-    //   await this.chrome.gmailCompose(account.id, { to: lead.email, subject, body });
-    // For now the orchestration counts the send; wiring the DOM step is the
-    // single remaining integration once a profile is logged in.
+    logger.info('sender', `"${account.label}" -> ${lead.email} | subj: "${subject}"`);
+    // Drive Gmail compose over CDP against the logged-in profile.
+    // TODO(gmail-dom): validate the compose/send selectors on a live account.
+    await this.chrome.gmailCompose(account.id, { to: lead.email, subject, body });
     return { subject, body };
   }
 
@@ -146,6 +151,16 @@ class SenderEngine {
     const rnd = (arr) => arr[Math.floor(Math.random() * arr.length)];
     const fill = (s) => String(s).replace(/\{link\}/g, link).replace(/\{name\}/g, lead.name || 'there');
     return { subject: fill(rnd(t.subjects)), body: fill(rnd(t.bodies)) };
+  }
+
+  /** Build the auto-reply body from the loaded texts JSON (texts.autoReply). */
+  _composeAutoReply(texts, ctx, link) {
+    const fallback = 'Thanks for your reply! Here is the link to continue: {link}';
+    const ar = texts && texts.autoReply ? texts.autoReply : null;
+    const raw = ar && ar.text ? ar.text : fallback;
+    return String(raw)
+      .replace(/\{link\}/g, link || '')
+      .replace(/\{name\}/g, (ctx && ctx.name) || 'there');
   }
 
   async _replyLoop() {
@@ -161,11 +176,43 @@ class SenderEngine {
 
   async _pollReplies() {
     const maxReplies = this.store.get('system').maxRepliesPerDialog;
-    // TODO(gmail-dom): for each running account, read unread threads over CDP:
-    //   const threads = await this.chrome.gmailUnread(account.id);
-    // Then, per thread under the reply cap, send the configured auto-reply.
-    // The cap + interval bookkeeping is real:
-    logger.debug('sender', `Auto-reply poll (cap ${maxReplies}/dialog)`);
+    const texts = this.store.get('texts');
+    // Auto-reply is on unless the texts JSON explicitly disables it.
+    const enabled = !texts || !texts.autoReply || texts.autoReply.enabled !== false;
+    if (!enabled) {
+      logger.debug('sender', 'Auto-reply disabled in texts JSON');
+      return;
+    }
+    const link = this.store.get('link');
+    const accounts = this._runningReady();
+    logger.debug('sender', `Auto-reply poll over ${accounts.length} account(s) (cap ${maxReplies}/dialog)`);
+    for (const account of accounts) {
+      let unread = [];
+      try {
+        unread = await this.chrome.gmailListUnread(account.id);
+      } catch (e) {
+        logger.warn('sender', `Unread scan failed for "${account.label}": ${e.message}`);
+        continue;
+      }
+      for (const thread of unread) {
+        const key = account.id + ':' + thread.threadId;
+        const dialog = this.dialogs.get(key) || { replies: 0 };
+        if (dialog.replies >= maxReplies) continue;
+        try {
+          const gen = await haron.generateLink({
+            apiKey: link.apiKey, mode: link.mode, profileId: link.profileId,
+            country: link.country, lead: thread,
+          });
+          const text = this._composeAutoReply(texts, { name: thread.from }, gen.url);
+          await this.chrome.gmailReply(account.id, thread, text);
+          dialog.replies += 1;
+          this.dialogs.set(key, dialog);
+          logger.info('sender', `Auto-replied in "${account.label}" thread (${dialog.replies}/${maxReplies})`);
+        } catch (e) {
+          logger.warn('sender', `Auto-reply failed (${thread.threadId}): ${e.message}`);
+        }
+      }
+    }
   }
 
   async stop() {

@@ -15,10 +15,10 @@
  *     and the system stays alive in auto-reply-only mode until stopped.
  *
  * NOTE: the concrete Gmail "compose + send" and "read replies" steps are driven
- * over CDP against the logged-in Gmail tab. The DOM automation hooks are marked
- * TODO(gmail-dom) - they depend on Gmail's current DOM and are best finalized
- * against a live logged-in profile. The orchestration, limits, sequencing,
- * queue and auto-reply loop are all real and complete.
+ * by Playwright against the logged-in Gmail tab. The DOM automation hooks are
+ * marked TODO(gmail-dom) - they depend on Gmail's current DOM and are best
+ * finalized against a live logged-in profile. The orchestration, limits,
+ * sequencing, queue and auto-reply loop are all real and complete.
  */
 const logger = require('../logger');
 const { t } = require('../i18n');
@@ -141,7 +141,7 @@ class SenderEngine {
     const subject = (lead.meta && lead.meta.title) || lead.title || t('send.defaultSubject');
     const body = texts.firstMessage(loaded, lang);
     logger.info('sender', t('send.message', { label: account.label, to: lead.email, subject }));
-    // Drive Gmail compose over CDP against the logged-in profile.
+    // Drive Gmail compose with Playwright against the logged-in profile.
     // TODO(gmail-dom): validate the compose/send selectors on a live account.
     await this.chrome.gmailCompose(account.id, { to: lead.email, subject, body });
     return { subject, body };

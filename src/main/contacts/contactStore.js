@@ -7,10 +7,28 @@
  * товара, пересобрать ссылку и отправить письмо из того же аккаунта.
  *
  * Хранится JSON рядом с настройками, запись атомарная (tmp + rename), ключ -
- * email в нижнем регистре.
+ * нормализованный email (см. normalizeEmail).
  */
 const fs = require('fs');
 const path = require('path');
+
+const DOTLESS_DOMAINS = ['gmail.com', 'googlemail.com'];
+
+/**
+ * Привести адрес к одному виду. Gmail игнорирует точки в локальной части, то
+ * есть "ky.burnside@gmail.com" и "kyburnside@gmail.com" - один и тот же ящик;
+ * парсер и список писем Gmail могут отдать разные написания. В остальных
+ * доменах точка значима, поэтому там её не трогаем.
+ */
+function normalizeEmail(email) {
+  const lower = String(email || '').trim().toLowerCase();
+  const at = lower.indexOf('@');
+  if (at < 0) return lower;
+  const local = lower.slice(0, at);
+  const domain = lower.slice(at + 1);
+  if (DOTLESS_DOMAINS.indexOf(domain) < 0) return lower;
+  return local.replace(/\./g, '') + '@' + domain;
+}
 
 class ContactStore {
   constructor(filePath) {
@@ -23,7 +41,9 @@ class ContactStore {
     try {
       const arr = JSON.parse(fs.readFileSync(this.filePath, 'utf-8'));
       if (Array.isArray(arr)) {
-        for (const c of arr) if (c && c.email) this.byEmail.set(String(c.email).toLowerCase(), c);
+        // Ключ пересобираем при загрузке: записи, сделанные до перехода на
+        // normalizeEmail, лежат под старым ключом.
+        for (const c of arr) if (c && c.email) this.byEmail.set(normalizeEmail(c.email), c);
       }
     } catch (_e) { /* первый запуск или файл нечитаем - пустой список */ }
   }
@@ -36,11 +56,12 @@ class ContactStore {
   }
 
   _key(email) {
-    return String(email || '').trim().toLowerCase();
+    return normalizeEmail(email);
   }
 
   get(email) {
-    return this.byEmail.get(this._key(email)) || null;
+    const key = this._key(email);
+    return (key && this.byEmail.get(key)) || null;
   }
 
   list() {
@@ -53,12 +74,14 @@ class ContactStore {
    * контакта сохраняем.
    */
   recordSent({ lead, profile } = {}) {
-    const email = this._key(lead && lead.email);
-    if (!email) return null;
+    const key = this._key(lead && lead.email);
+    if (!key) return null;
     const meta = (lead && lead.meta) || {};
-    const prev = this.byEmail.get(email) || {};
+    const prev = this.byEmail.get(key) || {};
     const rec = {
-      email,
+      // Ключ нормализован, а в записи держим адрес как есть: именно на него
+      // потом уходит письмо-подталкивание.
+      email: String((lead && lead.email) || prev.email || '').trim().toLowerCase(),
       name: (lead && lead.name) || prev.name || '',
       leadId: (lead && lead.id) || prev.leadId || '',
       platform: (lead && lead.platform) || prev.platform || '',
@@ -66,13 +89,18 @@ class ContactStore {
       title: meta.title || prev.title || '',
       price: meta.price != null ? meta.price : (prev.price != null ? prev.price : ''),
       currency: meta.currency || prev.currency || '',
+      // Данные товара для плейсхолдеров автоответа. VVS отдаёт их сам, у
+      // XProject таких полей в документации нет - там останется пусто.
+      imageUrl: meta.imageUrl || prev.imageUrl || '',
+      datePublication: meta.datePublication || prev.datePublication || '',
+      sellerUrl: meta.sellerUrl || prev.sellerUrl || '',
       profileId: (profile && profile.id) || prev.profileId || '',
       profileLabel: (profile && profile.label) || prev.profileLabel || '',
       firstSentAt: prev.firstSentAt || Date.now(),
       lastSentAt: Date.now(),
       nudged: prev.nudged || false,
     };
-    this.byEmail.set(email, rec);
+    this.byEmail.set(key, rec);
     this._save();
     return rec;
   }
@@ -88,4 +116,4 @@ class ContactStore {
   }
 }
 
-module.exports = { ContactStore };
+module.exports = { ContactStore, normalizeEmail };

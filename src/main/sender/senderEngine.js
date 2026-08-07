@@ -194,7 +194,7 @@ class SenderEngine {
           // Ссылку строим по сохранённым данным товара этого адресата - у самой
           // переписки названия товара и цены нет.
           const url = await this._linkFor(thread.from, thread);
-          const text = texts.autoReply(loaded, lang, url);
+          const text = texts.autoReply(loaded, lang, url, contact);
           await this.chrome.gmailReply(account.id, thread, text);
           dialog.replies += 1;
           this.dialogs.set(key, dialog);
@@ -245,7 +245,7 @@ class SenderEngine {
     const loaded = this.store.get('texts');
     const lang = texts.outreachLang(this.store);
     const url = await this._linkFor(addr, null);
-    const body = texts.nudge(loaded, lang, url);
+    const body = texts.nudge(loaded, lang, url, contact);
     const subject = contact.title || t('send.defaultSubject');
     logger.info('sender', t('nudge.sending', { email: addr, label: account.label }));
     const res = await this.chrome.gmailCompose(account.id, { to: addr, subject, body });

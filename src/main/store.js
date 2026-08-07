@@ -11,6 +11,7 @@ const path = require('path');
 
 const DEFAULTS = {
   theme: 'dark', // 'dark' | 'light'
+  language: 'ru', // 'ru' | 'en' - язык интерфейса и сообщений в логах
   accent: '#7f52ff',
 
   // ── System settings ──────────────────────────────────────────────

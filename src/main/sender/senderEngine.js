@@ -206,6 +206,47 @@ class SenderEngine {
     }
   }
 
+  /**
+   * Сухой прогон автоответа по одному профилю: сканируем непрочитанные и пишем
+   * в лог, кого увидели и распознан ли отправитель как контакт рассылки.
+   * Ничего не отправляем - это способ проверить связку "письмо -> контакт" до
+   * первой реальной отправки.
+   */
+  async dryRun(profileId) {
+    const account = this.profileStore.get(profileId);
+    if (!account) return { ok: false, reason: 'no_profile', rows: [] };
+    if (!this.chrome.isRunning(account.id)) {
+      logger.warn('sender', t('dry.profileStopped', { label: account.label }));
+      return { ok: false, reason: 'profile_stopped', rows: [] };
+    }
+    let unread = [];
+    try {
+      unread = await this.chrome.gmailListUnread(account.id);
+    } catch (e) {
+      logger.warn('sender', t('reply.unreadFailed', { label: account.label, error: e.message }));
+      return { ok: false, reason: 'scan_failed', rows: [] };
+    }
+    logger.info('sender', t('dry.title', { label: account.label, count: unread.length }));
+    if (!unread.length) logger.info('sender', t('dry.empty'));
+    const rows = unread.map((thread) => {
+      const contact = this.contactStore ? this.contactStore.get(thread.from) : null;
+      const row = {
+        threadId: thread.threadId,
+        from: thread.from || '',
+        subject: thread.subject || '',
+        known: !!contact,
+        title: contact ? contact.title : '',
+      };
+      logger.info('sender', t('dry.row', {
+        subject: row.subject || '?',
+        from: row.from || '?',
+        contact: t(row.known ? 'dry.known' : 'dry.unknown'),
+      }));
+      return row;
+    });
+    return { ok: true, rows, known: rows.filter((r) => r.known).length };
+  }
+
   /** Ссылка Haron по контакту (данные товара) или по переданному лиду. */
   async _linkFor(email, fallbackLead) {
     const link = this.store.get('link');

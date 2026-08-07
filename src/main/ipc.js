@@ -86,6 +86,8 @@ function register(ctx) {
     if (!p) throw new Error(t('err.profileNotFound'));
     return chrome.gmailCompose(id, { to, subject, body });
   });
+  // Сухой прогон автоответа: скан непрочитанных без отправки.
+  ipcMain.handle('gmail:dryRun', async (_e, { id }) => sender.dryRun(id));
 
   // ── integrations ──────────────────────────────────────────────────
   ipcMain.handle('telegram:test', (_e, { botToken }) => telegram.test(botToken));

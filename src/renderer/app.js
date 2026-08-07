@@ -307,6 +307,7 @@ function renderProfileDetail(root) {
       <button class="btn primary" id="dLaunch">${p.running ? esc(t('prof.reopen')) : ICONS.play + '<span>' + esc(t('prof.launch')) + '</span>'}</button>
       <button class="btn" id="dScan">${ICONS.scan}<span>${esc(t('prof.scan'))}</span></button>
       ${p.running ? '<button class="btn" id="dTest">' + ICONS.send + '<span>' + esc(t('prof.testSend')) + '</span></button>' : ''}
+      ${p.running ? '<button class="btn" id="dDry">' + ICONS.scan + '<span>' + esc(t('prof.dryRun')) + '</span></button>' : ''}
       ${p.running ? '<button class="btn" id="dStop">' + ICONS.stop + '<span>' + esc(t('prof.stopBtn')) + '</span></button>' : ''}
       <button class="btn danger" id="dDel">${ICONS.trash}<span>${esc(t('prof.delete'))}</span></button>
     </div>
@@ -331,6 +332,16 @@ function renderProfileDetail(root) {
       const ok = !!(res && res.ok);
       toast(ok ? t('prof.testSent') : t('prof.testUnconfirmed'), ok ? 'success' : 'error');
     } catch (e) { toast(t('prof.testFailed', { error: e.message }), 'error'); }
+  });
+  // Сухой прогон автоответа: показывает, кого видит сканер, ничего не отправляя.
+  const dryBtn = card.querySelector('#dDry');
+  if (dryBtn) dryBtn.addEventListener('click', async () => {
+    toast(t('prof.dryRunning'));
+    try {
+      const res = await api.gmail.dryRun(p.id);
+      if (res && res.ok) toast(t('prof.dryDone', { count: res.rows.length, known: res.known }), 'success');
+      else toast(t('prof.dryFail.' + ((res && res.reason) || 'unknown')), 'error');
+    } catch (e) { toast(t('prof.dryError', { error: e.message }), 'error'); }
   });
   const stopBtn = card.querySelector('#dStop');
   if (stopBtn) stopBtn.addEventListener('click', async () => { await api.profiles.stop(p.id); await refreshProfiles(); });

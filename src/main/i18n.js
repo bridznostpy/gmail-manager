@@ -85,6 +85,12 @@ const DICT = {
     'reply.unreadFailed': 'Не удалось прочитать непрочитанные для "{label}": {error}',
     'reply.sent': 'Отправлен автоответ в "{label}" ({n} из {cap})',
     'reply.failed': 'Автоответ не отправлен ({tid}): {error}',
+    'dry.title': 'Сухой прогон "{label}": непрочитанных писем {count}',
+    'dry.row': '"{subject}" | отправитель: {from} | {contact}',
+    'dry.known': 'наш контакт, автоответ уйдёт',
+    'dry.unknown': 'не наш контакт, будет пропущено',
+    'dry.empty': 'Непрочитанных писем нет',
+    'dry.profileStopped': 'Сухой прогон: профиль "{label}" остановлен',
 
     // ── Парсер ──────────────────────────────────────────────
     'parser.keyRotation': 'Достигнуто {n} сообщений - точка ротации ключа API (добавьте запасные ключи, чтобы менять их)',
@@ -192,6 +198,12 @@ const DICT = {
     'reply.unreadFailed': 'Unread scan failed for "{label}": {error}',
     'reply.sent': 'Auto-replied in "{label}" thread ({n}/{cap})',
     'reply.failed': 'Auto-reply failed ({tid}): {error}',
+    'dry.title': 'Dry run "{label}": {count} unread message(s)',
+    'dry.row': '"{subject}" | sender: {from} | {contact}',
+    'dry.known': 'our contact, auto-reply would be sent',
+    'dry.unknown': 'not our contact, would be skipped',
+    'dry.empty': 'No unread messages',
+    'dry.profileStopped': 'Dry run: profile "{label}" is stopped',
 
     'parser.keyRotation': 'Reached {n} messages - API key rotation point (configure additional keys to rotate)',
     'parser.refill': 'Queue at {size} (< {threshold}) - fetching batch of {batch}',

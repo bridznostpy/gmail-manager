@@ -24,13 +24,15 @@ const logger = require('../logger');
 const { t } = require('../i18n');
 const haron = require('../link/haronRent');
 const telegram = require('../telegram/telegram');
+const texts = require('../texts');
 
 class SenderEngine {
-  constructor({ store, profileStore, chrome, parser }) {
+  constructor({ store, profileStore, chrome, parser, contactStore }) {
     this.store = store;
     this.profileStore = profileStore;
     this.chrome = chrome;
     this.parser = parser;
+    this.contactStore = contactStore;
     this.running = false;
     this.startedAt = null;
     this._sendTimer = null;
@@ -120,6 +122,8 @@ class SenderEngine {
     try {
       await this._sendFirstMessage(account, lead);
       this.profileStore.update(account.id, { sentCount: account.sentCount + 1 });
+      // Сохраняем контакт с данными товара, чтобы позже подтолкнуть по email.
+      if (this.contactStore) this.contactStore.recordSent({ lead, profile: account });
       this.parser.noteSent();
     } catch (e) {
       logger.error('sender', t('send.failed', { label: account.label, error: e.message }));
@@ -130,39 +134,17 @@ class SenderEngine {
 
   async _sendFirstMessage(account, lead) {
     if (!lead || !lead.email) throw new Error(t('err.noLeadEmail'));
-    const link = this.store.get('link');
-    const gen = await haron.generateLink({
-      apiKey: link.apiKey, mode: link.mode, profileId: link.profileId,
-      country: link.country, lead,
-    });
-    const texts = this.store.get('texts');
-    const { subject, body } = this._composeText(texts, lead, gen.url);
+    // Первое письмо ссылки не несёт: тема - название товара из парсера, тело -
+    // случайный текст из MESSAGES_DICT на языке рассылки.
+    const loaded = this.store.get('texts');
+    const lang = texts.outreachLang(this.store);
+    const subject = (lead.meta && lead.meta.title) || lead.title || t('send.defaultSubject');
+    const body = texts.firstMessage(loaded, lang);
     logger.info('sender', t('send.message', { label: account.label, to: lead.email, subject }));
     // Drive Gmail compose over CDP against the logged-in profile.
     // TODO(gmail-dom): validate the compose/send selectors on a live account.
     await this.chrome.gmailCompose(account.id, { to: lead.email, subject, body });
     return { subject, body };
-  }
-
-  _composeText(texts, lead, link) {
-    const fallback = {
-      subjects: ['Hello'], bodies: ['Hi {name}, here is the link: {link}'],
-    };
-    // Не называем переменную t - имя занято хелпером локализации.
-    const tpl = texts && texts.subjects ? texts : fallback;
-    const rnd = (arr) => arr[Math.floor(Math.random() * arr.length)];
-    const fill = (s) => String(s).replace(/\{link\}/g, link).replace(/\{name\}/g, lead.name || 'there');
-    return { subject: fill(rnd(tpl.subjects)), body: fill(rnd(tpl.bodies)) };
-  }
-
-  /** Build the auto-reply body from the loaded texts JSON (texts.autoReply). */
-  _composeAutoReply(texts, ctx, link) {
-    const fallback = 'Thanks for your reply! Here is the link to continue: {link}';
-    const ar = texts && texts.autoReply ? texts.autoReply : null;
-    const raw = ar && ar.text ? ar.text : fallback;
-    return String(raw)
-      .replace(/\{link\}/g, link || '')
-      .replace(/\{name\}/g, (ctx && ctx.name) || 'there');
   }
 
   async _replyLoop() {
@@ -178,14 +160,14 @@ class SenderEngine {
 
   async _pollReplies() {
     const maxReplies = this.store.get('system').maxRepliesPerDialog;
-    const texts = this.store.get('texts');
-    // Auto-reply is on unless the texts JSON explicitly disables it.
-    const enabled = !texts || !texts.autoReply || texts.autoReply.enabled !== false;
+    const loaded = this.store.get('texts');
+    const lang = texts.outreachLang(this.store);
+    // Автоответ включён, если в JSON нет явного выключателя.
+    const enabled = !loaded || !loaded.autoReply || loaded.autoReply.enabled !== false;
     if (!enabled) {
       logger.debug('sender', t('reply.disabled'));
       return;
     }
-    const link = this.store.get('link');
     const accounts = this._runningReady();
     logger.debug('sender', t('reply.poll', { count: accounts.length, cap: maxReplies }));
     for (const account of accounts) {
@@ -201,11 +183,10 @@ class SenderEngine {
         const dialog = this.dialogs.get(key) || { replies: 0 };
         if (dialog.replies >= maxReplies) continue;
         try {
-          const gen = await haron.generateLink({
-            apiKey: link.apiKey, mode: link.mode, profileId: link.profileId,
-            country: link.country, lead: thread,
-          });
-          const text = this._composeAutoReply(texts, { name: thread.from }, gen.url);
+          // Ссылку строим по сохранённым данным товара этого адресата, если он
+          // есть в контактах - у самой переписки названия товара и цены нет.
+          const url = await this._linkFor(thread.from, thread);
+          const text = texts.autoReply(loaded, lang, url);
           await this.chrome.gmailReply(account.id, thread, text);
           dialog.replies += 1;
           this.dialogs.set(key, dialog);
@@ -215,6 +196,56 @@ class SenderEngine {
         }
       }
     }
+  }
+
+  /** Ссылка Haron по контакту (данные товара) или по переданному лиду. */
+  async _linkFor(email, fallbackLead) {
+    const link = this.store.get('link');
+    const contact = this.contactStore ? this.contactStore.get(email) : null;
+    const lead = contact
+      ? { email: contact.email, name: contact.name, meta: { title: contact.title, price: contact.price, currency: contact.currency } }
+      : (fallbackLead || {});
+    const gen = await haron.generateLink({
+      apiKey: link.apiKey, mode: link.mode, profileId: link.profileId,
+      country: link.country, lead,
+    });
+    return gen.url;
+  }
+
+  /**
+   * Ручное подталкивание по email: доп. письмо из CONFIRM_DICT со ссылкой, из
+   * того же аккаунта, что писал человеку. Работает и спустя несколько рассылок -
+   * данные берём из сохранённого контакта.
+   */
+  async nudge(email) {
+    const addr = String(email || '').trim();
+    if (!addr) return { ok: false, reason: 'no_email' };
+    const contact = this.contactStore ? this.contactStore.get(addr) : null;
+    if (!contact) {
+      logger.warn('sender', t('nudge.notFound', { email: addr }));
+      return { ok: false, reason: 'not_found' };
+    }
+    const account = this.profileStore.get(contact.profileId);
+    if (!account) {
+      logger.warn('sender', t('nudge.noProfile', { email: addr }));
+      return { ok: false, reason: 'no_profile' };
+    }
+    if (!this.chrome.isRunning(account.id)) {
+      logger.warn('sender', t('nudge.profileStopped', { label: account.label }));
+      return { ok: false, reason: 'profile_stopped' };
+    }
+    const loaded = this.store.get('texts');
+    const lang = texts.outreachLang(this.store);
+    const url = await this._linkFor(addr, null);
+    const body = texts.nudge(loaded, lang, url);
+    const subject = contact.title || t('send.defaultSubject');
+    logger.info('sender', t('nudge.sending', { email: addr, label: account.label }));
+    const res = await this.chrome.gmailCompose(account.id, { to: addr, subject, body });
+    if (res && res.ok) {
+      this.contactStore.markNudged(addr);
+      logger.success('sender', t('nudge.sent', { email: addr }));
+    }
+    return { ok: !!(res && res.ok) };
   }
 
   async stop() {

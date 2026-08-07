@@ -8,6 +8,7 @@ const path = require('path');
 
 const { Store } = require('./store');
 const { ProfileStore } = require('./profiles/profileStore');
+const { ContactStore } = require('./contacts/contactStore');
 const { ChromeManager } = require('./cdp/chromeManager');
 const { ParserEngine } = require('./parser/parserEngine');
 const { SenderEngine } = require('./sender/senderEngine');
@@ -23,10 +24,11 @@ function buildContext() {
   const userData = app.getPath('userData');
   const store = new Store(path.join(userData, 'settings.json'));
   const profileStore = new ProfileStore(path.join(userData, 'profiles.json'));
+  const contactStore = new ContactStore(path.join(userData, 'contacts.json'));
   const chrome = new ChromeManager(store, userData);
   const parser = new ParserEngine(store);
-  const sender = new SenderEngine({ store, profileStore, chrome, parser });
-  return { store, profileStore, chrome, parser, sender, userData };
+  const sender = new SenderEngine({ store, profileStore, chrome, parser, contactStore });
+  return { store, profileStore, contactStore, chrome, parser, sender, userData };
 }
 
 function createWindow() {

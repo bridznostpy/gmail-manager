@@ -20,6 +20,7 @@ const DEFAULTS = {
     maxRepliesPerDialog: 3, // cap on auto-replies in one conversation
     checkIntervalSec: 20, // how often the auto-responder polls for replies
     autoScanSec: 15, // how often running profiles are re-scanned for Gmail status
+    outreachLang: 'en', // language of outreach texts (MESSAGES/PASTE/CONFIRM dicts)
     parserBatchSize: 40, // items pulled per parser batch
     queueRefillThreshold: 20, // refill the queue when it drops below this
   },

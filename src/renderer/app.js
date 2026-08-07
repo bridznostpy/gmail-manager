@@ -215,7 +215,10 @@ VIEWS.profiles = () => {
   const wrap = h(`<div>
     <div class="view-header">
       <div><div class="view-title">${esc(t('prof.title'))}</div><div class="view-sub">${esc(t('prof.sub'))}</div></div>
-      <button class="btn primary" id="newProfile">${ICONS.plus}<span>${esc(t('prof.new'))}</span></button>
+      <div style="display:flex;gap:8px">
+        <button class="btn" id="nudgeBtn">${ICONS.send}<span>${esc(t('nudge.btn'))}</span></button>
+        <button class="btn primary" id="newProfile">${ICONS.plus}<span>${esc(t('prof.new'))}</span></button>
+      </div>
     </div>
     <div class="grid cols-4" style="margin-bottom:18px">
       <div class="stat"><div class="label">${esc(t('prof.total'))}</div><div class="value" id="sTotal">${s.total}</div></div>
@@ -228,6 +231,17 @@ VIEWS.profiles = () => {
       <div id="detail"></div>
     </div>
   </div>`);
+
+  wrap.querySelector('#nudgeBtn').addEventListener('click', async () => {
+    const email = await askText(t('nudge.ask'), { placeholder: 'seller@example.com' });
+    if (!email) return;
+    toast(t('nudge.sending'));
+    try {
+      const res = await api.contacts.nudge(email.trim());
+      if (res && res.ok) { toast(t('nudge.ok'), 'success'); await refreshProfiles(); }
+      else toast(t('nudge.fail.' + ((res && res.reason) || 'unknown')), 'error');
+    } catch (e) { toast(t('nudge.error', { error: e.message }), 'error'); }
+  });
 
   wrap.querySelector('#newProfile').addEventListener('click', async () => {
     const label = await askText(t('prof.askName'), { value: t('prof.defaultName', { n: state.profiles.length + 1 }) });

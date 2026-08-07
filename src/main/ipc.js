@@ -12,7 +12,7 @@ const { resolveChrome } = require('./cdp/chromeManager');
 const { scanAndPersist } = require('./profiles/autoScan');
 
 function register(ctx) {
-  const { store, profileStore, chrome, parser, sender, mainWindow } = ctx;
+  const { store, profileStore, contactStore, chrome, parser, sender, mainWindow } = ctx;
 
   const send = (channel, payload) => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload);
@@ -75,6 +75,10 @@ function register(ctx) {
   ipcMain.handle('run:stop', () => sender.stop());
   ipcMain.handle('run:status', () => sender.status());
   ipcMain.handle('logs:recent', (_e, n) => logger.recent(n || 200));
+
+  // ── contacts / nudge ──────────────────────────────────────────────
+  ipcMain.handle('contacts:list', () => (contactStore ? contactStore.list() : []));
+  ipcMain.handle('contacts:nudge', async (_e, { email }) => sender.nudge(email));
 
   // ── gmail (manual test send against a live logged-in profile) ─────
   ipcMain.handle('gmail:testSend', async (_e, { id, to, subject, body }) => {

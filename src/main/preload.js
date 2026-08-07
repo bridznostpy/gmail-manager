@@ -39,6 +39,10 @@ contextBridge.exposeInMainWorld('api', {
   gmail: {
     testSend: (id, payload) => ipcRenderer.invoke('gmail:testSend', { id, ...payload }),
   },
+  contacts: {
+    list: () => ipcRenderer.invoke('contacts:list'),
+    nudge: (email) => ipcRenderer.invoke('contacts:nudge', { email }),
+  },
   cdp: {
     detectChrome: () => ipcRenderer.invoke('cdp:detectChrome'),
   },

@@ -206,6 +206,23 @@ class ChromeManager {
     this.store = store;
     this.dataDir = dataDir; // base dir for chrome user-data folders
     this.instances = new Map(); // profileId -> { proc, port, cdp, targetWs }
+    this.activityWatchers = new Set(); // cb(profileId) - вкладка сменила адрес/заголовок
+  }
+
+  /**
+   * Подписка на "в профиле что-то изменилось": пользователь перешёл по адресу
+   * или у вкладки сменился заголовок. Момент входа в Gmail приложению больше
+   * ниоткуда не приходит, а ждать следующего тика таймера долго.
+   */
+  onProfileActivity(cb) {
+    this.activityWatchers.add(cb);
+    return () => this.activityWatchers.delete(cb);
+  }
+
+  _notifyActivity(profileId) {
+    for (const cb of this.activityWatchers) {
+      try { cb(profileId); } catch (_e) { /* подписчик не должен ронять CDP */ }
+    }
   }
 
   usedPorts() {
@@ -301,6 +318,24 @@ class ChromeManager {
       await cdp.send('Target.setAutoAttach', {
         autoAttach: true, waitForDebuggerOnStart: true, flatten: true,
       });
+
+      // Вкладка сменила адрес или заголовок - повод пересканировать профиль:
+      // именно так выглядит "пользователь вошёл в почту" со стороны браузера.
+      // Сравниваем с прошлым состоянием вкладки, иначе наши же подключения к
+      // ней (они тоже меняют targetInfo) гоняли бы скан по кругу.
+      inst.seenTargets = new Map();
+      cdp.on('Target.targetInfoChanged', (params) => {
+        const ti = params.targetInfo;
+        if (!ti || ti.type !== 'page') return;
+        const key = (ti.url || '') + '|' + (ti.title || '');
+        if (inst.seenTargets.get(ti.targetId) === key) return;
+        inst.seenTargets.set(ti.targetId, key);
+        this._notifyActivity(profile.id);
+      });
+      cdp.on('Target.targetDestroyed', (params) => {
+        if (params && params.targetId) inst.seenTargets.delete(params.targetId);
+      });
+      await cdp.send('Target.setDiscoverTargets', { discover: true });
     } catch (e) {
       logger.warn('cdp', t('cdp.autoAttachFailed', { label: profile.label, error: e.message }));
     }

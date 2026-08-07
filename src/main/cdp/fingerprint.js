@@ -3,11 +3,17 @@
  * Per-profile browser fingerprint.
  *
  * Each profile gets a stable, randomised identity generated once and stored
- * with the profile. It is injected into every page the profile opens via CDP
- * `Page.addScriptToEvaluateOnNewDocument`, so it applies before any site
- * script runs. This is a pragmatic fingerprint (UA, platform, screen, WebGL,
- * hardware, timezone, languages) - enough to make each Chrome instance look
- * distinct; it is not an anti-detect vendor stack.
+ * with the profile. Применяется он в два приёма:
+ *
+ * 1. `contextOptions(fp)` - то, что Playwright умеет на уровне браузера
+ *    (user-agent, локаль, часовой пояс). Это честнее подмены из JS: заголовки
+ *    запросов и Intl совпадают с тем, что видит страница.
+ * 2. `injectionScript(fp)` - остаток, которого в опциях нет (platform, железо,
+ *    экран, WebGL). Ставится через `context.addInitScript`, то есть до любого
+ *    скрипта сайта и во всех вкладках профиля.
+ *
+ * Это прагматичный фингерпринт, а не антидетект-стек: задача - чтобы инстансы
+ * выглядели раздельно, а не чтобы обмануть специализированную проверку.
  */
 
 function pick(arr, rnd) {
@@ -67,19 +73,43 @@ function generate(seed) {
   };
 }
 
+/**
+ * Опции контекста Playwright. Здесь всё, что браузер умеет подменить сам:
+ * user-agent уходит и в заголовок запроса, timezoneId правит Date и Intl,
+ * locale - заголовок Accept-Language.
+ *
+ * `viewport: null` обязателен: иначе Playwright фиксирует вьюпорт 1280x720 и
+ * окно профиля перестаёт вести себя как обычное окно Chrome, которое
+ * пользователь может растянуть.
+ */
+function contextOptions(fp) {
+  return {
+    userAgent: fp.userAgent,
+    locale: fp.languages[0],
+    timezoneId: fp.timezone,
+    viewport: null,
+  };
+}
+
 /** JS injected into every new document to enforce the fingerprint. */
 function injectionScript(fp) {
   return `(() => {
-    // Скрипт может прийти во вкладку дважды (ручная установка на стартовую
-    // вкладку + авто-аттач). Второй проход обернул бы getParameter сам на себя.
+    // Скрипт может прийти во вкладку дважды (например, при переустановке
+    // init-скрипта). Второй проход обернул бы getParameter сам на себя.
     try { if (window.__gmFpApplied) return; window.__gmFpApplied = true; } catch (e) { return; }
     const fp = ${JSON.stringify(fp)};
     const def = (obj, prop, val) => {
       try { Object.defineProperty(obj, prop, { get: () => val, configurable: true }); } catch (e) {}
     };
+    // Автоматизационные флаги Chrome мы гасим при запуске, так что webdriver
+    // тоже должен выглядеть как у обычного браузера - иначе одно противоречит
+    // другому.
+    def(navigator, 'webdriver', undefined);
     def(navigator, 'platform', fp.platform);
     def(navigator, 'hardwareConcurrency', fp.hardwareConcurrency);
     def(navigator, 'deviceMemory', fp.deviceMemory);
+    // Опция locale задаёт ОДИН язык, а в фингерпринте их два-три - список
+    // навешиваем здесь, иначе navigator.languages разошёлся бы с карточкой.
     def(navigator, 'languages', Object.freeze(fp.languages.slice()));
     def(navigator, 'language', fp.languages[0]);
     try {
@@ -97,4 +127,4 @@ function injectionScript(fp) {
   })();`;
 }
 
-module.exports = { generate, injectionScript };
+module.exports = { generate, contextOptions, injectionScript };

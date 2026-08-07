@@ -1,7 +1,7 @@
 {
   "name": "gmail-manager",
   "version": "0.1.0",
-  "description": "Desktop app for managing Gmail accounts via Chrome CDP profiles, parsing, sending and auto-reply.",
+  "description": "Desktop app for managing Gmail accounts via Playwright-driven Chrome profiles, parsing, sending and auto-reply.",
   "main": "src/main/main.js",
   "scripts": {
     "start": "electron .",
@@ -13,7 +13,6 @@
     "electron": "^31.0.0"
   },
   "dependencies": {
-    "playwright-core": "^1.62.1",
-    "ws": "^8.17.0"
+    "playwright-core": "^1.62.1"
   }
 }

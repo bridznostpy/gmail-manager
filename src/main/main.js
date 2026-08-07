@@ -1,7 +1,7 @@
 'use strict';
 /**
- * Electron entry point. Wires the store, profile store, Chrome/CDP manager and
- * the parser/sender engines, then opens the single-window UI.
+ * Electron entry point. Wires the store, profile store, Playwright browser
+ * manager and the parser/sender engines, then opens the single-window UI.
  */
 const { app, BrowserWindow } = require('electron');
 const path = require('path');
@@ -9,7 +9,7 @@ const path = require('path');
 const { Store } = require('./store');
 const { ProfileStore } = require('./profiles/profileStore');
 const { ContactStore } = require('./contacts/contactStore');
-const { ChromeManager } = require('./cdp/chromeManager');
+const { PlaywrightManager } = require('./cdp/chromeManager');
 const { ParserEngine } = require('./parser/parserEngine');
 const { SenderEngine } = require('./sender/senderEngine');
 const ipc = require('./ipc');
@@ -25,7 +25,7 @@ function buildContext() {
   const store = new Store(path.join(userData, 'settings.json'));
   const profileStore = new ProfileStore(path.join(userData, 'profiles.json'));
   const contactStore = new ContactStore(path.join(userData, 'contacts.json'));
-  const chrome = new ChromeManager(store, userData);
+  const chrome = new PlaywrightManager(store, userData);
   const parser = new ParserEngine(store);
   const sender = new SenderEngine({ store, profileStore, chrome, parser, contactStore });
   return { store, profileStore, contactStore, chrome, parser, sender, userData };

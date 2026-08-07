@@ -9,6 +9,7 @@ const i18n = require('./i18n');
 const { t } = i18n;
 const telegram = require('./telegram/telegram');
 const { resolveChrome } = require('./cdp/chromeManager');
+const { scanAndPersist } = require('./profiles/autoScan');
 
 function register(ctx) {
   const { store, profileStore, chrome, parser, sender, mainWindow } = ctx;
@@ -67,11 +68,7 @@ function register(ctx) {
     profileStore.update(id, { running: false, port: null });
     return profileStore.get(id);
   });
-  ipcMain.handle('profiles:scan', async (_e, { id }) => {
-    const res = await chrome.scanGmail(id);
-    profileStore.update(id, { gmailStatus: res.status, email: res.email || profileStore.get(id).email });
-    return profileStore.get(id);
-  });
+  ipcMain.handle('profiles:scan', async (_e, { id }) => scanAndPersist(ctx, id));
 
   // ── run control ───────────────────────────────────────────────────
   ipcMain.handle('run:start', () => sender.start());

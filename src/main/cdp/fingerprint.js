@@ -70,6 +70,9 @@ function generate(seed) {
 /** JS injected into every new document to enforce the fingerprint. */
 function injectionScript(fp) {
   return `(() => {
+    // Скрипт может прийти во вкладку дважды (ручная установка на стартовую
+    // вкладку + авто-аттач). Второй проход обернул бы getParameter сам на себя.
+    try { if (window.__gmFpApplied) return; window.__gmFpApplied = true; } catch (e) { return; }
     const fp = ${JSON.stringify(fp)};
     const def = (obj, prop, val) => {
       try { Object.defineProperty(obj, prop, { get: () => val, configurable: true }); } catch (e) {}

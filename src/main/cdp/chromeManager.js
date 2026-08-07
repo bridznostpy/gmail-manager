@@ -86,6 +86,12 @@ class CDPSession {
     this.ws = null;
     this.id = 0;
     this.pending = new Map();
+    this.handlers = new Map(); // CDP method -> [callback]
+  }
+  /** Subscribe to a CDP event, e.g. on('Target.attachedToTarget', cb). */
+  on(method, cb) {
+    if (!this.handlers.has(method)) this.handlers.set(method, []);
+    this.handlers.get(method).push(cb);
   }
   connect() {
     return new Promise((resolve, reject) => {
@@ -100,6 +106,13 @@ class CDPSession {
           this.pending.delete(msg.id);
           if (msg.error) rej(new Error(msg.error.message));
           else res(msg.result);
+          return;
+        }
+        if (!msg.id && msg.method) {
+          const cbs = this.handlers.get(msg.method);
+          if (cbs) for (const cb of cbs) {
+            try { cb(msg.params || {}, msg.sessionId); } catch (_e) { /* обработчик не должен ронять сокет */ }
+          }
         }
       });
     });
@@ -122,6 +135,70 @@ class CDPSession {
   close() {
     try { this.ws && this.ws.close(); } catch (_e) {}
   }
+}
+
+// TODO(gmail-dom): эвристика статуса входа по DOM. Проверять на живом
+// залогиненном Gmail, догадками не расширять (Rules 4/6).
+const GMAIL_PROBE_EXPR = `(function(){
+  try {
+    var onMail = location.host === 'mail.google.com' && location.pathname.indexOf('/mail/') === 0;
+    var signedIn = onMail && (
+      !!document.querySelector('[gh="mtb"]') ||
+      !!document.querySelector('a[href*="SignOutOptions"]') ||
+      !!document.querySelector('div[role="main"]')
+    );
+    // Страницу входа определяем по хосту, а не по подстрокам в query: у уже
+    // залогиненного инбокса в URL остаются flowName=GlifWebSignIn и
+    // flowEntry=AccountChooser, из-за них он считался бы страницей входа.
+    var signIn = location.host === 'accounts.google.com' ||
+      (!onMail && !!document.querySelector('input[type="email"], input[type="password"]'));
+    var RE = /[\\w.+-]+@[\\w.-]+\\.\\w{2,}/;
+    var email = '';
+    // 1. Заголовок вкладки - "Входящие (2) - user@gmail.com - Gmail". Не зависит
+    // от языка интерфейса, в отличие от aria-label кнопки аккаунта.
+    var m = RE.exec(document.title || '');
+    if (m) email = m[0];
+    if (!email) {
+      var so = document.querySelector('a[href*="SignOutOptions"]');
+      if (so) {
+        m = RE.exec((so.getAttribute('aria-label') || '') + ' ' + (so.getAttribute('title') || ''));
+        if (m) email = m[0];
+      }
+    }
+    if (!email) {
+      var nodes = document.querySelectorAll('[aria-label],[title],[data-email],[email]');
+      for (var i = 0; i < nodes.length && i < 400; i++) {
+        var n = nodes[i];
+        var s = (n.getAttribute('data-email') || '') + ' ' + (n.getAttribute('email') || '') + ' '
+              + (n.getAttribute('aria-label') || '') + ' ' + (n.getAttribute('title') || '');
+        m = RE.exec(s);
+        if (m) { email = m[0]; break; }
+      }
+    }
+    return JSON.stringify({ href: location.href, signedIn: signedIn, signIn: signIn, email: email });
+  } catch (e) { return JSON.stringify({ error: String(e) }); }
+})()`;
+
+/** Вход в аккаунт приоритетнее страницы входа: инбокс может нести оба признака. */
+function probeStatus(parsed) {
+  if (parsed && parsed.signedIn) return 'ready';
+  if (parsed && parsed.signIn) return 'needs_login';
+  return 'unknown';
+}
+
+const STATUS_RANK = { ready: 3, needs_login: 2, unknown: 1 };
+
+/**
+ * Обёртка над плоской сессией браузерного соединения с интерфейсом CDPSession
+ * (`send` / `close`), чтобы `inst.pageCdp` можно было перевесить на любую
+ * вкладку без отдельного веб-сокета.
+ */
+function targetSession(cdp, sessionId) {
+  return {
+    sessionId,
+    send: (method, params = {}, sid) => cdp.send(method, params, sid || sessionId),
+    close: () => { cdp.send('Target.detachFromTarget', { sessionId }).catch(() => {}); },
+  };
 }
 
 class ChromeManager {
@@ -199,8 +276,38 @@ class ChromeManager {
     const inst = { proc, port, cdp, profileId: profile.id };
     this.instances.set(profile.id, inst);
 
+    // Каждая НОВАЯ вкладка профиля тоже должна получить фингерпринт: вход в
+    // Gmail пользователь часто заканчивает в отдельной вкладке, и без этого она
+    // шла бы с настоящими platform/screen/WebGL, отличными от карточки профиля.
+    try {
+      cdp.on('Target.attachedToTarget', async (params, _sid) => {
+        const sessionId = params.sessionId;
+        // Реагируем только на авто-аттач новых вкладок. Наши собственные
+        // подключения (проба вкладок) сюда тоже прилетают, но у них таргет не
+        // на паузе - и скрипт им ставить не надо, иначе он копился бы.
+        if (!params.waitingForDebugger) return;
+        try {
+          if (params.targetInfo && params.targetInfo.type === 'page') {
+            await cdp.send('Page.enable', {}, sessionId);
+            await cdp.send('Page.addScriptToEvaluateOnNewDocument', {
+              source: fingerprint.injectionScript(profile.fingerprint),
+            }, sessionId);
+          }
+        } catch (_e) { /* вкладку могли закрыть, пока мы к ней шли */ }
+        // Снимать паузу обязательно и для любых типов таргетов: с
+        // waitForDebuggerOnStart вкладка стоит, пока её не отпустят.
+        try { await cdp.send('Runtime.runIfWaitingForDebugger', {}, sessionId); } catch (_e) {}
+      });
+      await cdp.send('Target.setAutoAttach', {
+        autoAttach: true, waitForDebuggerOnStart: true, flatten: true,
+      });
+    } catch (e) {
+      logger.warn('cdp', t('cdp.autoAttachFailed', { label: profile.label, error: e.message }));
+    }
+
     // Attach to the first page target and install the fingerprint script so it
-    // runs before any site JS on every navigation.
+    // runs before any site JS on every navigation. Стартовая вкладка создана до
+    // setAutoAttach, поэтому её подключаем руками.
     try {
       const targets = await httpJson(`http://127.0.0.1:${port}/json`);
       const page = targets.find((t) => t.type === 'page');
@@ -224,41 +331,111 @@ class ChromeManager {
     return inst;
   }
 
+  /** Все вкладки профиля: сначала похожие на Gmail, потом на страницу входа. */
+  async _pageTargets(inst) {
+    const res = await inst.cdp.send('Target.getTargets');
+    const pages = (res.targetInfos || []).filter(
+      (x) => x.type === 'page' && !/^(devtools|chrome-extension):/.test(x.url || ''),
+    );
+    const weight = (x) => {
+      const u = x.url || '';
+      if (/^https:\/\/mail\.google\.com\//.test(u)) return 0;
+      if (/^https:\/\/accounts\.google\.com\//.test(u)) return 1;
+      return 2;
+    };
+    return pages.sort((a, b) => weight(a) - weight(b));
+  }
+
+  /**
+   * Прогнать эвристику входа в одной вкладке. Ходим через сессию браузера
+   * (`Target.attachToTarget`), а не через отдельный веб-сокет: так проба не
+   * зависит от того, отдаёт ли DevTools ссылку на вкладку по HTTP.
+   */
+  async _probeTarget(inst, info) {
+    let sessionId = null;
+    try {
+      const att = await inst.cdp.send('Target.attachToTarget', {
+        targetId: info.targetId, flatten: true,
+      });
+      sessionId = att.sessionId;
+      await inst.cdp.send('Runtime.enable', {}, sessionId);
+      const res = await inst.cdp.send('Runtime.evaluate', {
+        expression: GMAIL_PROBE_EXPR, returnByValue: true, awaitPromise: false,
+      }, sessionId);
+      let parsed = {};
+      try { parsed = JSON.parse(res.result.value); } catch (_e) {}
+      return {
+        targetId: info.targetId,
+        status: probeStatus(parsed),
+        email: parsed.email || '',
+        href: parsed.href || info.url || '',
+      };
+    } finally {
+      if (sessionId) {
+        try { await inst.cdp.send('Target.detachFromTarget', { sessionId }); } catch (_e) {}
+      }
+    }
+  }
+
+  /**
+   * Найти среди вкладок профиля ту, где реально открыт Gmail, и привязать к ней
+   * `inst.pageCdp`. Вход пользователь часто заканчивает в другой вкладке, а не в
+   * той, что была открыта при запуске, - без этого скан читал бы чужую страницу.
+   */
+  async _resolveGmailPage(profileId) {
+    const inst = this.instances.get(profileId);
+    if (!inst || !inst.cdp) throw new Error(t('err.profileNotRunning'));
+    const targets = await this._pageTargets(inst);
+    let best = null;
+    for (const info of targets) {
+      let probe = null;
+      try { probe = await this._probeTarget(inst, info); } catch (_e) { continue; }
+      if (!best || STATUS_RANK[probe.status] > STATUS_RANK[best.status]) best = probe;
+      if (best.status === 'ready') break;
+    }
+    if (!best) return { status: 'unknown', email: '', href: '' };
+
+    if (best.status !== 'unknown' && best.targetId !== inst.pageTargetId) {
+      try {
+        const att = await inst.cdp.send('Target.attachToTarget', {
+          targetId: best.targetId, flatten: true,
+        });
+        const next = targetSession(inst.cdp, att.sessionId);
+        await next.send('Page.enable');
+        await next.send('Runtime.enable');
+        try { inst.pageCdp && inst.pageCdp.close(); } catch (_e) {}
+        inst.pageCdp = next;
+        inst.pageTargetId = best.targetId;
+        logger.info('cdp', t('gmail.tabSwitched', { id: profileId }));
+      } catch (_e) { /* остаёмся на прежней вкладке */ }
+    }
+    // У непонятной вкладки почте верить нельзя: адрес мог попасть в заголовок
+    // случайной страницы.
+    return {
+      status: best.status,
+      email: best.status === 'unknown' ? '' : best.email,
+      href: best.href,
+    };
+  }
+
   /**
    * Scan the profile's Gmail tab to determine auth status. Reads the DOM for
-   * signals of a logged-in inbox vs a sign-in screen.
+   * signals of a logged-in inbox vs a sign-in screen. Перебирает все вкладки
+   * профиля - Gmail может быть открыт не в стартовой.
    */
-  async scanGmail(profileId) {
+  async scanGmail(profileId, { quiet = false } = {}) {
     const inst = this.instances.get(profileId);
-    if (!inst || !inst.pageCdp) throw new Error(t('err.profileNotRunning'));
-    // Ensure we're looking at Gmail.
-    const expr = `(function(){
-      try {
-        var href = location.href;
-        var signedIn = !!document.querySelector('[gh="mtb"]') ||
-                       !!document.querySelector('div[role="main"]') && /mail\\.google\\.com\\/mail/.test(href);
-        var signIn = /accounts\\.google\\.com|ServiceLogin|signin/.test(href) ||
-                     !!document.querySelector('input[type="email"]');
-        var email = '';
-        var el = document.querySelector('a[aria-label*="Google Account"], [aria-label*="@"]');
-        if (el) { var m = (el.getAttribute('aria-label')||'').match(/[\\w.+-]+@[\\w.-]+/); if (m) email = m[0]; }
-        return JSON.stringify({ href: href, signedIn: signedIn, signIn: signIn, email: email });
-      } catch(e){ return JSON.stringify({ error: String(e) }); }
-    })()`;
-    const res = await inst.pageCdp.send('Runtime.evaluate', {
-      expression: expr, returnByValue: true, awaitPromise: false,
-    });
-    let parsed = {};
-    try { parsed = JSON.parse(res.result.value); } catch (_e) {}
-    let status = 'unknown';
-    if (parsed.signedIn && !parsed.signIn) status = 'ready';
-    else if (parsed.signIn) status = 'needs_login';
-    logger.info('gmail', t('gmail.scan', {
-      id: profileId,
-      status: t('gmailStatus.' + status),
-      email: parsed.email ? ' (' + parsed.email + ')' : '',
-    }));
-    return { status, email: parsed.email || '', href: parsed.href || '' };
+    if (!inst || !inst.cdp) throw new Error(t('err.profileNotRunning'));
+    const res = await this._resolveGmailPage(profileId);
+    if (!quiet) {
+      if (res.status === 'unknown') logger.warn('gmail', t('gmail.noTab', { id: profileId }));
+      logger.info('gmail', t('gmail.scan', {
+        id: profileId,
+        status: t('gmailStatus.' + res.status),
+        email: res.email ? ' (' + res.email + ')' : '',
+      }));
+    }
+    return res;
   }
 
   async navigate(profileId, url) {
@@ -366,7 +543,10 @@ class ChromeManager {
    */
   async gmailListUnread(profileId, max = 25) {
     const inst = this.instances.get(profileId);
-    if (!inst || !inst.pageCdp) throw new Error(t('err.profileNotRunning'));
+    if (!inst || !inst.cdp) throw new Error(t('err.profileNotRunning'));
+    // Привязаться к вкладке, где пользователь реально залогинен.
+    try { await this._resolveGmailPage(profileId); } catch (_e) {}
+    if (!inst.pageCdp) throw new Error(t('err.profileNotRunning'));
     const cdp = inst.pageCdp;
     const href = await this._eval(cdp, 'location.href');
     if (!/mail\.google\.com/.test(String(href || ''))) {
@@ -392,7 +572,9 @@ class ChromeManager {
    */
   async gmailReply(profileId, thread, text) {
     const inst = this.instances.get(profileId);
-    if (!inst || !inst.pageCdp) throw new Error(t('err.profileNotRunning'));
+    if (!inst || !inst.cdp) throw new Error(t('err.profileNotRunning'));
+    try { await this._resolveGmailPage(profileId); } catch (_e) {}
+    if (!inst.pageCdp) throw new Error(t('err.profileNotRunning'));
     const cdp = inst.pageCdp;
     const tid = typeof thread === 'string' ? thread : (thread && thread.threadId);
     if (!tid) throw new Error(t('err.noThreadId'));

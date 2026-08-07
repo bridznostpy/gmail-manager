@@ -12,6 +12,7 @@ const { ChromeManager } = require('./cdp/chromeManager');
 const { ParserEngine } = require('./parser/parserEngine');
 const { SenderEngine } = require('./sender/senderEngine');
 const ipc = require('./ipc');
+const autoScan = require('./profiles/autoScan');
 const logger = require('./logger');
 const i18n = require('./i18n');
 
@@ -56,6 +57,9 @@ app.whenReady().then(() => {
   i18n.setLanguage(ctx.store.get('language'));
   createWindow();
   ipc.register(ctx);
+  // Статус Gmail подтягиваем сами: вход пользователь делает руками в браузере,
+  // и никакого события об этом приложению не приходит.
+  autoScan.startAutoScan(ctx);
   logger.success('system', i18n.t('sys.started'));
 
   app.on('activate', () => {
@@ -68,5 +72,6 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', async () => {
+  autoScan.stopAutoScan();
   try { ctx && (await ctx.chrome.stopAll()); } catch (_e) {}
 });

@@ -31,6 +31,18 @@ class ParserEngine {
     return this.queue.shift() || null;
   }
 
+  /**
+   * Вложить лид в начало очереди руками. Нужно, чтобы проверить сценарий на
+   * своём адресе: письмо уходит тем же путём, что и обычная рассылка, и так же
+   * попадает в контакты - иначе автоответу неоткуда взять данные товара.
+   */
+  pushLead(lead) {
+    if (!lead || !lead.email) return null;
+    this.queue.unshift(lead);
+    logger.info('parser', t('parser.leadPushed', { email: lead.email, size: this.queue.length }));
+    return lead;
+  }
+
   /** Called by the sender after each successful first-message. */
   noteSent() {
     const { swapKeyEveryN } = this.store.get('parser');

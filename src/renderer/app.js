@@ -170,7 +170,18 @@ VIEWS.dashboard = () => {
     refreshRun();
   });
   stopBtn.addEventListener('click', async () => { await api.run.stop(); toast(t('dash.stoppedToast')); refreshRun(); });
-  controls.append(startBtn, stopBtn);
+  // Тестовый лид: письмо на свой адрес обычным путём рассылки, чтобы проверить
+  // автоответ целиком - ответить с этого адреса и посмотреть, что придёт.
+  const leadBtn = h(`<button class="btn big">${ICONS.send}<span>${esc(t('dash.testLead'))}</span></button>`);
+  leadBtn.addEventListener('click', async () => {
+    const email = await askText(t('dash.testLeadAsk'), { placeholder: 'me@gmail.com' });
+    if (!email) return;
+    const res = await api.run.testLead(email.trim());
+    if (res && res.ok) toast(t('dash.testLeadOk', { email: res.lead.email }), 'success');
+    else toast(t('dash.testLeadFail'), 'error');
+    refreshRun();
+  });
+  controls.append(startBtn, stopBtn, leadBtn);
 
   setTimeout(async () => {
     paintRun();

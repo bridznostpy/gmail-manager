@@ -41,6 +41,10 @@ const DICT = {
     'reason.no_ready_profiles': 'нет готовых профилей',
     'dash.started': 'Прогон запущен',
     'dash.stoppedToast': 'Прогон остановлен',
+    'dash.testLead': 'Тестовый лид',
+    'dash.testLeadAsk': 'На какой адрес отправить первое письмо (уйдёт как обычная рассылка)',
+    'dash.testLeadOk': '{email} в начале очереди - жмите "Старт"',
+    'dash.testLeadFail': 'Не удалось поставить лид в очередь',
 
     // ── Профили ─────────────────────────────────────────────
     'prof.title': 'Профили',
@@ -213,6 +217,10 @@ const DICT = {
     'reason.no_ready_profiles': 'no ready profiles',
     'dash.started': 'Run started',
     'dash.stoppedToast': 'Run stopped',
+    'dash.testLead': 'Test lead',
+    'dash.testLeadAsk': 'Address for the first message (sent as a normal outreach mail)',
+    'dash.testLeadOk': '{email} is first in the queue - press "Start"',
+    'dash.testLeadFail': 'Could not queue the lead',
 
     'prof.title': 'Profiles',
     'prof.sub': 'One Chrome instance per Gmail account',

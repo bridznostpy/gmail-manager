@@ -74,6 +74,26 @@ function register(ctx) {
   ipcMain.handle('run:start', () => sender.start());
   ipcMain.handle('run:stop', () => sender.stop());
   ipcMain.handle('run:status', () => sender.status());
+  // Тестовый лид: своё письмо уходит обычным путём рассылки, чтобы можно было
+  // ответить с этого адреса и посмотреть автоответ целиком.
+  ipcMain.handle('run:testLead', (_e, { email, title, price }) => {
+    const addr = String(email || '').trim();
+    if (!addr) return { ok: false, reason: 'no_email' };
+    const lead = {
+      id: 'test-' + Date.now(),
+      email: addr,
+      name: addr.split('@')[0],
+      platform: 'test',
+      listingUrl: '',
+      // Название уходит темой письма, название и цена идут в ссылку Haron.
+      meta: {
+        title: String(title || '').trim() || 'Casio AE-1000W Digital Watch',
+        price: String(price || '').trim() || '20',
+        currency: '', imageUrl: '', datePublication: '',
+      },
+    };
+    return { ok: !!parser.pushLead(lead), lead };
+  });
   ipcMain.handle('logs:recent', (_e, n) => logger.recent(n || 200));
 
   // ── contacts / nudge ──────────────────────────────────────────────

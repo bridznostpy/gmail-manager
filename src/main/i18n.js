@@ -93,6 +93,7 @@ const DICT = {
     'dry.profileStopped': 'Сухой прогон: профиль "{label}" остановлен',
 
     // ── Парсер ──────────────────────────────────────────────
+    'parser.leadPushed': 'Тестовый лид {email} поставлен в начало очереди (в очереди {size})',
     'parser.keyRotation': 'Достигнуто {n} сообщений - точка ротации ключа API (добавьте запасные ключи, чтобы менять их)',
     'parser.refill': 'В очереди {size} (меньше {threshold}) - забираю пачку из {batch}',
     'parser.added': 'Добавлено лидов: {count}, в очереди теперь {size}',
@@ -205,6 +206,7 @@ const DICT = {
     'dry.empty': 'No unread messages',
     'dry.profileStopped': 'Dry run: profile "{label}" is stopped',
 
+    'parser.leadPushed': 'Test lead {email} pushed to the front of the queue (queue size {size})',
     'parser.keyRotation': 'Reached {n} messages - API key rotation point (configure additional keys to rotate)',
     'parser.refill': 'Queue at {size} (< {threshold}) - fetching batch of {batch}',
     'parser.added': 'Added {count} leads - queue now {size}',

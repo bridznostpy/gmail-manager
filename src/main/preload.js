@@ -24,6 +24,7 @@ contextBridge.exposeInMainWorld('api', {
     start: () => ipcRenderer.invoke('run:start'),
     stop: () => ipcRenderer.invoke('run:stop'),
     status: () => ipcRenderer.invoke('run:status'),
+    testLead: (email) => ipcRenderer.invoke('run:testLead', { email }),
   },
   logs: {
     recent: (n) => ipcRenderer.invoke('logs:recent', n),

@@ -179,6 +179,39 @@ const GMAIL_PROBE_EXPR = `(function(){
   } catch (e) { return JSON.stringify({ error: String(e) }); }
 })()`;
 
+// TODO(gmail-dom): селекторы мини-окна письма. Сняты с живого DOM Gmail,
+// проверять при изменениях вёрстки (Rules 4). Везде, где можно, опираемся на
+// атрибуты, не зависящие от языка интерфейса: gh="cm", name="subjectbox",
+// name="to", data-compose-id, а не на подписи кнопок.
+const SEL = {
+  composeBtn: 'div[gh="cm"]',
+  to: '[name="to"] input[type="text"], input[peoplekit-id="BbVjBd"], input[aria-label^="To"]',
+  subject: 'input[name="subjectbox"]',
+  body: 'div[role="textbox"][g_editable="true"], div[role="textbox"][contenteditable="true"]',
+  send: 'div[role="button"].aoO, div[role="button"][data-tooltip^="Send"], div[role="button"][aria-label^="Send"]',
+  close: 'button.Ha, button[aria-label^="Save"]',
+};
+
+/**
+ * Мини-окно письма по его data-compose-id. Поднимаемся до диалога: шапка с
+ * кнопками "свернуть/закрыть" лежит выше блока с полями, а нажатий по чужому
+ * окну быть не должно - их на странице может висеть несколько.
+ */
+const WIDGET_FN = `function __gmWidget(cid){
+  var r = document.querySelector('[data-compose-id="' + cid + '"]');
+  if (!r) return null;
+  return (r.closest && r.closest('div[role="dialog"]')) || r;
+}`;
+
+/** Выражение, работающее внутри одного мини-окна. */
+function inWidget(cid, bodyExpr) {
+  return `(function(){ ${WIDGET_FN}
+    var w = __gmWidget(${JSON.stringify(String(cid))});
+    if (!w) return false;
+    ${bodyExpr}
+  })()`;
+}
+
 /** Вход в аккаунт приоритетнее страницы входа: инбокс может нести оба признака. */
 function probeStatus(parsed) {
   if (parsed && parsed.signedIn) return 'ready';
@@ -290,7 +323,11 @@ class ChromeManager {
     const cdp = new CDPSession(version.webSocketDebuggerUrl);
     await cdp.connect();
 
-    const inst = { proc, port, cdp, profileId: profile.id };
+    const inst = {
+      proc, port, cdp, profileId: profile.id,
+      // Профиль с mac-фингерпринтом: Gmail в нём ждёт Cmd+Enter вместо Ctrl+Enter.
+      mac: /Mac OS X|Macintosh/.test(profile.fingerprint.userAgent || ''),
+    };
     this.instances.set(profile.id, inst);
 
     // Каждая НОВАЯ вкладка профиля тоже должна получить фингерпринт: вход в
@@ -524,24 +561,144 @@ class ChromeManager {
     return false;
   }
 
-  /** Dispatch Ctrl+Enter - Gmail's send shortcut (works regardless of the
-   *  keyboard-shortcuts setting). Focuses the body first. */
-  async _sendCtrlEnter(cdp) {
-    await this._eval(cdp, `(function(){var t=document.querySelector('div[role=textbox][aria-label*=Body], div[role=textbox]'); if(t)t.focus(); return true;})()`);
-    const key = { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13, modifiers: 2 };
+  /**
+   * Горячая клавиша отправки. У профилей с mac-фингерпринтом Gmail ждёт
+   * Cmd+Enter, а не Ctrl+Enter - подпись на кнопке в таком профиле так и
+   * выглядит ("Send (⌘Enter)"). Модификатор: 2 = Ctrl, 4 = Meta.
+   */
+  async _sendShortcut(cdp, inst, scope) {
+    await this._eval(cdp, scope || `(function(){var t=document.querySelector('div[role=textbox][aria-label*=Body], div[role=textbox]'); if(t)t.focus(); return true;})()`);
+    const key = {
+      key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13,
+      modifiers: inst && inst.mac ? 4 : 2,
+    };
     await cdp.send('Input.dispatchKeyEvent', Object.assign({ type: 'rawKeyDown' }, key));
     await cdp.send('Input.dispatchKeyEvent', Object.assign({ type: 'keyUp' }, key));
   }
 
+  /** data-compose-id всех открытых мини-окон письма. */
+  async _composeIds(cdp) {
+    const raw = await this._eval(cdp,
+      `JSON.stringify(Array.prototype.map.call(document.querySelectorAll('[data-compose-id]'),`
+      + ` function(n){ return n.getAttribute('data-compose-id'); }))`);
+    try { return JSON.parse(raw || '[]'); } catch (_e) { return []; }
+  }
+
   /**
-   * Send a first-message from a running profile. Opens Gmail's compose window
-   * in a SEPARATE target (so the inbox tab used for reply-scanning stays put),
-   * clicks Send (fallback Ctrl+Enter), waits for confirmation, then closes it.
+   * Нажать "Написать" и дождаться СВОЕГО мини-окна. Каждое нажатие открывает
+   * ещё одно окно, поэтому запоминаем уже открытые и берём появившееся.
+   */
+  async _openCompose(cdp) {
+    const before = await this._composeIds(cdp);
+    const clicked = await this._eval(cdp,
+      `(function(){ var b = document.querySelector('${SEL.composeBtn}');`
+      + ` if (!b) return false; b.click(); return true; })()`);
+    if (!clicked) return null;
+    const known = JSON.stringify(before);
+    const appeared = await this._waitFor(cdp,
+      `(function(){ var k = ${known}, n = document.querySelectorAll('[data-compose-id]');`
+      + ` for (var i = 0; i < n.length; i++) { if (k.indexOf(n[i].getAttribute('data-compose-id')) < 0) return true; }`
+      + ` return false; })()`, 40);
+    if (!appeared) return null;
+    const fresh = (await this._composeIds(cdp)).filter((id) => before.indexOf(id) < 0);
+    return fresh.length ? fresh[fresh.length - 1] : null;
+  }
+
+  /** Навести фокус на поле внутри своего мини-окна и напечатать текст. */
+  async _typeInto(cdp, cid, selector, text) {
+    const focused = await this._eval(cdp, inWidget(cid,
+      `var el = w.querySelector(${JSON.stringify(selector)});
+       if (!el) return false;
+       el.focus();
+       if (el.select) { try { el.select(); } catch (e) {} }
+       return true;`));
+    if (!focused) return false;
+    // Печатаем через Input.insertText: поле адресата - виджет Google, который
+    // слушает настоящие события ввода, а не подстановку value.
+    await cdp.send('Input.insertText', { text: String(text == null ? '' : text) });
+    return true;
+  }
+
+  /** Тело письма - contenteditable, перевод строки нужен настоящий. */
+  async _fillBody(cdp, cid, text) {
+    const put = JSON.stringify(String(text == null ? '' : text));
+    return this._eval(cdp, inWidget(cid,
+      `var el = w.querySelector(${JSON.stringify(SEL.body)});
+       if (!el) return false;
+       el.focus();
+       try { document.execCommand('insertText', false, ${put}); }
+       catch (e) { el.textContent = ${put}; }
+       el.dispatchEvent(new InputEvent('input', { bubbles: true }));
+       return true;`));
+  }
+
+  /**
+   * Отправить первое письмо из запущенного профиля через мини-окно на самой
+   * вкладке почты: нажимаем "Написать" (gh="cm"), заполняем поля своего окна и
+   * жмём "Отправить". Отдельное окно ?view=cm остаётся запасным путём.
    */
   async gmailCompose(profileId, { to, subject, body } = {}) {
     const inst = this.instances.get(profileId);
     if (!inst || !inst.cdp) throw new Error(t('err.profileNotRunning'));
     if (!to) throw new Error(t('err.noRecipient'));
+
+    await this._resolveGmailPage(profileId).catch(() => {});
+    const cdp = inst.pageCdp;
+    if (!cdp) throw new Error(t('err.profileNotRunning'));
+
+    const href = await this._eval(cdp, 'location.href').catch(() => '');
+    if (!/mail\.google\.com/.test(String(href || ''))) {
+      await cdp.send('Page.navigate', { url: 'https://mail.google.com/mail/u/0/#inbox' });
+      await this._waitFor(cdp, `/mail\\.google\\.com/.test(location.href)`, 24);
+    }
+
+    const btnReady = await this._waitFor(cdp,
+      `!!document.querySelector('${SEL.composeBtn}')`, 40);
+    if (!btnReady) {
+      logger.warn('gmail', t('gmail.composeBtnMissing'));
+      return this._composeViaWindow(inst, { to, subject, body });
+    }
+
+    const cid = await this._openCompose(cdp);
+    if (!cid) throw new Error(t('err.composeNotOpened'));
+
+    let sent = false;
+    try {
+      const filledTo = await this._typeInto(cdp, cid, SEL.to, to);
+      if (!filledTo) throw new Error(t('err.composeNotRendered'));
+      if (subject) await this._typeInto(cdp, cid, SEL.subject, subject);
+      if (body) await this._fillBody(cdp, cid, body);
+
+      const clicked = await this._eval(cdp, inWidget(cid,
+        `var b = w.querySelector(${JSON.stringify(SEL.send)});
+         if (!b) return false; b.click(); return true;`));
+      if (!clicked) {
+        await this._sendShortcut(cdp, inst, inWidget(cid,
+          `var el = w.querySelector(${JSON.stringify(SEL.body)}); if (el) el.focus(); return true;`));
+      }
+
+      // Отправленное окно закрывается само. Отдельно ловим подтверждение Gmail
+      // со ссылкой отмены - её id не зависит от языка интерфейса.
+      sent = await this._waitFor(cdp,
+        `(function(){ ${WIDGET_FN}
+          if (!__gmWidget(${JSON.stringify(String(cid))})) return true;
+          return !!document.getElementById('link_undo'); })()`, 24);
+      if (sent) logger.success('gmail', t('gmail.sent', { to }));
+      else logger.warn('gmail', t('gmail.sendUnconfirmed', { to }));
+      return { ok: !!sent };
+    } finally {
+      // Своё окно за собой закрываем, иначе неудачные попытки копятся на
+      // странице стопкой черновиков.
+      if (!sent) {
+        await this._eval(cdp, inWidget(cid,
+          `var b = w.querySelector(${JSON.stringify(SEL.close)});
+           if (b) { b.click(); return true; } return false;`)).catch(() => {});
+      }
+    }
+  }
+
+  /** Запасной путь: отдельное окно ?view=cm, если кнопки "Написать" нет. */
+  async _composeViaWindow(inst, { to, subject, body } = {}) {
     const q = (s) => encodeURIComponent(String(s == null ? '' : s));
     const url = 'https://mail.google.com/mail/u/0/?view=cm&fs=1&tf=1'
       + `&to=${q(to)}&su=${q(subject)}&body=${q(body)}`;
@@ -553,16 +710,17 @@ class ChromeManager {
       await pageCdp.send('Page.enable');
       await pageCdp.send('Runtime.enable');
 
-      const ready = await this._waitFor(pageCdp,
-        `!!document.querySelector('div[role=button][aria-label^=Send], div[role=button][data-tooltip^=Send]')`, 40);
+      const ready = await this._waitFor(pageCdp, `!!document.querySelector('${SEL.send}')`, 40);
       if (!ready) throw new Error(t('err.composeNotRendered'));
 
       const clicked = await this._eval(pageCdp,
-        `(function(){var b=document.querySelector('div[role=button][aria-label^=Send], div[role=button][data-tooltip^=Send]'); if(b){b.click(); return true;} return false;})()`);
-      if (!clicked) await this._sendCtrlEnter(pageCdp);
+        `(function(){ var b = document.querySelector('${SEL.send}');`
+        + ` if (b) { b.click(); return true; } return false; })()`);
+      if (!clicked) await this._sendShortcut(pageCdp, inst);
 
       const sent = await this._waitFor(pageCdp,
-        `(function(){ if(!document.querySelector('div[role=button][aria-label^=Send]')) return true; var e=document.querySelectorAll('span'); for(var i=0;i<e.length;i++){ if(/message sent|your message has been sent/i.test(e[i].textContent||'')) return true; } return false; })()`, 24);
+        `(function(){ if (!document.querySelector('${SEL.send}')) return true;`
+        + ` return !!document.getElementById('link_undo'); })()`, 24);
       if (sent) logger.success('gmail', t('gmail.sent', { to }));
       else logger.warn('gmail', t('gmail.sendUnconfirmed', { to }));
       return { ok: !!sent };
@@ -627,7 +785,9 @@ class ChromeManager {
     const put = JSON.stringify(String(text == null ? '' : text));
     await this._eval(cdp,
       `(function(){var t=document.querySelector('div[role=textbox][aria-label*=Body], div[role=textbox]'); if(!t)return false; t.focus(); try{document.execCommand('insertText',false,${put});}catch(e){t.textContent=${put};} t.dispatchEvent(new InputEvent('input',{bubbles:true})); return true;})()`);
-    await this._sendCtrlEnter(cdp);
+    // Кнопки "Отправить" в окне ответа может не быть на виду - шлём горячей
+    // клавишей, с поправкой на mac-фингерпринт профиля.
+    await this._sendShortcut(cdp, inst);
 
     const sent = await this._waitFor(cdp,
       `!document.querySelector('div[role=textbox][aria-label*=Body]')`, 24);

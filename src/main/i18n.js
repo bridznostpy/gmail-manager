@@ -27,6 +27,7 @@ const DICT = {
     'err.noLeadEmail': 'у лида нет адреса получателя',
     'err.noRecipient': 'не указан адрес получателя',
     'err.composeNotRendered': 'окно письма не открылось (аккаунт не залогинен?)',
+    'err.composeNotOpened': 'мини-окно письма не появилось после нажатия "Написать"',
     'err.threadNotOpened': 'переписка не открылась',
     'err.replyBoxNotOpened': 'поле ответа не открылось',
     'err.noThreadId': 'нет идентификатора переписки',
@@ -48,6 +49,7 @@ const DICT = {
     // ── Gmail ───────────────────────────────────────────────
     'gmail.scan': 'Сканирование "{id}": {status}{email}',
     'gmail.noTab': 'Gmail не открыт ни в одной вкладке профиля "{id}" - откройте mail.google.com',
+    'gmail.composeBtnMissing': 'Кнопка "Написать" не найдена, шлю через отдельное окно письма',
     'gmail.tabSwitched': 'Профиль "{id}": скан переключён на вкладку с Gmail',
     'gmail.statusChanged': 'Профиль "{label}": {status}{email}',
     'gmail.sent': 'Письмо отправлено на {to}',
@@ -127,6 +129,7 @@ const DICT = {
     'err.noLeadEmail': 'lead has no recipient email',
     'err.noRecipient': 'no recipient email',
     'err.composeNotRendered': 'compose window did not render (account not logged in?)',
+    'err.composeNotOpened': 'the compose panel did not appear after clicking Compose',
     'err.threadNotOpened': 'thread did not open',
     'err.replyBoxNotOpened': 'reply box did not open',
     'err.noThreadId': 'no thread id',
@@ -146,6 +149,7 @@ const DICT = {
 
     'gmail.scan': 'Scan "{id}": {status}{email}',
     'gmail.noTab': 'Gmail is not open in any tab of profile "{id}" - open mail.google.com',
+    'gmail.composeBtnMissing': 'Compose button not found, sending via a separate compose window',
     'gmail.tabSwitched': 'Profile "{id}": scan switched to the tab with Gmail',
     'gmail.statusChanged': 'Profile "{label}": {status}{email}',
     'gmail.sent': 'Message sent to {to}',

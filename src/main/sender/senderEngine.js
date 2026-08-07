@@ -179,12 +179,20 @@ class SenderEngine {
         continue;
       }
       for (const thread of unread) {
+        // Отвечаем ТОЛЬКО тем, кому сами писали в этой рассылке. Иначе PASTE со
+        // ссылкой ушёл бы на любое непрочитанное письмо в инбоксе (промо,
+        // служебные письма Gmail), а не на реальный ответ покупателя.
+        const contact = this.contactStore ? this.contactStore.get(thread.from) : null;
+        if (!contact) {
+          logger.debug('sender', t('reply.skipUnknown', { from: thread.from || '?' }));
+          continue;
+        }
         const key = account.id + ':' + thread.threadId;
         const dialog = this.dialogs.get(key) || { replies: 0 };
         if (dialog.replies >= maxReplies) continue;
         try {
-          // Ссылку строим по сохранённым данным товара этого адресата, если он
-          // есть в контактах - у самой переписки названия товара и цены нет.
+          // Ссылку строим по сохранённым данным товара этого адресата - у самой
+          // переписки названия товара и цены нет.
           const url = await this._linkFor(thread.from, thread);
           const text = texts.autoReply(loaded, lang, url);
           await this.chrome.gmailReply(account.id, thread, text);

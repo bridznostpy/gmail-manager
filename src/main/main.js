@@ -33,7 +33,7 @@ function createWindow() {
     height: 820,
     minWidth: 1024,
     minHeight: 680,
-    backgroundColor: '#0f1117',
+    backgroundColor: '#16181d',
     title: 'Gmail Manager',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),

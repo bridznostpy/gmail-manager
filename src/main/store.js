@@ -11,7 +11,7 @@ const path = require('path');
 
 const DEFAULTS = {
   theme: 'dark', // 'dark' | 'light'
-  accent: '#6366f1',
+  accent: '#7f52ff',
 
   // ── System settings ──────────────────────────────────────────────
   system: {

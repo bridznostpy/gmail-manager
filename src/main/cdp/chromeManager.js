@@ -218,9 +218,17 @@ const ROWS_FN = `function __gmRows(unreadOnly, max){
   var out = [];
   for (var i = 0; i < rows.length && out.length < max; i++) {
     var r = rows[i];
-    var id = r.getAttribute('data-legacy-thread-id') || r.getAttribute('id') || '';
+    // id треда и id строки - разные вещи. Первый годится для адреса, второй
+    // живёт только в текущем рендере списка и нужен, чтобы кликнуть строку.
+    var holder = r.querySelector('[data-legacy-thread-id]');
+    var tid = r.getAttribute('data-legacy-thread-id')
+      || (holder ? holder.getAttribute('data-legacy-thread-id') : '') || '';
+    var rid = r.getAttribute('id') || '';
     var s = r.querySelector('.bog, .y6 span');
-    out.push({ threadId: id, from: pickEmail(r), subject: s ? s.textContent : '' });
+    out.push({
+      threadId: tid || rid, legacyId: tid, rowId: rid,
+      from: pickEmail(r), subject: s ? s.textContent : '',
+    });
   }
   return JSON.stringify(out);
 }`;
@@ -932,17 +940,59 @@ class ChromeManager {
     return this._serial(profileId, () => this._gmailReply(profileId, thread, text));
   }
 
+  /**
+   * Открыть переписку. Основной путь - клик по строке списка, как в расширении:
+   * у строки инбокса есть только её собственный id вида ":15o", он живёт в
+   * текущем рендере и адресом треда не является - переход на #inbox/:15o
+   * никуда не ведёт. Строку ищем по id, при промахе (список перерисовался) - по
+   * адресу отправителя. Настоящий data-legacy-thread-id, если он есть, остаётся
+   * запасным путём через адрес.
+   */
+  async _openThread(cdp, item) {
+    await this._ensureInbox(cdp);
+    const rid = JSON.stringify(String(item.rowId || ''));
+    const from = JSON.stringify(String(item.from || '').toLowerCase());
+    const clicked = await this._eval(cdp, `(function(){
+      var r = ${rid} ? document.getElementById(${rid}) : null;
+      if (r && !(r.matches && r.matches('${SEL.row}'))) r = null;
+      if (!r && ${from}) {
+        var rows = document.querySelectorAll('${SEL.row}');
+        for (var i = 0; i < rows.length && !r; i++) {
+          var s = rows[i].querySelectorAll('span[email]');
+          for (var j = 0; j < s.length; j++) {
+            if ((s[j].getAttribute('email') || '').toLowerCase() === ${from}) { r = rows[i]; break; }
+          }
+        }
+      }
+      if (!r) return false;
+      r.click();
+      return true;
+    })()`).catch(() => false);
+
+    if (clicked) {
+      const shown = await this._waitFor(cdp, `!!document.querySelector('div.adn, div[role=listitem]')`, 40);
+      if (shown) return true;
+    }
+    // Запасной путь - адрес треда, но только если это настоящий id, а не id
+    // строки: иначе получится заведомо мёртвая ссылка.
+    if (!item.legacyId) return false;
+    await cdp.send('Page.navigate', {
+      url: 'https://mail.google.com/mail/u/0/#inbox/' + encodeURIComponent(item.legacyId),
+    });
+    return this._waitFor(cdp, `!!document.querySelector('div.adn, div[role=listitem]')`, 40);
+  }
+
   async _gmailReply(profileId, thread, text) {
     const inst = this.instances.get(profileId);
     if (!inst || !inst.cdp) throw new Error(t('err.profileNotRunning'));
     try { await this._resolveGmailPage(profileId); } catch (_e) {}
     if (!inst.pageCdp) throw new Error(t('err.profileNotRunning'));
     const cdp = inst.pageCdp;
-    const tid = typeof thread === 'string' ? thread : (thread && thread.threadId);
+    const item = typeof thread === 'string' ? { threadId: thread } : (thread || {});
+    const tid = item.threadId;
     if (!tid) throw new Error(t('err.noThreadId'));
 
-    await cdp.send('Page.navigate', { url: 'https://mail.google.com/mail/u/0/#inbox/' + encodeURIComponent(tid) });
-    const opened = await this._waitFor(cdp, `!!document.querySelector('div.adn, div[role=listitem]')`, 40);
+    const opened = await this._openThread(cdp, item);
     if (!opened) {
       // Вкладку оставлять на треде нельзя: без списка писем следующий скан
       // ничего не найдёт, а отправка не найдёт кнопку "Написать".

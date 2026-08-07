@@ -604,8 +604,22 @@ class ChromeManager {
     return fresh.length ? fresh[fresh.length - 1] : null;
   }
 
-  /** Навести фокус на поле внутри своего мини-окна и напечатать текст. */
+  /** Прочитать значение поля внутри своего мини-окна. */
+  async _readField(cdp, cid, selector) {
+    const v = await this._eval(cdp, inWidget(cid,
+      `var el = w.querySelector(${JSON.stringify(selector)});
+       return el ? String(el.value == null ? (el.innerText || '') : el.value) : null;`));
+    return v === false ? null : v;
+  }
+
+  /**
+   * Навести фокус на поле внутри своего мини-окна и напечатать текст.
+   * Печатаем через Input.insertText: поле адресата - виджет Google, который
+   * слушает настоящие события ввода, а не подстановку value. Результат
+   * проверяем и при осечке подставляем значение напрямую.
+   */
   async _typeInto(cdp, cid, selector, text) {
+    const value = String(text == null ? '' : text);
     const focused = await this._eval(cdp, inWidget(cid,
       `var el = w.querySelector(${JSON.stringify(selector)});
        if (!el) return false;
@@ -613,10 +627,73 @@ class ChromeManager {
        if (el.select) { try { el.select(); } catch (e) {} }
        return true;`));
     if (!focused) return false;
-    // Печатаем через Input.insertText: поле адресата - виджет Google, который
-    // слушает настоящие события ввода, а не подстановку value.
-    await cdp.send('Input.insertText', { text: String(text == null ? '' : text) });
-    return true;
+    await cdp.send('Input.insertText', { text: value });
+
+    if ((await this._readField(cdp, cid, selector)) === value) return true;
+    // Запасной путь: значение напрямую плюс события, на которые виджет подписан.
+    const put = JSON.stringify(value);
+    await this._eval(cdp, inWidget(cid,
+      `var el = w.querySelector(${JSON.stringify(selector)});
+       if (!el) return false;
+       el.focus();
+       if ('value' in el) el.value = ${put}; else el.textContent = ${put};
+       el.dispatchEvent(new InputEvent('input', { bubbles: true }));
+       el.dispatchEvent(new Event('change', { bubbles: true }));
+       return true;`));
+    return (await this._readField(cdp, cid, selector)) === value;
+  }
+
+  /** Нажать клавишу в странице (Tab закрепляет адрес в поле получателя). */
+  async _pressKey(cdp, key, code, vk) {
+    const k = { key, code, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk };
+    await cdp.send('Input.dispatchKeyEvent', Object.assign({ type: 'rawKeyDown' }, k));
+    await cdp.send('Input.dispatchKeyEvent', Object.assign({ type: 'keyUp' }, k));
+  }
+
+  /**
+   * Получатель есть только тогда, когда адрес закреплён плашкой. Набранный в
+   * поле текст не считаем: именно его Gmail и не признаёт получателем. Текст
+   * блока получателей значение input не включает, так что попадание в него -
+   * это уже плашка. Плашка известного контакта показывает имя, а не адрес,
+   * поэтому дополнительно смотрим атрибуты.
+   */
+  async _hasRecipient(cdp, cid, address) {
+    const needle = JSON.stringify(String(address || '').toLowerCase());
+    return this._eval(cdp, inWidget(cid,
+      `var box = w.querySelector('[name="to"]');
+       if (!box) return false;
+       if ((box.innerText || box.textContent || '').toLowerCase().indexOf(${needle}) >= 0) return true;
+       var nodes = box.querySelectorAll('[data-hovercard-id],[email],[title],[aria-label]');
+       for (var i = 0; i < nodes.length; i++) {
+         var n = nodes[i];
+         if (n.tagName === 'INPUT') continue;
+         var s = ((n.getAttribute('data-hovercard-id') || '') + ' ' + (n.getAttribute('email') || '')
+               + ' ' + (n.getAttribute('title') || '') + ' ' + (n.getAttribute('aria-label') || '')).toLowerCase();
+         if (s.indexOf(${needle}) >= 0) return true;
+       }
+       return false;`));
+  }
+
+  /**
+   * Вписать получателя и закрепить его. Просто набранный текст Gmail за
+   * получателя не считает - при отправке он отвечает, что адрес не указан.
+   * Закрепляем Tab, при осечке повторяем с запятой; Enter не годится - он
+   * выберет подсказку из списка контактов, а это может быть чужой адрес.
+   */
+  async _setRecipient(cdp, cid, to) {
+    const commits = [
+      () => this._pressKey(cdp, 'Tab', 'Tab', 9),
+      () => cdp.send('Input.insertText', { text: ',' }),
+    ];
+    for (const commit of commits) {
+      const typed = await this._typeInto(cdp, cid, SEL.to, to);
+      if (typed) {
+        await commit();
+        if (await this._hasRecipient(cdp, cid, to)) return true;
+      }
+      await new Promise((r) => setTimeout(r, 400));
+    }
+    return false;
   }
 
   /** Тело письма - contenteditable, перевод строки нужен настоящий. */
@@ -664,8 +741,11 @@ class ChromeManager {
 
     let sent = false;
     try {
-      const filledTo = await this._typeInto(cdp, cid, SEL.to, to);
-      if (!filledTo) throw new Error(t('err.composeNotRendered'));
+      // Не жмём "Отправить" вслепую: без закреплённого получателя Gmail выдаёт
+      // свой алерт, окно остаётся висеть, а в логе - невнятное "не подтверждено".
+      if (!(await this._setRecipient(cdp, cid, to))) {
+        throw new Error(t('err.recipientNotSet', { to }));
+      }
       if (subject) await this._typeInto(cdp, cid, SEL.subject, subject);
       if (body) await this._fillBody(cdp, cid, body);
 
@@ -776,24 +856,26 @@ class ChromeManager {
     const opened = await this._waitFor(cdp, `!!document.querySelector('div.adn, div[role=listitem]')`, 40);
     if (!opened) throw new Error(t('err.threadNotOpened'));
 
-    await this._eval(cdp,
-      `(function(){var b=document.querySelector('div[role=button][aria-label^=Reply], span.ams.bkH, div.amn'); if(b)b.click(); return true;})()`);
-    const boxReady = await this._waitFor(cdp,
-      `!!document.querySelector('div[role=textbox][aria-label*=Body], div[role=textbox]')`, 40);
-    if (!boxReady) throw new Error(t('err.replyBoxNotOpened'));
+    {
+      await this._eval(cdp,
+        `(function(){var b=document.querySelector('div[role=button][aria-label^=Reply], span.ams.bkH, div.amn'); if(b)b.click(); return true;})()`);
+      const boxReady = await this._waitFor(cdp,
+        `!!document.querySelector('div[role=textbox][aria-label*=Body], div[role=textbox]')`, 40);
+      if (!boxReady) throw new Error(t('err.replyBoxNotOpened'));
 
-    const put = JSON.stringify(String(text == null ? '' : text));
-    await this._eval(cdp,
-      `(function(){var t=document.querySelector('div[role=textbox][aria-label*=Body], div[role=textbox]'); if(!t)return false; t.focus(); try{document.execCommand('insertText',false,${put});}catch(e){t.textContent=${put};} t.dispatchEvent(new InputEvent('input',{bubbles:true})); return true;})()`);
-    // Кнопки "Отправить" в окне ответа может не быть на виду - шлём горячей
-    // клавишей, с поправкой на mac-фингерпринт профиля.
-    await this._sendShortcut(cdp, inst);
+      const put = JSON.stringify(String(text == null ? '' : text));
+      await this._eval(cdp,
+        `(function(){var t=document.querySelector('div[role=textbox][aria-label*=Body], div[role=textbox]'); if(!t)return false; t.focus(); try{document.execCommand('insertText',false,${put});}catch(e){t.textContent=${put};} t.dispatchEvent(new InputEvent('input',{bubbles:true})); return true;})()`);
+      // Кнопки "Отправить" в окне ответа может не быть на виду - шлём горячей
+      // клавишей, с поправкой на mac-фингерпринт профиля.
+      await this._sendShortcut(cdp, inst);
 
-    const sent = await this._waitFor(cdp,
-      `!document.querySelector('div[role=textbox][aria-label*=Body]')`, 24);
-    if (sent) logger.success('gmail', t('gmail.replySent', { tid }));
-    else logger.warn('gmail', t('gmail.replyUnconfirmed', { tid }));
-    return { ok: !!sent };
+      const sent = await this._waitFor(cdp,
+        `!document.querySelector('div[role=textbox][aria-label*=Body]')`, 24);
+      if (sent) logger.success('gmail', t('gmail.replySent', { tid }));
+      else logger.warn('gmail', t('gmail.replyUnconfirmed', { tid }));
+      return { ok: !!sent };
+    }
   }
 
   async stop(profileId) {

@@ -190,7 +190,40 @@ const SEL = {
   body: 'div[role="textbox"][g_editable="true"], div[role="textbox"][contenteditable="true"]',
   send: 'div[role="button"].aoO, div[role="button"][data-tooltip^="Send"], div[role="button"][aria-label^="Send"]',
   close: 'button.Ha, button[aria-label^="Save"]',
+  refreshBtn: '[data-tooltip="Refresh"], [aria-label="Refresh"], .T-I.J-J5-Ji.nu.T-I-ax7.L3',
+  replyBtn: 'span.ams.bkH[role="link"], div[role="button"][aria-label^="Reply"], div.amn',
+  row: 'tr.zA',
+  unreadRow: 'tr.zA.zE',
 };
+
+/**
+ * Строки списка писем с отправителем. Логика выбора адреса перенесена из
+ * расширения: в треде участников несколько, и нужен тот, кто ответил последним,
+ * - первый span[email] строки часто сам аккаунт ("me"). Берём последний
+ * span.zF, запасной путь - span.yP, письма от mailer-daemon отбрасываем.
+ */
+const ROWS_FN = `function __gmRows(unreadOnly, max){
+  var bad = /mailer-daemon@/i;
+  function pickEmail(row){
+    var zf = row.querySelectorAll('span.zF[email]');
+    for (var i = zf.length - 1; i >= 0; i--) {
+      var e = zf[i].getAttribute('email');
+      if (e && !bad.test(e)) return e;
+    }
+    var yp = row.querySelector('span.yP[email]');
+    var y = yp ? yp.getAttribute('email') : '';
+    return (y && !bad.test(y)) ? y : '';
+  }
+  var rows = document.querySelectorAll(unreadOnly ? '${SEL.unreadRow}' : '${SEL.row}');
+  var out = [];
+  for (var i = 0; i < rows.length && out.length < max; i++) {
+    var r = rows[i];
+    var id = r.getAttribute('data-legacy-thread-id') || r.getAttribute('id') || '';
+    var s = r.querySelector('.bog, .y6 span');
+    out.push({ threadId: id, from: pickEmail(r), subject: s ? s.textContent : '' });
+  }
+  return JSON.stringify(out);
+}`;
 
 /**
  * Мини-окно письма по его data-compose-id. Поднимаемся до диалога: шапка с
@@ -327,6 +360,8 @@ class ChromeManager {
       proc, port, cdp, profileId: profile.id,
       // Профиль с mac-фингерпринтом: Gmail в нём ждёт Cmd+Enter вместо Ctrl+Enter.
       mac: /Mac OS X|Macintosh/.test(profile.fingerprint.userAgent || ''),
+      // Цепочка задач по вкладке почты, см. _serial.
+      queue: Promise.resolve(),
     };
     this.instances.set(profile.id, inst);
 
@@ -562,6 +597,40 @@ class ChromeManager {
   }
 
   /**
+   * Провести задачу через очередь профиля. Рассылка и автоответ работают на
+   * ОДНОЙ вкладке почты: пока идёт отправка, у профиля открыто мини-окно
+   * письма, а автоответ в это же время уводит вкладку на тред через
+   * Page.navigate - письмо теряется, а текст ответа улетает не в то поле.
+   * Поэтому все действия по Gmail выстраиваем в цепочку, как в расширении.
+   */
+  _serial(profileId, fn) {
+    const inst = this.instances.get(profileId);
+    if (!inst) return fn();
+    const next = inst.queue.then(fn, fn);
+    // Хвост цепочки не должен нести отказ дальше, иначе одна ошибка положит
+    // все следующие задачи профиля.
+    inst.queue = next.then(() => {}, () => {});
+    return next;
+  }
+
+  /**
+   * Нажать "Обновить" в списке писем. Без этого сканируем то, что осело во
+   * вкладке: она может висеть открытой часами, и новый ответ в DOM не появится.
+   */
+  async _refreshInbox(cdp) {
+    const clicked = await this._eval(cdp,
+      `(function(){ var b = document.querySelector('${SEL.refreshBtn}');`
+      + ` if (!b) return false; b.click(); return true; })()`).catch(() => false);
+    if (!clicked) {
+      logger.debug('gmail', t('gmail.refreshMissing'));
+      return false;
+    }
+    // Список перерисовывается не мгновенно; ждём появления строк.
+    await this._waitFor(cdp, `!!document.querySelector('${SEL.row}')`, 12);
+    return true;
+  }
+
+  /**
    * Горячая клавиша отправки. У профилей с mac-фингерпринтом Gmail ждёт
    * Cmd+Enter, а не Ctrl+Enter - подпись на кнопке в таком профиле так и
    * выглядит ("Send (⌘Enter)"). Модификатор: 2 = Ctrl, 4 = Meta.
@@ -715,6 +784,10 @@ class ChromeManager {
    * жмём "Отправить". Отдельное окно ?view=cm остаётся запасным путём.
    */
   async gmailCompose(profileId, { to, subject, body } = {}) {
+    return this._serial(profileId, () => this._gmailCompose(profileId, { to, subject, body }));
+  }
+
+  async _gmailCompose(profileId, { to, subject, body } = {}) {
     const inst = this.instances.get(profileId);
     if (!inst || !inst.cdp) throw new Error(t('err.profileNotRunning'));
     if (!to) throw new Error(t('err.noRecipient'));
@@ -815,28 +888,40 @@ class ChromeManager {
    * list of { threadId, from, subject } for the auto-responder to act on.
    */
   async gmailListUnread(profileId, max = 25) {
+    return this._serial(profileId, () => this._listRows(profileId, { unreadOnly: true, max }));
+  }
+
+  /** Прочитать строки списка писем на вкладке почты профиля. */
+  async _listRows(profileId, { unreadOnly = true, max = 25 } = {}) {
     const inst = this.instances.get(profileId);
     if (!inst || !inst.cdp) throw new Error(t('err.profileNotRunning'));
     // Привязаться к вкладке, где пользователь реально залогинен.
     try { await this._resolveGmailPage(profileId); } catch (_e) {}
     if (!inst.pageCdp) throw new Error(t('err.profileNotRunning'));
     const cdp = inst.pageCdp;
-    const href = await this._eval(cdp, 'location.href');
-    if (!/mail\.google\.com/.test(String(href || ''))) {
-      await cdp.send('Page.navigate', { url: 'https://mail.google.com/mail/u/0/#inbox' });
-      await this._waitFor(cdp, `/mail\\.google\\.com/.test(location.href)`, 24);
-    }
-    const expr = `(function(){try{`
-      + `var rows=document.querySelectorAll('tr.zA.zE');var out=[];`
-      + `for(var i=0;i<rows.length && out.length<${max};i++){var r=rows[i];`
-      + `var id=r.getAttribute('data-legacy-thread-id')||r.getAttribute('id')||'';`
-      + `var f=r.querySelector('span[email]');var from=f?(f.getAttribute('email')||f.textContent):'';`
-      + `var s=r.querySelector('.bog, .y6 span');var subj=s?s.textContent:'';`
-      + `out.push({threadId:id,from:from,subject:subj});}`
-      + `return JSON.stringify(out);}catch(e){return '[]';}})()`;
+    await this._ensureInbox(cdp);
+    await this._refreshInbox(cdp);
+    const expr = `(function(){try{ ${ROWS_FN}`
+      + ` return __gmRows(${unreadOnly ? 'true' : 'false'}, ${Number(max) || 25});`
+      + `}catch(e){return '[]';}})()`;
     let list = [];
     try { list = JSON.parse((await this._eval(cdp, expr)) || '[]'); } catch (_e) {}
     return list.filter((x) => x && x.threadId);
+  }
+
+  /**
+   * Вернуть вкладку в список писем. Признак списка - строки tr.zA: они есть и в
+   * инбоксе, и в ярлыке, где пользователь мог остаться сам. Уводим на инбокс
+   * только когда строк нет (открытый тред, другой сайт, окно письма).
+   */
+  async _ensureInbox(cdp) {
+    const href = String((await this._eval(cdp, 'location.href').catch(() => '')) || '');
+    if (/mail\.google\.com/.test(href)) {
+      const listed = await this._eval(cdp, `!!document.querySelector('${SEL.row}')`).catch(() => false);
+      if (listed) return true;
+    }
+    await cdp.send('Page.navigate', { url: 'https://mail.google.com/mail/u/0/#inbox' });
+    return this._waitFor(cdp, `!!document.querySelector('${SEL.row}')`, 24);
   }
 
   /**
@@ -844,6 +929,10 @@ class ChromeManager {
    * auto-responder. Best-effort DOM automation - see TODO(gmail-dom) above.
    */
   async gmailReply(profileId, thread, text) {
+    return this._serial(profileId, () => this._gmailReply(profileId, thread, text));
+  }
+
+  async _gmailReply(profileId, thread, text) {
     const inst = this.instances.get(profileId);
     if (!inst || !inst.cdp) throw new Error(t('err.profileNotRunning'));
     try { await this._resolveGmailPage(profileId); } catch (_e) {}
@@ -854,11 +943,16 @@ class ChromeManager {
 
     await cdp.send('Page.navigate', { url: 'https://mail.google.com/mail/u/0/#inbox/' + encodeURIComponent(tid) });
     const opened = await this._waitFor(cdp, `!!document.querySelector('div.adn, div[role=listitem]')`, 40);
-    if (!opened) throw new Error(t('err.threadNotOpened'));
+    if (!opened) {
+      // Вкладку оставлять на треде нельзя: без списка писем следующий скан
+      // ничего не найдёт, а отправка не найдёт кнопку "Написать".
+      await this._ensureInbox(cdp).catch(() => {});
+      throw new Error(t('err.threadNotOpened'));
+    }
 
-    {
+    try {
       await this._eval(cdp,
-        `(function(){var b=document.querySelector('div[role=button][aria-label^=Reply], span.ams.bkH, div.amn'); if(b)b.click(); return true;})()`);
+        `(function(){var b=document.querySelector('${SEL.replyBtn}'); if(b)b.click(); return true;})()`);
       const boxReady = await this._waitFor(cdp,
         `!!document.querySelector('div[role=textbox][aria-label*=Body], div[role=textbox]')`, 40);
       if (!boxReady) throw new Error(t('err.replyBoxNotOpened'));
@@ -875,6 +969,10 @@ class ChromeManager {
       if (sent) logger.success('gmail', t('gmail.replySent', { tid }));
       else logger.warn('gmail', t('gmail.replyUnconfirmed', { tid }));
       return { ok: !!sent };
+    } finally {
+      // Возврат в список писем обязателен и при осечке - иначе вкладка так и
+      // останется на треде и автоответ заглохнет до перезапуска.
+      await this._ensureInbox(cdp).catch(() => {});
     }
   }
 

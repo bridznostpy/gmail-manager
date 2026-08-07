@@ -1,6 +1,6 @@
 'use strict';
 /**
- * Sender engine — orchestrates the whole run.
+ * Sender engine - orchestrates the whole run.
  *
  * Scenario (from the spec):
  *   • On start, every profile with a READY Gmail account gets its Chrome
@@ -16,11 +16,12 @@
  *
  * NOTE: the concrete Gmail "compose + send" and "read replies" steps are driven
  * over CDP against the logged-in Gmail tab. The DOM automation hooks are marked
- * TODO(gmail-dom) — they depend on Gmail's current DOM and are best finalized
+ * TODO(gmail-dom) - they depend on Gmail's current DOM and are best finalized
  * against a live logged-in profile. The orchestration, limits, sequencing,
  * queue and auto-reply loop are all real and complete.
  */
 const logger = require('../logger');
+const { t } = require('../i18n');
 const haron = require('../link/haronRent');
 const telegram = require('../telegram/telegram');
 
@@ -72,13 +73,13 @@ class SenderEngine {
     if (this.running) return { ok: false, reason: 'already_running' };
     const ready = this._readyProfiles();
     if (!ready.length) {
-      logger.warn('sender', 'No READY profiles — start aborted');
+      logger.warn('sender', t('run.noReady'));
       return { ok: false, reason: 'no_ready_profiles' };
     }
     this.running = true;
     this.startedAt = Date.now();
     this._notifiedAllLimits = false;
-    logger.success('system', `Run started with ${ready.length} ready account(s)`);
+    logger.success('system', t('run.started', { count: ready.length }));
 
     // Launch a Chrome instance for each ready account (if not already up).
     for (const p of ready) {
@@ -88,7 +89,7 @@ class SenderEngine {
           this.profileStore.update(p.id, { running: true, port: inst.port });
         }
       } catch (e) {
-        logger.error('cdp', `Could not launch "${p.label}": ${e.message}`);
+        logger.error('cdp', t('cdp.launchFailed', { label: p.label, error: e.message }));
       }
     }
 
@@ -104,15 +105,15 @@ class SenderEngine {
     if (!account) {
       if (this._allLimitsReached() && !this._notifiedAllLimits) {
         this._notifiedAllLimits = true;
-        logger.warn('system', 'All accounts reached their send limit — staying in auto-reply mode');
-        await telegram.notify(this.store, '✅ All Gmail accounts reached their send limit. Auto-reply mode continues until you stop.');
+        logger.warn('system', t('run.allLimits'));
+        await telegram.notify(this.store, '✅ ' + t('run.tgAllLimits'));
       }
       this._sendTimer = setTimeout(() => this._sendLoop(), 5000);
       return;
     }
     const lead = this.parser.take();
     if (!lead) {
-      // Queue empty — wait for the parser to refill.
+      // Queue empty - wait for the parser to refill.
       this._sendTimer = setTimeout(() => this._sendLoop(), 2000);
       return;
     }
@@ -121,14 +122,14 @@ class SenderEngine {
       this.profileStore.update(account.id, { sentCount: account.sentCount + 1 });
       this.parser.noteSent();
     } catch (e) {
-      logger.error('sender', `Send failed for "${account.label}": ${e.message}`);
+      logger.error('sender', t('send.failed', { label: account.label, error: e.message }));
     }
     // Small spacing between sends; the real cadence is bounded by Gmail itself.
     this._sendTimer = setTimeout(() => this._sendLoop(), 1500);
   }
 
   async _sendFirstMessage(account, lead) {
-    if (!lead || !lead.email) throw new Error('lead has no recipient email');
+    if (!lead || !lead.email) throw new Error(t('err.noLeadEmail'));
     const link = this.store.get('link');
     const gen = await haron.generateLink({
       apiKey: link.apiKey, mode: link.mode, profileId: link.profileId,
@@ -136,7 +137,7 @@ class SenderEngine {
     });
     const texts = this.store.get('texts');
     const { subject, body } = this._composeText(texts, lead, gen.url);
-    logger.info('sender', `"${account.label}" -> ${lead.email} | subj: "${subject}"`);
+    logger.info('sender', t('send.message', { label: account.label, to: lead.email, subject }));
     // Drive Gmail compose over CDP against the logged-in profile.
     // TODO(gmail-dom): validate the compose/send selectors on a live account.
     await this.chrome.gmailCompose(account.id, { to: lead.email, subject, body });
@@ -147,10 +148,11 @@ class SenderEngine {
     const fallback = {
       subjects: ['Hello'], bodies: ['Hi {name}, here is the link: {link}'],
     };
-    const t = texts && texts.subjects ? texts : fallback;
+    // Не называем переменную t - имя занято хелпером локализации.
+    const tpl = texts && texts.subjects ? texts : fallback;
     const rnd = (arr) => arr[Math.floor(Math.random() * arr.length)];
     const fill = (s) => String(s).replace(/\{link\}/g, link).replace(/\{name\}/g, lead.name || 'there');
-    return { subject: fill(rnd(t.subjects)), body: fill(rnd(t.bodies)) };
+    return { subject: fill(rnd(tpl.subjects)), body: fill(rnd(tpl.bodies)) };
   }
 
   /** Build the auto-reply body from the loaded texts JSON (texts.autoReply). */
@@ -169,7 +171,7 @@ class SenderEngine {
     try {
       await this._pollReplies();
     } catch (e) {
-      logger.error('sender', `Reply poll error: ${e.message}`);
+      logger.error('sender', t('reply.pollError', { error: e.message }));
     }
     this._replyTimer = setTimeout(() => this._replyLoop(), intervalMs);
   }
@@ -180,18 +182,18 @@ class SenderEngine {
     // Auto-reply is on unless the texts JSON explicitly disables it.
     const enabled = !texts || !texts.autoReply || texts.autoReply.enabled !== false;
     if (!enabled) {
-      logger.debug('sender', 'Auto-reply disabled in texts JSON');
+      logger.debug('sender', t('reply.disabled'));
       return;
     }
     const link = this.store.get('link');
     const accounts = this._runningReady();
-    logger.debug('sender', `Auto-reply poll over ${accounts.length} account(s) (cap ${maxReplies}/dialog)`);
+    logger.debug('sender', t('reply.poll', { count: accounts.length, cap: maxReplies }));
     for (const account of accounts) {
       let unread = [];
       try {
         unread = await this.chrome.gmailListUnread(account.id);
       } catch (e) {
-        logger.warn('sender', `Unread scan failed for "${account.label}": ${e.message}`);
+        logger.warn('sender', t('reply.unreadFailed', { label: account.label, error: e.message }));
         continue;
       }
       for (const thread of unread) {
@@ -207,9 +209,9 @@ class SenderEngine {
           await this.chrome.gmailReply(account.id, thread, text);
           dialog.replies += 1;
           this.dialogs.set(key, dialog);
-          logger.info('sender', `Auto-replied in "${account.label}" thread (${dialog.replies}/${maxReplies})`);
+          logger.info('sender', t('reply.sent', { label: account.label, n: dialog.replies, cap: maxReplies }));
         } catch (e) {
-          logger.warn('sender', `Auto-reply failed (${thread.threadId}): ${e.message}`);
+          logger.warn('sender', t('reply.failed', { tid: thread.threadId, error: e.message }));
         }
       }
     }
@@ -221,7 +223,7 @@ class SenderEngine {
     if (this._sendTimer) clearTimeout(this._sendTimer);
     if (this._replyTimer) clearTimeout(this._replyTimer);
     this.parser.stop();
-    logger.info('system', 'Run stopped (Chrome instances left open; stop them from Profiles if desired)');
+    logger.info('system', t('run.stopped'));
     return { ok: true };
   }
 }

@@ -9,6 +9,7 @@
  * (Rules 4). Same normalized lead shape as the XProject client.
  */
 const logger = require('../../logger');
+const { t } = require('../../i18n');
 
 const CONFIG = {
   baseUrl: 'http://vvsproject.xyz',
@@ -39,7 +40,7 @@ function _resolve(platforms) {
 
 async function fetchBatch({ apiKey, platforms, limit }) {
   if (!apiKey) {
-    logger.warn('parser', 'VVS: no API key set');
+    logger.warn('parser', t('vvs.noKey'));
     return [];
   }
   const { platform, country } = _resolve(platforms);
@@ -52,18 +53,18 @@ async function fetchBatch({ apiKey, platforms, limit }) {
     + (params.toString() ? `?${params}` : '');
   try {
     const res = await fetch(url, { headers: { [CONFIG.authHeader]: CONFIG.authPrefix + apiKey } });
-    if (res.status === 429) { logger.warn('parser', 'VVS: rate limited (429) - backing off'); return []; }
-    if (res.status === 402) { logger.warn('parser', 'VVS: no active subscription (402)'); return []; }
-    if (res.status === 403) { logger.warn('parser', 'VVS: invalid api-key (403)'); return []; }
-    if (!res.ok) { logger.warn('parser', `VVS: fetch failed (HTTP ${res.status})`); return []; }
+    if (res.status === 429) { logger.warn('parser', t('vvs.rateLimited')); return []; }
+    if (res.status === 402) { logger.warn('parser', t('vvs.noSubscription')); return []; }
+    if (res.status === 403) { logger.warn('parser', t('vvs.badKey')); return []; }
+    if (!res.ok) { logger.warn('parser', t('vvs.fetchFailed', { status: res.status })); return []; }
     const data = await res.json();
     const leads = Object.entries(data || {})
       .map(([id, v]) => normalizeLead(id, v, platform))
       .filter((l) => l.email);
-    if (leads.length) logger.info('parser', `VVS: ${leads.length} listing(s) with email from ${platform}`);
+    if (leads.length) logger.info('parser', t('vvs.listings', { count: leads.length, platform }));
     return leads;
   } catch (e) {
-    logger.error('parser', `VVS: ${e.message}`);
+    logger.error('parser', t('vvs.error', { error: e.message }));
     return [];
   }
 }

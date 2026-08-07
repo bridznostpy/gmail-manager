@@ -1,6 +1,6 @@
 'use strict';
 /**
- * Parser engine — gradually fills the lead queue.
+ * Parser engine - gradually fills the lead queue.
  *
  * Pulls batches from the selected parser API (XProject / VVS) and pushes leads
  * into a shared in-memory queue. Refills only when the queue drops below the
@@ -10,6 +10,7 @@
  * the current key/template).
  */
 const logger = require('../logger');
+const { t } = require('../i18n');
 const xproject = require('./apis/xproject');
 const vvs = require('./apis/vvs');
 
@@ -37,7 +38,7 @@ class ParserEngine {
       this._sentSinceKeySwap++;
       if (this._sentSinceKeySwap >= swapKeyEveryN) {
         this._sentSinceKeySwap = 0;
-        logger.info('parser', `Reached ${swapKeyEveryN} messages — API key rotation point (configure additional keys to rotate)`);
+        logger.info('parser', t('parser.keyRotation', { n: swapKeyEveryN }));
       }
     }
   }
@@ -47,7 +48,9 @@ class ParserEngine {
     const sys = this.store.get('system');
     if (this.queue.length >= sys.queueRefillThreshold) return;
     const client = parser.apiType === 'vvs' ? vvs : xproject;
-    logger.info('parser', `Queue at ${this.queue.length} (< ${sys.queueRefillThreshold}) — fetching batch of ${sys.parserBatchSize}`);
+    logger.info('parser', t('parser.refill', {
+      size: this.queue.length, threshold: sys.queueRefillThreshold, batch: sys.parserBatchSize,
+    }));
     try {
       const leads = await client.fetchBatch({
         apiKey: parser.apiKey,
@@ -56,10 +59,10 @@ class ParserEngine {
       });
       if (leads.length) {
         this.queue.push(...leads);
-        logger.success('parser', `Added ${leads.length} leads — queue now ${this.queue.length}`);
+        logger.success('parser', t('parser.added', { count: leads.length, size: this.queue.length }));
       }
     } catch (e) {
-      logger.error('parser', `Batch fetch failed: ${e.message}`);
+      logger.error('parser', t('parser.fetchFailed', { error: e.message }));
     }
   }
 
@@ -67,11 +70,11 @@ class ParserEngine {
     if (this.running) return;
     const parser = this.store.get('parser');
     if (!parser.enabled) {
-      logger.warn('parser', 'Parser toggle is off — not starting');
+      logger.warn('parser', t('parser.disabled'));
       return;
     }
     this.running = true;
-    logger.success('parser', `Parser started (${parser.apiType})`);
+    logger.success('parser', t('parser.started', { type: parser.apiType }));
     const loop = async () => {
       if (!this.running) return;
       await this._refillOnce();
@@ -84,7 +87,7 @@ class ParserEngine {
     this.running = false;
     if (this._timer) clearTimeout(this._timer);
     this._timer = null;
-    logger.info('parser', 'Parser stopped');
+    logger.info('parser', t('parser.stopped'));
   }
 }
 

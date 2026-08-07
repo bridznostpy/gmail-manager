@@ -1,7 +1,7 @@
 'use strict';
 /**
  * Preload: the only bridge between the sandboxed renderer and main. Exposes a
- * narrow, typed-ish API over contextBridge — no direct ipcRenderer, no Node.
+ * narrow, typed-ish API over contextBridge - no direct ipcRenderer, no Node.
  */
 const { contextBridge, ipcRenderer } = require('electron');
 

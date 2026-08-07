@@ -3,7 +3,7 @@
  * Haron Rent link generator / API client.
  * Docs (Swagger): https://haronrent.xyz/docs  (base https://haronrent.xyz/api/v1).
  * Auth: Authorization: Bearer <token>. Every response is an envelope
- * { status: bool, message, data: {...} } — status must be true.
+ * { status: bool, message, data: {...} } - status must be true.
  *
  * generateLink() maps the app's Link Generator settings + the current lead onto
  * POST /api/v1/createAd and returns the generated ad link (adShortUrl || adUrl).
@@ -12,6 +12,7 @@
  * lives in CONFIG (Rules 4).
  */
 const logger = require('../logger');
+const { t } = require('../i18n');
 
 const CONFIG = {
   baseUrl: 'https://haronrent.xyz/api/v1',
@@ -52,13 +53,13 @@ function placeholder(profileId, country) {
 async function generateLink(opts) {
   const { apiKey, mode, profileId, country, lead } = opts || {};
   if (!apiKey) {
-    logger.warn('sender', 'Haron Rent: no API key - using placeholder link');
+    logger.warn('sender', t('haron.noKey'));
     return placeholder(profileId, country);
   }
   // The app's "link mode" is the serviceCode required by createAd.
   const serviceCode = mode || '';
   if (!serviceCode) {
-    logger.warn('sender', 'Haron Rent: link mode (serviceCode) not set - using placeholder link');
+    logger.warn('sender', t('haron.noMode'));
     return placeholder(profileId, country);
   }
 
@@ -82,19 +83,19 @@ async function generateLink(opts) {
     const data = await res.json().catch(() => null);
     if (!res.ok || !data || data.status !== true) {
       const msg = (data && data.message) || `HTTP ${res.status}`;
-      logger.warn('sender', `Haron Rent: createAd failed (${msg}) - using placeholder link`);
+      logger.warn('sender', t('haron.createFailed', { message: msg }));
       return placeholder(profileId, country);
     }
     const d = data.data || {};
     const url = d.adShortUrl || d.adUrl || d.adCustomDomainUrl || '';
     if (!url) {
-      logger.warn('sender', 'Haron Rent: createAd returned no url - using placeholder link');
+      logger.warn('sender', t('haron.noUrl'));
       return placeholder(profileId, country);
     }
-    logger.success('sender', `Haron Rent: link created (adId ${d.adId})`);
+    logger.success('sender', t('haron.created', { adId: d.adId }));
     return { url, placeholder: false, adId: d.adId };
   } catch (e) {
-    logger.error('sender', `Haron Rent: ${e.message} - using placeholder link`);
+    logger.error('sender', t('haron.error', { error: e.message }));
     return placeholder(profileId, country);
   }
 }

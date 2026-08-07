@@ -83,7 +83,7 @@ class Store {
       const raw = fs.readFileSync(this.filePath, 'utf-8');
       this.data = deepMerge(DEFAULTS, JSON.parse(raw));
     } catch (_e) {
-      // first run or unreadable — keep defaults
+      // first run or unreadable - keep defaults
       this.data = { ...DEFAULTS };
     }
   }

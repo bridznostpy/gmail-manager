@@ -1,12 +1,13 @@
 'use strict';
 /**
- * Telegram notifications via the Bot API (no external deps — plain HTTPS).
+ * Telegram notifications via the Bot API (no external deps - plain HTTPS).
  * Used to alert the user when all profiles hit their send limit, and for
  * status pings. Fails soft: a missing token or network error is logged, never
  * thrown into the engines.
  */
 const https = require('https');
 const logger = require('./../logger');
+const { t } = require('./../i18n');
 
 function apiCall(token, method, params) {
   return new Promise((resolve) => {
@@ -37,12 +38,12 @@ function apiCall(token, method, params) {
 async function notify(store, text) {
   const { botToken, botId } = store.get('telegram');
   if (!botToken || !botId) {
-    logger.debug('telegram', 'notify skipped — token or chat id not set');
+    logger.debug('telegram', t('tg.skipped'));
     return { ok: false, reason: 'not_configured' };
   }
   const res = await apiCall(botToken, 'sendMessage', { chat_id: botId, text });
-  if (res && res.ok) logger.info('telegram', 'Notification sent');
-  else logger.warn('telegram', 'Telegram notify failed');
+  if (res && res.ok) logger.info('telegram', t('tg.sent'));
+  else logger.warn('telegram', t('tg.failed'));
   return res;
 }
 

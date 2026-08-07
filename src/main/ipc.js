@@ -5,6 +5,8 @@
  */
 const { ipcMain } = require('electron');
 const logger = require('./logger');
+const i18n = require('./i18n');
+const { t } = i18n;
 const telegram = require('./telegram/telegram');
 const { resolveChrome } = require('./cdp/chromeManager');
 
@@ -20,10 +22,19 @@ function register(ctx) {
 
   // ── settings ──────────────────────────────────────────────────────
   ipcMain.handle('settings:getAll', () => store.all());
-  ipcMain.handle('settings:setSection', (_e, { key, value }) => store.set(key, value));
+  ipcMain.handle('settings:setSection', (_e, { key, value }) => {
+    const saved = store.set(key, value);
+    // Язык логов переключаем сразу, чтобы новые записи шли на выбранном
+    // языке без перезапуска. Уже накопленный буфер не переписываем.
+    if (key === 'language') {
+      i18n.setLanguage(saved);
+      logger.info('system', t('sys.languageChanged', { lang: i18n.getLanguage() }));
+    }
+    return saved;
+  });
   ipcMain.handle('settings:loadTexts', (_e, json) => {
     store.set('texts', json);
-    logger.success('system', 'Broadcast texts loaded');
+    logger.success('system', t('sys.textsLoaded'));
     return store.get('texts');
   });
 
@@ -36,7 +47,7 @@ function register(ctx) {
   });
   ipcMain.handle('profiles:create', async (_e, { label }) => {
     const p = profileStore.create(label);
-    logger.success('system', `Created profile "${p.label}"`);
+    logger.success('system', t('sys.profileCreated', { label: p.label }));
     return p;
   });
   ipcMain.handle('profiles:remove', async (_e, { id }) => {
@@ -45,7 +56,7 @@ function register(ctx) {
   });
   ipcMain.handle('profiles:launch', async (_e, { id, openGmail }) => {
     const p = profileStore.get(id);
-    if (!p) throw new Error('Profile not found');
+    if (!p) throw new Error(t('err.profileNotFound'));
     const url = openGmail ? 'https://mail.google.com/mail/' : undefined;
     const inst = await chrome.launch(p, { url });
     profileStore.update(id, { running: true, port: inst.port });
@@ -71,7 +82,7 @@ function register(ctx) {
   // ── gmail (manual test send against a live logged-in profile) ─────
   ipcMain.handle('gmail:testSend', async (_e, { id, to, subject, body }) => {
     const p = profileStore.get(id);
-    if (!p) throw new Error('Profile not found');
+    if (!p) throw new Error(t('err.profileNotFound'));
     return chrome.gmailCompose(id, { to, subject, body });
   });
 
@@ -79,7 +90,7 @@ function register(ctx) {
   ipcMain.handle('telegram:test', (_e, { botToken }) => telegram.test(botToken));
   ipcMain.handle('cdp:detectChrome', () => resolveChrome(store.get('cdp').chromePath) || '');
 
-  logger.info('system', 'IPC handlers registered');
+  logger.info('system', t('sys.ipcReady'));
 }
 
 module.exports = { register };

@@ -13,6 +13,7 @@ const { ParserEngine } = require('./parser/parserEngine');
 const { SenderEngine } = require('./sender/senderEngine');
 const ipc = require('./ipc');
 const logger = require('./logger');
+const i18n = require('./i18n');
 
 let mainWindow = null;
 let ctx = null;
@@ -50,9 +51,12 @@ function createWindow() {
 
 app.whenReady().then(() => {
   ctx = buildContext();
+  // Язык логов берём из настроек до первой записи, иначе стартовые строки
+  // ушли бы на языке по умолчанию.
+  i18n.setLanguage(ctx.store.get('language'));
   createWindow();
   ipc.register(ctx);
-  logger.success('system', 'Gmail Manager started');
+  logger.success('system', i18n.t('sys.started'));
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

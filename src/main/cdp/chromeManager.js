@@ -1,7 +1,7 @@
 'use strict';
 /**
  * Launches and controls one Chrome instance per profile via the DevTools
- * Protocol (CDP). No puppeteer — we spawn real Chrome with
+ * Protocol (CDP). No puppeteer - we spawn real Chrome with
  * `--remote-debugging-port` and talk to it over the DevTools HTTP + WebSocket
  * endpoints. Each profile = its own `--user-data-dir` so cookies/logins are
  * isolated and persist between runs.
@@ -18,6 +18,7 @@ const WebSocket = require('ws');
 
 const fingerprint = require('./fingerprint');
 const logger = require('../logger');
+const { t } = require('../i18n');
 
 function commonChromePaths() {
   if (process.platform === 'win32') {
@@ -75,7 +76,7 @@ async function waitForDevtools(port, tries = 40) {
     } catch (_e) { /* not up yet */ }
     await new Promise((r) => setTimeout(r, 250));
   }
-  throw new Error(`DevTools on port ${port} did not come up`);
+  throw new Error(t('err.devtoolsDown', { port }));
 }
 
 /** Minimal CDP client over the browser-level WebSocket. */
@@ -141,7 +142,7 @@ class ChromeManager {
       if (used.has(p)) continue;
       if (await portFree(p)) return p;
     }
-    throw new Error(`No free port in range ${portStart}-${portEnd}`);
+    throw new Error(t('err.noFreePort', { start: portStart, end: portEnd }));
   }
 
   userDataDir(profileId) {
@@ -167,7 +168,7 @@ class ChromeManager {
     }
     const chromePath = resolveChrome(this.store.get('cdp').chromePath);
     if (!chromePath) {
-      throw new Error('Chrome executable not found — set it in CDP settings');
+      throw new Error(t('err.chromeNotFound'));
     }
     const port = await this.allocatePort();
     const udd = this.userDataDir(profile.id);
@@ -184,10 +185,10 @@ class ChromeManager {
       `--lang=${profile.fingerprint.languages[0]}`,
     ];
 
-    logger.info('cdp', `Launching Chrome for "${profile.label}" on port ${port}`);
+    logger.info('cdp', t('cdp.launching', { label: profile.label, port }));
     const proc = spawn(chromePath, args, { detached: false, stdio: 'ignore' });
     proc.on('exit', (code) => {
-      logger.warn('cdp', `Chrome for "${profile.label}" exited (code ${code})`);
+      logger.warn('cdp', t('cdp.exited', { label: profile.label, code }));
       this.instances.delete(profile.id);
     });
 
@@ -216,10 +217,10 @@ class ChromeManager {
         inst.pageTargetId = page.id;
       }
     } catch (e) {
-      logger.warn('cdp', `Fingerprint install for "${profile.label}" failed: ${e.message}`);
+      logger.warn('cdp', t('cdp.fingerprintFailed', { label: profile.label, error: e.message }));
     }
 
-    logger.success('cdp', `Profile "${profile.label}" is live on port ${port}`);
+    logger.success('cdp', t('cdp.live', { label: profile.label, port }));
     return inst;
   }
 
@@ -229,7 +230,7 @@ class ChromeManager {
    */
   async scanGmail(profileId) {
     const inst = this.instances.get(profileId);
-    if (!inst || !inst.pageCdp) throw new Error('Profile is not running');
+    if (!inst || !inst.pageCdp) throw new Error(t('err.profileNotRunning'));
     // Ensure we're looking at Gmail.
     const expr = `(function(){
       try {
@@ -252,13 +253,17 @@ class ChromeManager {
     let status = 'unknown';
     if (parsed.signedIn && !parsed.signIn) status = 'ready';
     else if (parsed.signIn) status = 'needs_login';
-    logger.info('gmail', `Scan "${profileId}": ${status}${parsed.email ? ' (' + parsed.email + ')' : ''}`);
+    logger.info('gmail', t('gmail.scan', {
+      id: profileId,
+      status: t('gmailStatus.' + status),
+      email: parsed.email ? ' (' + parsed.email + ')' : '',
+    }));
     return { status, email: parsed.email || '', href: parsed.href || '' };
   }
 
   async navigate(profileId, url) {
     const inst = this.instances.get(profileId);
-    if (!inst || !inst.pageCdp) throw new Error('Profile is not running');
+    if (!inst || !inst.pageCdp) throw new Error(t('err.profileNotRunning'));
     await inst.pageCdp.send('Page.navigate', { url });
   }
 
@@ -266,7 +271,7 @@ class ChromeManager {
   // TODO(gmail-dom): all selectors below are best-effort and must be validated
   // against a live logged-in Gmail. We only drive stable, non-reversed Gmail
   // mechanisms (compose-in-URL + Ctrl+Enter, DOM read of unread rows). No Gmail
-  // API, no credentials — the user logs in by hand (Rules 4/6).
+  // API, no credentials - the user logs in by hand (Rules 4/6).
 
   /** Attach a fresh CDPSession to a specific page target by id. */
   async _attachTarget(port, targetId, tries = 40) {
@@ -282,7 +287,7 @@ class ChromeManager {
       } catch (_e) { /* not ready yet */ }
       await new Promise((r) => setTimeout(r, 200));
     }
-    throw new Error(`Could not attach to target ${targetId}`);
+    throw new Error(t('err.attachFailed', { targetId }));
   }
 
   /** Evaluate an expression in the page and return its value by value. */
@@ -291,7 +296,7 @@ class ChromeManager {
       expression, returnByValue: true, awaitPromise: true,
     });
     if (res && res.exceptionDetails) {
-      throw new Error(res.exceptionDetails.text || 'page evaluation failed');
+      throw new Error(res.exceptionDetails.text || t('err.evalFailed'));
     }
     return res && res.result ? res.result.value : undefined;
   }
@@ -307,7 +312,7 @@ class ChromeManager {
     return false;
   }
 
-  /** Dispatch Ctrl+Enter — Gmail's send shortcut (works regardless of the
+  /** Dispatch Ctrl+Enter - Gmail's send shortcut (works regardless of the
    *  keyboard-shortcuts setting). Focuses the body first. */
   async _sendCtrlEnter(cdp) {
     await this._eval(cdp, `(function(){var t=document.querySelector('div[role=textbox][aria-label*=Body], div[role=textbox]'); if(t)t.focus(); return true;})()`);
@@ -323,8 +328,8 @@ class ChromeManager {
    */
   async gmailCompose(profileId, { to, subject, body } = {}) {
     const inst = this.instances.get(profileId);
-    if (!inst || !inst.cdp) throw new Error('Profile is not running');
-    if (!to) throw new Error('No recipient email');
+    if (!inst || !inst.cdp) throw new Error(t('err.profileNotRunning'));
+    if (!to) throw new Error(t('err.noRecipient'));
     const q = (s) => encodeURIComponent(String(s == null ? '' : s));
     const url = 'https://mail.google.com/mail/u/0/?view=cm&fs=1&tf=1'
       + `&to=${q(to)}&su=${q(subject)}&body=${q(body)}`;
@@ -338,7 +343,7 @@ class ChromeManager {
 
       const ready = await this._waitFor(pageCdp,
         `!!document.querySelector('div[role=button][aria-label^=Send], div[role=button][data-tooltip^=Send]')`, 40);
-      if (!ready) throw new Error('compose window did not render (account not logged in?)');
+      if (!ready) throw new Error(t('err.composeNotRendered'));
 
       const clicked = await this._eval(pageCdp,
         `(function(){var b=document.querySelector('div[role=button][aria-label^=Send], div[role=button][data-tooltip^=Send]'); if(b){b.click(); return true;} return false;})()`);
@@ -346,8 +351,8 @@ class ChromeManager {
 
       const sent = await this._waitFor(pageCdp,
         `(function(){ if(!document.querySelector('div[role=button][aria-label^=Send]')) return true; var e=document.querySelectorAll('span'); for(var i=0;i<e.length;i++){ if(/message sent|your message has been sent/i.test(e[i].textContent||'')) return true; } return false; })()`, 24);
-      if (sent) logger.success('gmail', `Message sent to ${to}`);
-      else logger.warn('gmail', `Send to ${to} not confirmed (compose left open)`);
+      if (sent) logger.success('gmail', t('gmail.sent', { to }));
+      else logger.warn('gmail', t('gmail.sendUnconfirmed', { to }));
       return { ok: !!sent };
     } finally {
       try { pageCdp && pageCdp.close(); } catch (_e) {}
@@ -361,7 +366,7 @@ class ChromeManager {
    */
   async gmailListUnread(profileId, max = 25) {
     const inst = this.instances.get(profileId);
-    if (!inst || !inst.pageCdp) throw new Error('Profile is not running');
+    if (!inst || !inst.pageCdp) throw new Error(t('err.profileNotRunning'));
     const cdp = inst.pageCdp;
     const href = await this._eval(cdp, 'location.href');
     if (!/mail\.google\.com/.test(String(href || ''))) {
@@ -383,24 +388,24 @@ class ChromeManager {
 
   /**
    * Open a thread on the inbox tab and send `text` as a reply. Used by the
-   * auto-responder. Best-effort DOM automation — see TODO(gmail-dom) above.
+   * auto-responder. Best-effort DOM automation - see TODO(gmail-dom) above.
    */
   async gmailReply(profileId, thread, text) {
     const inst = this.instances.get(profileId);
-    if (!inst || !inst.pageCdp) throw new Error('Profile is not running');
+    if (!inst || !inst.pageCdp) throw new Error(t('err.profileNotRunning'));
     const cdp = inst.pageCdp;
     const tid = typeof thread === 'string' ? thread : (thread && thread.threadId);
-    if (!tid) throw new Error('No thread id');
+    if (!tid) throw new Error(t('err.noThreadId'));
 
     await cdp.send('Page.navigate', { url: 'https://mail.google.com/mail/u/0/#inbox/' + encodeURIComponent(tid) });
     const opened = await this._waitFor(cdp, `!!document.querySelector('div.adn, div[role=listitem]')`, 40);
-    if (!opened) throw new Error('thread did not open');
+    if (!opened) throw new Error(t('err.threadNotOpened'));
 
     await this._eval(cdp,
       `(function(){var b=document.querySelector('div[role=button][aria-label^=Reply], span.ams.bkH, div.amn'); if(b)b.click(); return true;})()`);
     const boxReady = await this._waitFor(cdp,
       `!!document.querySelector('div[role=textbox][aria-label*=Body], div[role=textbox]')`, 40);
-    if (!boxReady) throw new Error('reply box did not open');
+    if (!boxReady) throw new Error(t('err.replyBoxNotOpened'));
 
     const put = JSON.stringify(String(text == null ? '' : text));
     await this._eval(cdp,
@@ -409,8 +414,8 @@ class ChromeManager {
 
     const sent = await this._waitFor(cdp,
       `!document.querySelector('div[role=textbox][aria-label*=Body]')`, 24);
-    if (sent) logger.success('gmail', `Auto-reply sent in thread ${tid}`);
-    else logger.warn('gmail', `Auto-reply in thread ${tid} not confirmed`);
+    if (sent) logger.success('gmail', t('gmail.replySent', { tid }));
+    else logger.warn('gmail', t('gmail.replyUnconfirmed', { tid }));
     return { ok: !!sent };
   }
 
@@ -421,7 +426,7 @@ class ChromeManager {
     try { inst.pageCdp && inst.pageCdp.close(); } catch (_e) {}
     try { inst.proc.kill(); } catch (_e) {}
     this.instances.delete(profileId);
-    logger.info('cdp', `Stopped profile ${profileId}`);
+    logger.info('cdp', t('cdp.stopped', { id: profileId }));
   }
 
   async stopAll() {

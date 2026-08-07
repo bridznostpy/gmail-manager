@@ -6,7 +6,7 @@
  * with the profile. It is injected into every page the profile opens via CDP
  * `Page.addScriptToEvaluateOnNewDocument`, so it applies before any site
  * script runs. This is a pragmatic fingerprint (UA, platform, screen, WebGL,
- * hardware, timezone, languages) — enough to make each Chrome instance look
+ * hardware, timezone, languages) - enough to make each Chrome instance look
  * distinct; it is not an anti-detect vendor stack.
  */
 

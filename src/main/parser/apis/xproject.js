@@ -10,6 +10,7 @@
  * CONFIG (Rules 4).
  */
 const logger = require('../../logger');
+const { t } = require('../../i18n');
 
 const CONFIG = {
   baseUrl: 'https://api.xproject.icu',
@@ -55,11 +56,11 @@ async function _startTask(apiKey, platform, filters) {
     body: JSON.stringify({ platform, filters }),
   });
   if (res.status === 409) {
-    logger.warn('parser', `XProject: task for ${platform} already active (409) - stop it on the panel or wait; it cannot be resumed without its id`);
+    logger.warn('parser', t('xp.taskActive', { platform }));
     return null;
   }
   if (!res.ok) {
-    logger.warn('parser', `XProject: start failed (HTTP ${res.status})`);
+    logger.warn('parser', t('xp.startFailed', { status: res.status }));
     return null;
   }
   const data = await res.json();
@@ -68,7 +69,7 @@ async function _startTask(apiKey, platform, filters) {
 
 async function fetchBatch({ apiKey, platforms, limit }) {
   if (!apiKey) {
-    logger.warn('parser', 'XProject: no API key set');
+    logger.warn('parser', t('xp.noKey'));
     return [];
   }
   const { platform, filters } = _resolve(platforms);
@@ -80,13 +81,13 @@ async function fetchBatch({ apiKey, platforms, limit }) {
       if (taskId == null) return [];
       task = { taskId, cursor: null };
       _tasks.set(key, task);
-      logger.success('parser', `XProject: task ${taskId} started for ${platform}`);
+      logger.success('parser', t('xp.taskStarted', { taskId, platform }));
     }
     const path = CONFIG.endpoints.page.replace('{task_id}', String(task.taskId));
     const url = CONFIG.baseUrl + path + (task.cursor != null ? `?cursor=${task.cursor}` : '');
     const res = await fetch(url, { headers: _headers(apiKey) });
     if (!res.ok) {
-      logger.warn('parser', `XProject: page fetch failed (HTTP ${res.status})`);
+      logger.warn('parser', t('xp.pageFailed', { status: res.status }));
       return [];
     }
     const data = await res.json();
@@ -97,7 +98,7 @@ async function fetchBatch({ apiKey, platforms, limit }) {
     const leads = listings.map(normalizeLead).filter((l) => l.email);
     return typeof limit === 'number' ? leads.slice(0, limit) : leads;
   } catch (e) {
-    logger.error('parser', `XProject: ${e.message}`);
+    logger.error('parser', t('xp.error', { error: e.message }));
     return [];
   }
 }

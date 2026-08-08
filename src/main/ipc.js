@@ -40,12 +40,28 @@ function register(ctx) {
   });
 
   // ── profiles ──────────────────────────────────────────────────────
-  ipcMain.handle('profiles:list', () => profileStore.list());
-  ipcMain.handle('profiles:stats', () => {
-    const s = profileStore.stats();
-    s.portsOpen = chrome.openPortsCount() || s.portsOpen;
-    return s;
+  // Работает профиль или нет, знает менеджер браузеров, а не profiles.json:
+  // в файле это снимок, который устаревает, стоит пользователю закрыть окно
+  // Chrome самому. Отдаём в UI сверенное состояние, иначе профиль остаётся
+  // "запущенным" до следующего запуска.
+  const live = (p) => chrome.isRunning(p.id);
+  const withRunState = (p) => {
+    const running = live(p);
+    return { ...p, running, port: running ? p.port : null };
+  };
+  // Флаги, оставшиеся от прошлого запуска приложения, ничего не запускают -
+  // снимаем их сразу, чтобы файл не расходился с действительностью.
+  for (const p of profileStore.list()) {
+    if (p.running && !live(p)) profileStore.update(p.id, { running: false, port: null });
+  }
+  // Пользователь закрыл окно Chrome сам - гасим профиль и в файле. Рендер
+  // подхватит это своим опросом profiles:list, отдельный канал не нужен.
+  chrome.onProfileClosed((id) => {
+    if (profileStore.get(id)) profileStore.update(id, { running: false, port: null });
   });
+
+  ipcMain.handle('profiles:list', () => profileStore.list().map(withRunState));
+  ipcMain.handle('profiles:stats', () => profileStore.stats(live));
   ipcMain.handle('profiles:create', async (_e, { label }) => {
     const p = profileStore.create(label);
     logger.success('system', t('sys.profileCreated', { label: p.label }));

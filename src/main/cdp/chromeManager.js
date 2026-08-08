@@ -191,6 +191,24 @@ class PlaywrightManager {
     this.dataDir = dataDir; // base dir for chrome user-data folders
     this.instances = new Map(); // profileId -> { context, port, page, queue, mac }
     this.activityWatchers = new Set(); // cb(profileId) - вкладка сменила адрес
+    this.closeWatchers = new Set(); // cb(profileId) - профиль погас
+  }
+
+  /**
+   * Подписка на "профиль погас". Нужна, чтобы снять флаг running в
+   * profiles.json: пользователь может закрыть окно Chrome сам, и тогда о
+   * событии никто, кроме менеджера, не узнает - в карточке профиль так и
+   * висел бы запущенным.
+   */
+  onProfileClosed(cb) {
+    this.closeWatchers.add(cb);
+    return () => this.closeWatchers.delete(cb);
+  }
+
+  _notifyClosed(profileId) {
+    for (const cb of this.closeWatchers) {
+      try { cb(profileId); } catch (_e) { /* подписчик не должен ронять менеджер */ }
+    }
   }
 
   /**
@@ -317,6 +335,7 @@ class PlaywrightManager {
       if (inst.closing) return;
       this.instances.delete(profile.id);
       logger.warn('cdp', t('cdp.closed', { label: profile.label }));
+      this._notifyClosed(profile.id);
     });
 
     if (url) {
@@ -868,6 +887,7 @@ class PlaywrightManager {
     this.instances.delete(profileId);
     try { await inst.context.close(); } catch (_e) {}
     logger.info('cdp', t('cdp.stopped', { id: profileId }));
+    this._notifyClosed(profileId);
   }
 
   async stopAll() {

@@ -71,11 +71,18 @@ class ProfileStore {
     return before !== this.profiles.length;
   }
 
-  stats() {
+  /**
+   * Сводка для дашборда. Признак "запущен" принимаем снаружи: в profiles.json
+   * это лишь снимок последнего состояния, и он устаревает, когда пользователь
+   * закрывает окно Chrome сам или приложение перезапускают. Правду знает
+   * только менеджер браузеров.
+   */
+  stats(isRunning) {
+    const live = typeof isRunning === 'function' ? isRunning : (p) => !!p.running;
     const total = this.profiles.length;
-    const running = this.profiles.filter((p) => p.running).length;
+    const running = this.profiles.filter(live).length;
     const gmailReady = this.profiles.filter((p) => p.gmailStatus === 'ready').length;
-    const portsOpen = this.profiles.filter((p) => p.running && p.port).length;
+    const portsOpen = this.profiles.filter((p) => live(p) && p.port).length;
     return { total, running, gmailReady, portsOpen };
   }
 }

@@ -1046,23 +1046,29 @@ class PlaywrightManager {
   /**
    * Пункт "Ответить" в контекстном меню строки.
    *
-   * TODO(gmail-dom): разметку самого меню проверить на живом Gmail. Иконка mL -
-   * тот же спрайт, которым Gmail помечает "Ответить" в меню "Type of response"
-   * внутри окна письма, но в контекстном меню строки это ДОГАДКА. Поэтому
-   * запасной путь по подписи, и строго целиком: рядом стоит "Ответить всем",
-   * и попасть в него нельзя.
+   * TODO(gmail-dom): разметка снята с живого Gmail. Меню - div.J-M[role=menu],
+   * пункты - div.J-N[role=menuitem], иконка внутри пункта это DIV, а не img:
+   * div.J-N-JX.aDE.<класс>. Классы иконок соседних пунктов различаются одной
+   * буквой, и промах молча увёл бы ответ не туда:
+   *
+   *   BS - Ответить        BR - Ответить всем
+   *   BQ - Переслать       In - Переслать как вложение
+   *   sX - Отметить как прочитанное   iA7v7d - Отметить как непрочитанное
+   *
+   * Пункты, неприменимые к строке, остаются в разметке со style="display:none",
+   * поэтому и меню, и пункт берём только видимые.
    */
   async _clickReplyMenuItem(page) {
     const menu = page.locator('div[role="menu"]:visible').first();
     if (!(await this._waitLocator(menu, T_MED))) return false;
-    const items = menu.locator('div[role="menuitem"]');
+    const items = menu.locator('div[role="menuitem"]:visible');
     try {
-      await items.filter({ has: page.locator('img.mL') }).first().click({ timeout: T_SHORT });
+      await items.filter({ has: page.locator('div.J-N-JX.BS') }).first().click({ timeout: T_SHORT });
       return true;
-    } catch (_e) { /* иконка не подтвердилась - идём по подписи */ }
-    // Матчим ТЕКСТ пункта, а не его доступное имя: у пункта есть и картинка с
-    // alt="Reply", и подпись "Reply", доступное имя из них склеивается в
-    // "Reply Reply" и по строгому "^Reply$" не находится.
+    } catch (_e) { /* вёрстка поменялась - идём по подписи */ }
+    // Запасной путь по подписи, строго целиком: рядом стоит "Ответить всем".
+    // Матчим ТЕКСТ пункта, а не доступное имя - оно может склеиваться из
+    // подписи и альтернативного текста иконки.
     for (const label of [/^Reply$/i, /^Ответить$/i]) {
       try {
         await items.filter({ hasText: label }).first().click({ timeout: T_SHORT });

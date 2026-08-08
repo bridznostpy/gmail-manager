@@ -698,13 +698,22 @@ class PlaywrightManager {
    * вкладке: она может висеть открытой часами, и новый ответ в DOM не появится.
    */
   async _refreshInbox(page) {
-    if (!(await this._clickIf(page, SEL.refreshBtn))) {
-      logger.debug('gmail', t('gmail.refreshMissing'));
+    if (await this._clickIf(page, SEL.refreshBtn)) {
+      // Список перерисовывается не мгновенно; ждём появления строк.
+      await this._wait(page, SEL.row, T_SHORT);
+      return true;
+    }
+    // Кнопку не нашли или она не нажалась. Читать список "как есть" НЕЛЬЗЯ:
+    // он может быть протухшим, и тогда уже отвеченная переписка снова выглядит
+    // непрочитанной - именно так уходил второй автоответ в ту же переписку.
+    // Перезагружаем страницу: это медленнее, зато список заведомо свежий.
+    logger.debug('gmail', t('gmail.refreshMissing'));
+    try {
+      await page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
+    } catch (_e) {
       return false;
     }
-    // Список перерисовывается не мгновенно; ждём появления строк.
-    await this._wait(page, SEL.row, T_SHORT);
-    return true;
+    return this._wait(page, SEL.row, T_MED);
   }
 
   /**
@@ -965,7 +974,13 @@ class PlaywrightManager {
   async _listRows(profileId, { unreadOnly = true, max = 25 } = {}) {
     const { page } = await this._mailPage(profileId);
     await this._ensureInbox(page);
-    await this._refreshInbox(page);
+    // Свежесть списка обязательна. Не удалось обновить - лучше вернуть пусто,
+    // чем отдать протухшие строки: по ним автоответ уйдёт повторно в переписку,
+    // на которую уже отвечали. Так же поступает и расширение.
+    if (!(await this._refreshInbox(page))) {
+      logger.warn('gmail', t('gmail.listStale'));
+      return [];
+    }
     let list = [];
     try {
       list = await page.evaluate(gmailRowsFn, {

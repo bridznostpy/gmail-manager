@@ -61,6 +61,16 @@ class SenderEngine {
     return this._readyProfiles().filter((p) => this.chrome.isRunning(p.id));
   }
 
+  /**
+   * Сколько не отвечать повторно в ту же переписку. Два круга опроса: за это
+   * время список писем точно успевает догнать действительность. Нижняя граница
+   * в минуту - на случай очень частого опроса.
+   */
+  _replyCooldownMs() {
+    const sec = Number(this.store.get('system').checkIntervalSec) || 20;
+    return Math.max(60000, sec * 2 * 1000);
+  }
+
   _allLimitsReached() {
     const limit = this.store.get('system').mailsPerAccount;
     const ready = this._readyProfiles();
@@ -205,8 +215,17 @@ class SenderEngine {
           continue;
         }
         const key = account.id + ':' + thread.threadId;
-        const dialog = this.dialogs.get(key) || { replies: 0 };
+        const dialog = this.dialogs.get(key) || { replies: 0, lastAt: 0 };
         if (dialog.replies >= maxReplies) continue;
+        // Одному входящему письму - один ответ. Признак "ответить надо" у нас
+        // один: письмо непрочитано. Но список писем умеет отставать, и уже
+        // отвеченная переписка приходит непрочитанной ещё раз - тогда автоответ
+        // уходил в неё повторно. Пауза это гасит и при этом не блокирует
+        // навсегда: на настоящее следующее письмо ответ уйдёт.
+        if (dialog.lastAt && Date.now() - dialog.lastAt < this._replyCooldownMs()) {
+          logger.debug('sender', t('reply.cooldown', { tid: thread.threadId }));
+          continue;
+        }
         try {
           // Ссылку строим по сохранённым данным товара этого адресата - у самой
           // переписки названия товара и цены нет.
@@ -214,6 +233,7 @@ class SenderEngine {
           const text = texts.autoReply(loaded, lang, url, contact);
           await this.chrome.gmailReply(account.id, thread, text);
           dialog.replies += 1;
+          dialog.lastAt = Date.now();
           this.dialogs.set(key, dialog);
           logger.info('sender', t('reply.sent', { label: account.label, n: dialog.replies, cap: maxReplies }));
         } catch (e) {

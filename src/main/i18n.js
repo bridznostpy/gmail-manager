@@ -56,7 +56,8 @@ const DICT = {
     'gmail.sendUnconfirmed': 'Отправка на {to} не подтверждена (окно письма осталось открытым)',
     'gmail.replySent': 'Автоответ отправлен в переписке {tid}',
     'gmail.replyUnconfirmed': 'Автоответ в переписке {tid} не подтверждён',
-    'gmail.refreshMissing': 'Кнопка "Обновить" не найдена - читаю список писем как есть',
+    'gmail.refreshMissing': 'Кнопка "Обновить" не найдена - перезагружаю список писем',
+    'gmail.listStale': 'Список писем не обновился - пропускаю проход, чтобы не ответить повторно',
     'gmail.replyBtnMissing': 'Кнопка "Ответить" не найдена - жду поле ответа как есть',
 
     // Статусы сканирования Gmail
@@ -81,6 +82,7 @@ const DICT = {
     'reply.pollError': 'Ошибка опроса ответов: {error}',
     'reply.disabled': 'Автоответ отключён в JSON с текстами',
     'reply.skipUnknown': 'Пропускаю {from} - не наш контакт рассылки, автоответ не шлю',
+    'reply.cooldown': 'Пропускаю {tid} - в эту переписку только что отвечали',
     'reply.poll': 'Опрос ответов по {count} аккаунтам (лимит {cap} на диалог)',
     'reply.unreadFailed': 'Не удалось прочитать непрочитанные для "{label}": {error}',
     'reply.sent': 'Отправлен автоответ в "{label}" ({n} из {cap})',
@@ -172,7 +174,8 @@ const DICT = {
     'gmail.sendUnconfirmed': 'Send to {to} not confirmed (compose left open)',
     'gmail.replySent': 'Auto-reply sent in thread {tid}',
     'gmail.replyUnconfirmed': 'Auto-reply in thread {tid} not confirmed',
-    'gmail.refreshMissing': 'Refresh button not found, reading the mail list as is',
+    'gmail.refreshMissing': 'Refresh button not found, reloading the mail list',
+    'gmail.listStale': 'Mail list did not refresh - skipping this pass to avoid a duplicate reply',
     'gmail.replyBtnMissing': 'Reply button not found, waiting for the reply box as is',
 
     'gmailStatus.ready': 'ready',
@@ -195,6 +198,7 @@ const DICT = {
     'reply.pollError': 'Reply poll error: {error}',
     'reply.disabled': 'Auto-reply disabled in texts JSON',
     'reply.skipUnknown': 'Skipping {from} - not our outreach contact, no auto-reply',
+    'reply.cooldown': 'Skipping {tid} - this thread was answered a moment ago',
     'reply.poll': 'Auto-reply poll over {count} account(s) (cap {cap}/dialog)',
     'reply.unreadFailed': 'Unread scan failed for "{label}": {error}',
     'reply.sent': 'Auto-replied in "{label}" thread ({n}/{cap})',

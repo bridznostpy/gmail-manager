@@ -1,20 +1,32 @@
 'use strict';
 /**
- * Launches and controls one Chrome instance per profile through Playwright.
+ * Один Chrome на профиль. Каждый профиль = свой `--user-data-dir`, поэтому
+ * куки и логины изолированы и переживают перезапуск.
  *
- * Браузер - настоящий системный Chrome (`executablePath`), а не сборка
- * Playwright: пользователь входит в Gmail руками, и профиль должен выглядеть
- * обычным. Каждый профиль = свой `--user-data-dir`, поэтому куки и логины
- * изолированы и переживают перезапуск.
+ * ГЛАВНОЕ ПРАВИЛО ЭТОГО МОДУЛЯ: пока пользователь входит в Gmail, к браузеру
+ * не должно быть подключено НИЧЕГО.
  *
- * Порт из диапазона [portStart, portEnd] выделяется по-прежнему и уходит в
- * `--remote-debugging-port`: он показывается в карточке профиля и позволяет
- * подцепиться к инстансу devtools вручную.
+ * Google отклоняет вход, если браузером кто-то управляет: на отправке адреса
+ * он уводит на /signin/rejected с "This browser or app may not be secure".
+ * Проверено - обычный Chrome пускает, тот же Chrome под Playwright нет. При
+ * этом сам Gmail к автоматизации претензий не имеет: запрет живёт только в
+ * форме входа. Поэтому вход и работа разведены:
+ *
+ * 1. Профиль поднимается обычным `spawn`, без Playwright и без единого флага
+ *    автоматизации - ровно так же, как если бы Chrome запустил человек.
+ * 2. Статус входа читается по HTTP `/json` порта отладки: оттуда видно адрес
+ *    и заголовок вкладки, а этого хватает. Подключения к странице нет.
+ * 3. Playwright цепляется через `connectOverCDP` ЛЕНИВО - только когда реально
+ *    нужно отправить или прочитать письмо, то есть уже после входа.
+ *
+ * Порт из диапазона [portStart, portEnd] нужен и для пункта 2, и для пункта 3,
+ * и показывается в карточке профиля.
  */
 const fs = require('fs');
 const path = require('path');
 const net = require('net');
-const { execFileSync } = require('child_process');
+const http = require('http');
+const { spawn, execFileSync } = require('child_process');
 
 const fingerprint = require('./fingerprint');
 const logger = require('../logger');
@@ -33,6 +45,10 @@ const T_MED = 6000;
 const T_SHORT = 3000;
 
 const INBOX_URL = 'https://mail.google.com/mail/u/0/#inbox';
+
+// Как часто опрашиваем /json на предмет "во вкладке что-то изменилось".
+// Дёшево: локальный HTTP, без подключения к странице.
+const WATCH_MS = 2000;
 
 function commonChromePaths() {
   if (process.platform === 'win32') {
@@ -105,8 +121,71 @@ function portFree(port) {
   });
 }
 
-// TODO(gmail-dom): эвристика статуса входа по DOM. Проверять на живом
-// залогиненном Gmail, догадками не расширять (Rules 4/6). Функция выполняется
+function httpJson(url, timeout = 4000) {
+  return new Promise((resolve, reject) => {
+    const req = http.get(url, { timeout }, (res) => {
+      let body = '';
+      res.on('data', (c) => (body += c));
+      res.on('end', () => {
+        try { resolve(JSON.parse(body)); } catch (e) { reject(e); }
+      });
+    });
+    req.on('timeout', () => req.destroy(new Error('timeout')));
+    req.on('error', reject);
+  });
+}
+
+async function waitForDevtools(port, tries = 40) {
+  for (let i = 0; i < tries; i++) {
+    try {
+      const v = await httpJson(`http://127.0.0.1:${port}/json/version`);
+      if (v && v.webSocketDebuggerUrl) return v;
+    } catch (_e) { /* not up yet */ }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  throw new Error(t('err.devtoolsDown', { port }));
+}
+
+/** Вкладки профиля по HTTP, без подключения к страницам. */
+async function listTargets(port) {
+  const list = await httpJson(`http://127.0.0.1:${port}/json`);
+  return (list || []).filter(
+    (x) => x && x.type === 'page' && !/^(devtools|chrome-extension):/.test(x.url || ''),
+  );
+}
+
+const EMAIL_RE = /[\w.+-]+@[\w.-]+\.\w{2,}/;
+
+/**
+ * Статус входа по одной вкладке - ТОЛЬКО по её адресу и заголовку. Ровно это
+ * отдаёт `/json`, и ради этого не надо подключаться к странице, а значит и
+ * попадаться Google на управлении браузером во время входа.
+ *
+ * Заголовок залогиненного Gmail несёт адрес аккаунта: "Входящие (2) -
+ * user@gmail.com - Gmail". Он не зависит от языка интерфейса - на этом же
+ * признаке держалась и прежняя проба по DOM.
+ *
+ * TODO(gmail-dom): проверять на живом залогиненном Gmail, догадками не
+ * расширять (Rules 4/6).
+ */
+function probeTarget(target) {
+  const href = target.url || '';
+  const title = target.title || '';
+  const onMail = /^https:\/\/mail\.google\.com\/mail\//.test(href);
+  // Страницу входа определяем по хосту: у залогиненного инбокса в адресе
+  // остаются flowName=GlifWebSignIn и flowEntry=AccountChooser, по подстрокам
+  // он считался бы страницей входа.
+  const onSignIn = /^https:\/\/accounts\.google\.com\//.test(href);
+  const m = EMAIL_RE.exec(title);
+  const email = m ? m[0] : '';
+  if (onSignIn) return { status: 'needs_login', email: '', href };
+  // Пока инбокс грузится, заголовок ещё "Gmail" без адреса - это уже вход.
+  if (onMail && (email || /Gmail/i.test(title))) return { status: 'ready', email, href };
+  return { status: 'unknown', email: '', href };
+}
+
+// TODO(gmail-dom): эвристика статуса входа по DOM. Используется только на
+// подключённом профиле, когда идёт работа с почтой. Функция выполняется
 // В СТРАНИЦЕ, поэтому ничего снаружи она видеть не должна.
 function gmailProbeFn() {
   try {
@@ -292,15 +371,15 @@ class PlaywrightManager {
   }
 
   /**
-   * Launch Chrome for a profile, apply the fingerprint to every tab of the
-   * context, and (optionally) navigate to an initial URL (gmail.com on first
-   * run for manual login).
+   * Поднять Chrome профиля ОБЫЧНЫМ запуском - так же, как его запустил бы
+   * человек. Ни Playwright, ни одного флага автоматизации: пользователю здесь
+   * входить в Gmail руками, а управляемый браузер Google на входе отклоняет.
+   * Playwright подключится позже и сам, см. _connect.
    */
   async launch(profile, { url } = {}) {
     if (this.instances.has(profile.id)) {
       return this.instances.get(profile.id);
     }
-    if (!chromium) throw new Error(t('err.playwrightMissing'));
     const chromePath = resolveChrome(this.store.get('cdp').chromePath);
     if (!chromePath) {
       throw new Error(t('err.chromeNotFound'));
@@ -310,99 +389,105 @@ class PlaywrightManager {
     fs.mkdirSync(udd, { recursive: true });
     const fp = profile.fingerprint;
 
+    const args = [
+      `--remote-debugging-port=${port}`,
+      `--user-data-dir=${udd}`,
+      '--no-first-run',
+      '--no-default-browser-check',
+      '--disable-features=Translate,MediaRouter',
+      `--window-size=${fp.screen.width - 100},${fp.screen.height - 120}`,
+      // UA ставим флагом, а не через Playwright: он должен действовать с первой
+      // секунды, в том числе пока мы не подключены. Версию берём у реально
+      // установленного Chrome.
+      `--user-agent=${fingerprint.userAgentFor(fp, detectChromeVersion(chromePath))}`,
+      `--lang=${fp.languages[0]}`,
+    ];
+    if (url) args.push(url);
+
     logger.info('cdp', t('cdp.launching', { label: profile.label, port }));
-    const context = await chromium.launchPersistentContext(udd, {
-      executablePath: chromePath,
-      // Обязательно: у Playwright headless по умолчанию ВКЛЮЧЁН, а профиль
-      // должен открываться настоящим окном - пользователь входит в Gmail
-      // руками (Rules 6).
-      headless: false,
-      // Тоже обязательно: у playwright песочница по умолчанию ВЫКЛЮЧЕНА, и он
-      // подставляет --no-sandbox. Chrome на этот флаг вешает жёлтую плашку
-      // "You are using an unsupported command-line flag" поверх страницы, а
-      // профиль должен выглядеть обычным браузером. Заодно не отключаем защиту.
-      chromiumSandbox: true,
-      // Playwright по умолчанию поднимает Chrome с --enable-automation. Вход в
-      // Gmail пользователь делает руками (Rules 6), и лишний признак
-      // автоматизации в командной строке профилю ни к чему.
-      //
-      // Парного --disable-blink-features=AutomationControlled здесь НЕТ
-      // намеренно: Chrome считает --disable-blink-features небезопасным и
-      // вешает плашку "unsupported command-line flag" поверх страницы. На
-      // navigator.webdriver он всё равно не влияет так, как хотелось бы -
-      // Playwright управляет браузером по трубе DevTools, и webdriver там
-      // true независимо от --enable-automation. Нормальным его делает
-      // init-скрипт фингерпринта.
-      ignoreDefaultArgs: ['--enable-automation'],
-      args: [
-        // Порт нужен не Playwright (он говорит по трубе), а нам: он виден в
-        // карточке профиля и по нему можно подцепиться devtools вручную.
-        `--remote-debugging-port=${port}`,
-        '--disable-features=Translate,MediaRouter',
-        `--window-size=${fp.screen.width - 100},${fp.screen.height - 120}`,
-        `--lang=${fp.languages[0]}`,
-      ],
-      // UA собираем под версию установленного Chrome, а не под сохранённую в
-      // профиле: браузер обновляется сам, а Client Hints всё равно показывают
-      // настоящую версию, и расходиться с ними UA не должен.
-      ...fingerprint.contextOptions(fp, detectChromeVersion(chromePath)),
-    });
-    context.setDefaultTimeout(T_LONG);
+    const proc = spawn(chromePath, args, { detached: false, stdio: 'ignore' });
 
     const inst = {
-      context, port, profileId: profile.id,
+      proc, port, profileId: profile.id, fingerprint: fp, label: profile.label,
       // Профиль с mac-фингерпринтом: Gmail в нём ждёт Cmd+Enter вместо
-      // Ctrl+Enter. Смотрим на platform, а не на UA: UA теперь пересобирается
-      // под установленный браузер и хранимым значением не является.
+      // Ctrl+Enter. Смотрим на platform, а не на UA: UA собирается под
+      // установленный браузер и хранимым значением не является.
       mac: fp.platform === 'MacIntel' || /Mac OS X|Macintosh/.test(fp.userAgent || ''),
       // Цепочка задач по вкладке почты, см. _serial.
       queue: Promise.resolve(),
-      page: null,
-      closing: false,
+      // Playwright появится здесь только при первой работе с почтой.
+      browser: null, context: null, page: null,
+      watch: null, seenKey: '', closing: false,
     };
     this.instances.set(profile.id, inst);
 
-    // Одна строка вместо прежней связки Target.setAutoAttach +
-    // waitForDebuggerOnStart: init-скрипт получают ВСЕ вкладки контекста, в том
-    // числе те, что пользователь откроет потом. Вход в Gmail часто
-    // заканчивается в отдельной вкладке, и без этого она шла бы с настоящими
-    // platform/screen/WebGL, отличными от карточки профиля.
-    try {
-      await context.addInitScript(fingerprint.injectionScript(fp));
-    } catch (e) {
-      logger.warn('cdp', t('cdp.fingerprintFailed', { label: profile.label, error: e.message }));
-    }
-
-    // Вкладка сменила адрес - повод пересканировать профиль: именно так
-    // выглядит "пользователь вошёл в почту" со стороны браузера.
-    const wire = (page) => {
-      page.on('framenavigated', (frame) => {
-        if (frame === page.mainFrame()) this._notifyActivity(profile.id);
-      });
-      page.on('load', () => this._notifyActivity(profile.id));
-    };
-    context.pages().forEach(wire);
-    context.on('page', (page) => { wire(page); this._notifyActivity(profile.id); });
-
-    // Пользователь может закрыть окно Chrome сам - профиль должен погаснуть и
-    // в приложении, иначе рассылка продолжит стучаться в мёртвый контекст.
-    context.on('close', () => {
+    proc.on('exit', () => {
       if (inst.closing) return;
+      this._teardown(inst);
       this.instances.delete(profile.id);
       logger.warn('cdp', t('cdp.closed', { label: profile.label }));
       this._notifyClosed(profile.id);
     });
 
-    if (url) {
-      const page = context.pages()[0] || (await context.newPage());
-      inst.page = page;
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
-    } else {
-      inst.page = context.pages()[0] || null;
+    try {
+      await waitForDevtools(port);
+    } catch (e) {
+      this.instances.delete(profile.id);
+      try { proc.kill(); } catch (_e) {}
+      throw e;
     }
+
+    // "Пользователь вошёл в почту" со стороны приложения выглядит как смена
+    // адреса или заголовка вкладки. Раньше это ловилось событиями CDP, но
+    // подключаться сейчас нельзя - опрашиваем /json, это дёшево и подключением
+    // не является. Заодно снова ловим смену ОДНОГО заголовка без навигации.
+    inst.watch = setInterval(async () => {
+      try {
+        const targets = await listTargets(port);
+        const key = targets.map((x) => (x.url || '') + '|' + (x.title || '')).join('\n');
+        if (key === inst.seenKey) return;
+        inst.seenKey = key;
+        this._notifyActivity(profile.id);
+      } catch (_e) { /* браузер закрывается - обработает proc.on('exit') */ }
+    }, WATCH_MS);
 
     logger.success('cdp', t('cdp.live', { label: profile.label, port }));
     return inst;
+  }
+
+  /**
+   * Подключить Playwright к уже поднятому профилю. Вызывается ЛЕНИВО, только
+   * из работы с почтой: пока идёт вход, подключения быть не должно.
+   */
+  async _connect(inst) {
+    if (inst.context) return inst.context;
+    if (!chromium) throw new Error(t('err.playwrightMissing'));
+    const browser = await chromium.connectOverCDP(`http://127.0.0.1:${inst.port}`);
+    const context = browser.contexts()[0];
+    if (!context) throw new Error(t('err.profileNotRunning'));
+    context.setDefaultTimeout(T_LONG);
+    inst.browser = browser;
+    inst.context = context;
+    // Фингерпринт ставим здесь: до подключения его поставить нечем. На уже
+    // открытые вкладки он ляжет со следующей навигацией, а работа с почтой
+    // всегда начинается с перехода в список писем.
+    try {
+      await context.addInitScript(fingerprint.injectionScript(inst.fingerprint));
+    } catch (e) {
+      logger.warn('cdp', t('cdp.fingerprintFailed', { label: inst.label, error: e.message }));
+    }
+    logger.debug('cdp', t('cdp.attached', { label: inst.label }));
+    return context;
+  }
+
+  /** Отпустить Playwright и таймер опроса, не трогая сам браузер. */
+  _teardown(inst) {
+    if (inst.watch) { clearInterval(inst.watch); inst.watch = null; }
+    const browser = inst.browser;
+    inst.browser = null;
+    inst.context = null;
+    inst.page = null;
+    if (browser) { try { browser.close(); } catch (_e) {} }
   }
 
   // ── Общие помощники по странице ──────────────────────────────────────
@@ -459,7 +544,8 @@ class PlaywrightManager {
    */
   async _resolveGmailPage(profileId) {
     const inst = this.instances.get(profileId);
-    if (!inst || !inst.context) throw new Error(t('err.profileNotRunning'));
+    if (!inst) throw new Error(t('err.profileNotRunning'));
+    await this._connect(inst);
     let best = null;
     for (const page of this._pages(inst)) {
       let parsed = null;
@@ -492,14 +578,31 @@ class PlaywrightManager {
   }
 
   /**
-   * Scan the profile's Gmail tab to determine auth status. Reads the DOM for
-   * signals of a logged-in inbox vs a sign-in screen. Перебирает все вкладки
-   * профиля - Gmail может быть открыт не в стартовой.
+   * Статус входа в Gmail. Ходит ТОЛЬКО по HTTP /json и НИ К ЧЕМУ НЕ
+   * ПОДКЛЮЧАЕТСЯ - это и есть та самая проверка, которая крутится, пока
+   * пользователь вводит пароль. Подключись мы здесь, Google отклонил бы вход.
+   *
+   * Перебирает все вкладки профиля: Gmail может быть открыт не в стартовой.
    */
   async scanGmail(profileId, { quiet = false } = {}) {
     const inst = this.instances.get(profileId);
-    if (!inst || !inst.context) throw new Error(t('err.profileNotRunning'));
-    const res = await this._resolveGmailPage(profileId);
+    if (!inst) throw new Error(t('err.profileNotRunning'));
+    let targets = [];
+    try { targets = await listTargets(inst.port); } catch (_e) { targets = []; }
+    // Вкладку с почтой смотрим первой, страницу входа - следом.
+    const weight = (x) => {
+      const u = x.url || '';
+      if (/^https:\/\/mail\.google\.com\//.test(u)) return 0;
+      if (/^https:\/\/accounts\.google\.com\//.test(u)) return 1;
+      return 2;
+    };
+    let best = null;
+    for (const target of targets.sort((a, b) => weight(a) - weight(b))) {
+      const probe = probeTarget(target);
+      if (!best || STATUS_RANK[probe.status] > STATUS_RANK[best.status]) best = probe;
+      if (best.status === 'ready') break;
+    }
+    const res = best || { status: 'unknown', email: '', href: '' };
     if (!quiet) {
       if (res.status === 'unknown') logger.warn('gmail', t('gmail.noTab', { id: profileId }));
       logger.info('gmail', t('gmail.scan', {
@@ -511,10 +614,15 @@ class PlaywrightManager {
     return res;
   }
 
-  /** Вкладка почты профиля, уже привязанная к залогиненному Gmail. */
+  /**
+   * Вкладка почты профиля, привязанная к залогиненному Gmail. Здесь и только
+   * здесь Playwright подключается к браузеру: работа с почтой идёт уже после
+   * входа, а до неё профиль остаётся неуправляемым.
+   */
   async _mailPage(profileId) {
     const inst = this.instances.get(profileId);
-    if (!inst || !inst.context) throw new Error(t('err.profileNotRunning'));
+    if (!inst) throw new Error(t('err.profileNotRunning'));
+    await this._connect(inst);
     await this._resolveGmailPage(profileId).catch(() => {});
     if (!inst.page || inst.page.isClosed()) throw new Error(t('err.profileNotRunning'));
     return { inst, page: inst.page };
@@ -940,7 +1048,8 @@ class PlaywrightManager {
     // закрытие окна пользователем, и лог про неё уже свой.
     inst.closing = true;
     this.instances.delete(profileId);
-    try { await inst.context.close(); } catch (_e) {}
+    this._teardown(inst);
+    try { inst.proc.kill(); } catch (_e) {}
     logger.info('cdp', t('cdp.stopped', { id: profileId }));
     this._notifyClosed(profileId);
   }

@@ -279,6 +279,11 @@ class PlaywrightManager {
       // должен открываться настоящим окном - пользователь входит в Gmail
       // руками (Rules 6).
       headless: false,
+      // Тоже обязательно: у playwright песочница по умолчанию ВЫКЛЮЧЕНА, и он
+      // подставляет --no-sandbox. Chrome на этот флаг вешает жёлтую плашку
+      // "You are using an unsupported command-line flag" поверх страницы, а
+      // профиль должен выглядеть обычным браузером. Заодно не отключаем защиту.
+      chromiumSandbox: true,
       // Playwright по умолчанию поднимает Chrome с --enable-automation. Вход в
       // Google пользователь делает руками (Rules 6), а на такой браузер Google
       // отвечает "этот браузер небезопасен" - флаг снимаем.

@@ -101,9 +101,10 @@ function injectionScript(fp) {
     const def = (obj, prop, val) => {
       try { Object.defineProperty(obj, prop, { get: () => val, configurable: true }); } catch (e) {}
     };
-    // Автоматизационные флаги Chrome мы гасим при запуске, так что webdriver
-    // тоже должен выглядеть как у обычного браузера - иначе одно противоречит
-    // другому.
+    // ЕДИНСТВЕННОЕ, что делает navigator.webdriver обычным. Playwright ведёт
+    // браузер по трубе DevTools, и нативно webdriver там true независимо от
+    // флагов запуска; --disable-blink-features=AutomationControlled его чинит,
+    // но платой идёт плашка Chrome поверх страницы, поэтому его не используем.
     def(navigator, 'webdriver', undefined);
     def(navigator, 'platform', fp.platform);
     def(navigator, 'hardwareConcurrency', fp.hardwareConcurrency);

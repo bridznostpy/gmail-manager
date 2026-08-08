@@ -285,11 +285,18 @@ class PlaywrightManager {
       // профиль должен выглядеть обычным браузером. Заодно не отключаем защиту.
       chromiumSandbox: true,
       // Playwright по умолчанию поднимает Chrome с --enable-automation. Вход в
-      // Google пользователь делает руками (Rules 6), а на такой браузер Google
-      // отвечает "этот браузер небезопасен" - флаг снимаем.
+      // Gmail пользователь делает руками (Rules 6), и лишний признак
+      // автоматизации в командной строке профилю ни к чему.
+      //
+      // Парного --disable-blink-features=AutomationControlled здесь НЕТ
+      // намеренно: Chrome считает --disable-blink-features небезопасным и
+      // вешает плашку "unsupported command-line flag" поверх страницы. На
+      // navigator.webdriver он всё равно не влияет так, как хотелось бы -
+      // Playwright управляет браузером по трубе DevTools, и webdriver там
+      // true независимо от --enable-automation. Нормальным его делает
+      // init-скрипт фингерпринта.
       ignoreDefaultArgs: ['--enable-automation'],
       args: [
-        '--disable-blink-features=AutomationControlled',
         // Порт нужен не Playwright (он говорит по трубе), а нам: он виден в
         // карточке профиля и по нему можно подцепиться devtools вручную.
         `--remote-debugging-port=${port}`,

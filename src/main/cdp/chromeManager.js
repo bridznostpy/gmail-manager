@@ -257,6 +257,10 @@ class PlaywrightManager {
     logger.info('cdp', t('cdp.launching', { label: profile.label, port }));
     const context = await chromium.launchPersistentContext(udd, {
       executablePath: chromePath,
+      // Обязательно: у Playwright headless по умолчанию ВКЛЮЧЁН, а профиль
+      // должен открываться настоящим окном - пользователь входит в Gmail
+      // руками (Rules 6).
+      headless: false,
       // Playwright по умолчанию поднимает Chrome с --enable-automation. Вход в
       // Google пользователь делает руками (Rules 6), а на такой браузер Google
       // отвечает "этот браузер небезопасен" - флаг снимаем.

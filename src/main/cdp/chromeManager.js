@@ -279,6 +279,12 @@ const SEL_ORDERED = {
     'div.ar6',
     'div[role="button"][aria-label^="Back to"]',
   ],
+  // Выбросить черновик в окне ответа. Класс oh от языка не зависит. Нужен,
+  // когда ответ не удался: иначе неудачные попытки копятся черновиками.
+  discard: [
+    'div[role="button"].oh',
+    'div[role="button"][aria-label^="Discard"]',
+  ],
 };
 
 /**
@@ -1020,6 +1026,88 @@ class PlaywrightManager {
     return this._serial(profileId, () => this._gmailReply(profileId, thread, text));
   }
 
+  /** Строка списка писем как локатор: по своему id, при промахе - по отправителю. */
+  async _rowLocator(page, item) {
+    const rid = String(item.rowId || '');
+    if (rid) {
+      const byId = page.locator(`${SEL.row}[id="${attrValue(rid)}"]`).first();
+      if (await byId.count()) return byId;
+    }
+    const from = String(item.from || '').toLowerCase();
+    if (from) {
+      // Флаг "i" - адрес в разметке может быть в другом регистре.
+      const byFrom = page.locator(SEL.row)
+        .filter({ has: page.locator(`span[email="${attrValue(from)}" i]`) }).first();
+      if (await byFrom.count()) return byFrom;
+    }
+    return null;
+  }
+
+  /**
+   * Пункт "Ответить" в контекстном меню строки.
+   *
+   * TODO(gmail-dom): разметку самого меню проверить на живом Gmail. Иконка mL -
+   * тот же спрайт, которым Gmail помечает "Ответить" в меню "Type of response"
+   * внутри окна письма, но в контекстном меню строки это ДОГАДКА. Поэтому
+   * запасной путь по подписи, и строго целиком: рядом стоит "Ответить всем",
+   * и попасть в него нельзя.
+   */
+  async _clickReplyMenuItem(page) {
+    const menu = page.locator('div[role="menu"]:visible').first();
+    if (!(await this._waitLocator(menu, T_MED))) return false;
+    const items = menu.locator('div[role="menuitem"]');
+    try {
+      await items.filter({ has: page.locator('img.mL') }).first().click({ timeout: T_SHORT });
+      return true;
+    } catch (_e) { /* иконка не подтвердилась - идём по подписи */ }
+    // Матчим ТЕКСТ пункта, а не его доступное имя: у пункта есть и картинка с
+    // alt="Reply", и подпись "Reply", доступное имя из них склеивается в
+    // "Reply Reply" и по строгому "^Reply$" не находится.
+    for (const label of [/^Reply$/i, /^Ответить$/i]) {
+      try {
+        await items.filter({ hasText: label }).first().click({ timeout: T_SHORT });
+        return true;
+      } catch (_e) { /* следующий язык */ }
+    }
+    return false;
+  }
+
+  /**
+   * Открыть окно ответа ПРЯМО ИЗ СПИСКА писем: правый клик по строке ->
+   * "Ответить". Gmail открывает обычное окно письма (data-compose-id) с уже
+   * подставленными получателем и темой "Re: ...".
+   *
+   * Так лучше, чем заходить в переписку: вкладка остаётся на списке, возвращать
+   * её не надо, и список не успевает протухнуть между ответами.
+   *
+   * Возвращает data-compose-id своего окна или null, если путь не сработал -
+   * тогда вызывающий уходит на запасной путь через открытие переписки.
+   */
+  async _openReplyWidget(page, item) {
+    const row = await this._rowLocator(page, item);
+    if (!row) return null;
+    const before = await this._composeIds(page);
+    try {
+      await row.click({ button: 'right', timeout: T_MED });
+    } catch (_e) { return null; }
+    if (!(await this._clickReplyMenuItem(page))) {
+      // Меню могло открыться, но нужного пункта мы не нашли - закрываем его,
+      // иначе оно перекроет список для следующих действий.
+      await page.keyboard.press('Escape').catch(() => {});
+      return null;
+    }
+    const appeared = await this._waitFn(page, (known) => {
+      var n = document.querySelectorAll('[data-compose-id]');
+      for (var i = 0; i < n.length; i++) {
+        if (known.indexOf(n[i].getAttribute('data-compose-id')) < 0) return true;
+      }
+      return false;
+    }, before, T_LONG);
+    if (!appeared) return null;
+    const fresh = (await this._composeIds(page)).filter((id) => before.indexOf(id) < 0);
+    return fresh.length ? fresh[fresh.length - 1] : null;
+  }
+
   /**
    * Открыть переписку. Основной путь - клик по строке списка, как в расширении:
    * у строки инбокса есть только её собственный id вида ":15o", он живёт в
@@ -1061,11 +1149,72 @@ class PlaywrightManager {
     return this._wait(page, SEL.thread, T_LONG);
   }
 
+  /**
+   * Ответить окном письма, открытым прямо из списка. Получатель и тема в нём уже
+   * стоят от Gmail, наше дело - текст и "Отправить".
+   */
+  async _replyViaWidget(page, inst, item, tid, text) {
+    const cid = await this._openReplyWidget(page, item);
+    if (!cid) return null;
+    const widget = this._widget(page, cid);
+
+    let sent = false;
+    try {
+      if (!(await this._fillBody(widget, text))) return null;
+
+      let clicked = false;
+      try {
+        await widget.locator(SEL.send).first().click({ timeout: T_SHORT });
+        clicked = true;
+      } catch (_e) { clicked = false; }
+      if (!clicked) {
+        await this._sendShortcut(page, inst, widget.locator(SEL.body).first());
+      }
+
+      sent = await this._waitFn(page, (id) => {
+        if (!document.querySelector('[data-compose-id="' + id + '"]')) return true;
+        return !!document.getElementById('link_undo');
+      }, String(cid), T_MED);
+      if (sent) logger.success('gmail', t('gmail.replySent', { tid }));
+      else logger.warn('gmail', t('gmail.replyUnconfirmed', { tid }));
+      return { ok: !!sent };
+    } finally {
+      // Неудачную попытку за собой убираем, иначе копятся черновики.
+      if (!sent) await this._clickOrdered(page, SEL_ORDERED.discard, T_SHORT);
+    }
+  }
+
+  /**
+   * Прочитанной переписка становится сама, когда мы в неё отвечаем. Если вдруг
+   * нет - строка так и останется непрочитанной, и следующий проход посчитает её
+   * новым письмом. Тогда открываем переписку и возвращаемся: открытие Gmail
+   * прочитанность проставляет гарантированно.
+   */
+  async _ensureThreadRead(page, item) {
+    const row = await this._rowLocator(page, item);
+    if (!row) return;
+    const unread = await row.evaluate((n) => n.classList.contains('zE')).catch(() => false);
+    if (!unread) return;
+    logger.debug('gmail', t('gmail.markReadFallback'));
+    if (await this._openThread(page, item)) {
+      await this._ensureInbox(page).catch(() => {});
+    }
+  }
+
   async _gmailReply(profileId, thread, text) {
     const { inst, page } = await this._mailPage(profileId);
     const item = typeof thread === 'string' ? { threadId: thread } : (thread || {});
     const tid = item.threadId;
     if (!tid) throw new Error(t('err.noThreadId'));
+
+    // Основной путь - ответить прямо из списка, не заходя в переписку.
+    await this._ensureInbox(page);
+    const viaWidget = await this._replyViaWidget(page, inst, item, tid, text);
+    if (viaWidget) {
+      await this._ensureThreadRead(page, item).catch(() => {});
+      return viaWidget;
+    }
+    logger.debug('gmail', t('gmail.replyWidgetFallback'));
 
     const opened = await this._openThread(page, item);
     if (!opened) {

@@ -59,6 +59,8 @@ const DICT = {
     'gmail.refreshMissing': 'Кнопка "Обновить" не найдена - перезагружаю список писем',
     'gmail.listStale': 'Список писем не обновился - пропускаю проход, чтобы не ответить повторно',
     'gmail.replyBtnMissing': 'Кнопка "Ответить" не найдена - жду поле ответа как есть',
+    'gmail.replyWidgetFallback': 'Ответ из списка не открылся - захожу в переписку',
+    'gmail.markReadFallback': 'Переписка осталась непрочитанной - открываю её, чтобы не ответить повторно',
 
     // Статусы сканирования Gmail
     'gmailStatus.ready': 'готов',
@@ -177,6 +179,8 @@ const DICT = {
     'gmail.refreshMissing': 'Refresh button not found, reloading the mail list',
     'gmail.listStale': 'Mail list did not refresh - skipping this pass to avoid a duplicate reply',
     'gmail.replyBtnMissing': 'Reply button not found, waiting for the reply box as is',
+    'gmail.replyWidgetFallback': 'Reply from the list did not open - opening the thread instead',
+    'gmail.markReadFallback': 'Thread stayed unread - opening it so we do not reply twice',
 
     'gmailStatus.ready': 'ready',
     'gmailStatus.needs_login': 'needs login',

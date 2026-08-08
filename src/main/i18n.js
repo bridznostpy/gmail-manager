@@ -57,6 +57,7 @@ const DICT = {
     'gmail.replySent': 'Автоответ отправлен в переписке {tid}',
     'gmail.replyUnconfirmed': 'Автоответ в переписке {tid} не подтверждён',
     'gmail.refreshMissing': 'Кнопка "Обновить" не найдена - читаю список писем как есть',
+    'gmail.replyBtnMissing': 'Кнопка "Ответить" не найдена - жду поле ответа как есть',
 
     // Статусы сканирования Gmail
     'gmailStatus.ready': 'готов',
@@ -172,6 +173,7 @@ const DICT = {
     'gmail.replySent': 'Auto-reply sent in thread {tid}',
     'gmail.replyUnconfirmed': 'Auto-reply in thread {tid} not confirmed',
     'gmail.refreshMissing': 'Refresh button not found, reading the mail list as is',
+    'gmail.replyBtnMissing': 'Reply button not found, waiting for the reply box as is',
 
     'gmailStatus.ready': 'ready',
     'gmailStatus.needs_login': 'needs login',

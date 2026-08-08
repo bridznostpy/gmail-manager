@@ -241,13 +241,44 @@ const SEL = {
   send: 'div[role="button"].aoO, div[role="button"][data-tooltip^="Send"], div[role="button"][aria-label^="Send"]',
   close: 'button.Ha, button[aria-label^="Save"]',
   refreshBtn: '[data-tooltip="Refresh"], [aria-label="Refresh"], .T-I.J-J5-Ji.nu.T-I-ax7.L3',
-  replyBtn: 'span.ams.bkH[role="link"], div[role="button"][aria-label^="Reply"], div.amn',
   row: 'tr.zA',
   unreadRow: 'tr.zA.zE',
   // Поле ввода в открытом окне ответа: своего мини-окна у него нет.
-  replyBox: 'div[role=textbox][aria-label*=Body], div[role=textbox]',
+  replyBox: 'div[role=textbox][g_editable="true"][aria-label*=Body], div[role=textbox][aria-label*=Body], div[role=textbox]',
   // Признак раскрытой переписки.
   thread: 'div.adn, div[role=listitem]',
+};
+
+/**
+ * Кнопки, у которых важен ПОРЯДОК перебора, поэтому они списками, а не одной
+ * строкой через запятую.
+ *
+ * Через запятую нельзя: и `document.querySelector`, и локатор Playwright берут
+ * первый элемент в порядке ДОКУМЕНТА, а не в порядке селекторов. У кнопок
+ * ответа контейнер `div.amn` - родитель обеих кнопок, в DOM он идёт раньше
+ * самих кнопок, и список через запятую всегда выбирал его. Клик по контейнеру
+ * ответ не открывает.
+ */
+const SEL_ORDERED = {
+  // Ответить. span.ams.bkH - сама кнопка; bkG рядом это "Переслать", в неё
+  // попадать нельзя.
+  replyBtn: [
+    'span.ams.bkH[role="link"]',
+    'div.amn span.ams.bkH',
+    'div[role="button"][aria-label^="Reply"]',
+  ],
+  // Отправить ответ. Класс aoO не зависит от языка интерфейса.
+  replySend: [
+    'div[role="button"].aoO',
+    'div[role="button"][data-tooltip^="Send"]',
+    'div[role="button"][aria-label^="Send"]',
+  ],
+  // Назад к списку писем. div.ar6 - иконка стрелки внутри кнопки, клик по ней
+  // всплывает до кнопки. Берём её первой: подпись кнопки зависит от языка.
+  backToInbox: [
+    'div.ar6',
+    'div[role="button"][aria-label^="Back to"]',
+  ],
 };
 
 /**
@@ -519,6 +550,17 @@ class PlaywrightManager {
       await page.locator(selector).first().click({ timeout });
       return true;
     } catch (_e) { return false; }
+  }
+
+  /**
+   * Кликнуть по первому селектору из списка, который сработал. Именно перебором
+   * по очереди, а не одним селектором через запятую, - см. SEL_ORDERED.
+   */
+  async _clickOrdered(page, selectors, timeout = T_SHORT) {
+    for (const selector of selectors) {
+      if (await this._clickIf(page, selector, timeout)) return selector;
+    }
+    return null;
   }
 
   // ── Вкладка с Gmail ──────────────────────────────────────────────────
@@ -944,6 +986,12 @@ class PlaywrightManager {
   async _ensureInbox(page) {
     if (/mail\.google\.com/.test(page.url() || '')) {
       if (await this._exists(page, SEL.row)) return true;
+      // Из открытой переписки возвращаемся стрелкой "Назад", как это сделал бы
+      // человек: Gmail тут одностраничный, и перезагрузка ради возврата в
+      // список - лишние секунды на каждом ответе.
+      if (await this._clickOrdered(page, SEL_ORDERED.backToInbox, T_SHORT)) {
+        if (await this._wait(page, SEL.row, T_MED)) return true;
+      }
     }
     await page.goto(INBOX_URL, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
     return this._wait(page, SEL.row, T_MED);
@@ -1013,7 +1061,13 @@ class PlaywrightManager {
     }
 
     try {
-      await this._clickIf(page, SEL.replyBtn, T_SHORT);
+      // Форма ответа может быть уже раскрыта - тогда кнопки "Ответить" нет и
+      // жать нечего. Ошибкой это не считаем, проверяем по самому полю ввода.
+      if (!(await this._exists(page, SEL.replyBox))) {
+        if (!(await this._clickOrdered(page, SEL_ORDERED.replyBtn, T_MED))) {
+          logger.warn('gmail', t('gmail.replyBtnMissing'));
+        }
+      }
       if (!(await this._wait(page, SEL.replyBox, T_LONG))) {
         throw new Error(t('err.replyBoxNotOpened'));
       }
@@ -1025,9 +1079,13 @@ class PlaywrightManager {
         catch (e) { node.textContent = put; }
         node.dispatchEvent(new InputEvent('input', { bubbles: true }));
       }, String(text == null ? '' : text)).catch(() => {});
-      // Кнопки "Отправить" в окне ответа может не быть на виду - шлём горячей
-      // клавишей, с поправкой на mac-фингерпринт профиля.
-      await this._sendShortcut(page, inst, box);
+
+      // Сначала настоящая кнопка "Отправить" - она в форме ответа есть
+      // (div[role=button].aoO). Горячая клавиша остаётся запасным путём, с
+      // поправкой на mac-фингерпринт профиля.
+      if (!(await this._clickOrdered(page, SEL_ORDERED.replySend, T_SHORT))) {
+        await this._sendShortcut(page, inst, box);
+      }
 
       const sent = await this._waitFn(page,
         () => !document.querySelector('div[role=textbox][aria-label*=Body]'), null, T_MED);

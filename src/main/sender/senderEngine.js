@@ -39,6 +39,8 @@ class SenderEngine {
     this._replyTimer = null;
     this.dialogs = new Map(); // dialogId -> { replies: n }
     this._notifiedAllLimits = false;
+    // Идёт проход автоответа - новые письма в это время не шлём, см. _sendLoop.
+    this._replying = false;
   }
 
   status() {
@@ -103,6 +105,16 @@ class SenderEngine {
 
   async _sendLoop() {
     if (!this.running) return;
+    // Пока идёт автоответ - никаких новых писем. Ответ может прийти прямо
+    // посреди рассылки, а вкладка почты у профиля ОДНА: отправка вклинилась бы
+    // между открытием переписки и её отправкой. Очередь в менеджере делает
+    // атомарной каждую задачу по отдельности, но проход автоответа - это
+    // несколько задач подряд (скан, затем ответ на каждое письмо), и разрывать
+    // его нельзя.
+    if (this._replying) {
+      this._sendTimer = setTimeout(() => this._sendLoop(), 1000);
+      return;
+    }
     const account = this._currentAccount();
     if (!account) {
       if (this._allLimitsReached() && !this._notifiedAllLimits) {
@@ -150,10 +162,15 @@ class SenderEngine {
   async _replyLoop() {
     if (!this.running) return;
     const intervalMs = Math.max(3, this.store.get('system').checkIntervalSec) * 1000;
+    // Флаг держим на ВЕСЬ проход, включая скан непрочитанных: скан тоже водит
+    // вкладку почты (обновляет список), и отправка в это время мешала бы.
+    this._replying = true;
     try {
       await this._pollReplies();
     } catch (e) {
       logger.error('sender', t('reply.pollError', { error: e.message }));
+    } finally {
+      this._replying = false;
     }
     this._replyTimer = setTimeout(() => this._replyLoop(), intervalMs);
   }

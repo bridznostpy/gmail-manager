@@ -14,6 +14,7 @@
 const fs = require('fs');
 const path = require('path');
 const net = require('net');
+const { execFileSync } = require('child_process');
 
 const fingerprint = require('./fingerprint');
 const logger = require('../logger');
@@ -56,6 +57,43 @@ function resolveChrome(configuredPath) {
     if (fs.existsSync(p)) return p;
   }
   return null;
+}
+
+// Версия читается с диска один раз на путь: она нужна до запуска браузера,
+// значит спросить её у самого Chrome уже поздно.
+const versionCache = new Map();
+
+/**
+ * Версия установленного Chrome - для UA профиля. Основной путь работает на всех
+ * платформах: рядом с исполняемым файлом лежит папка, названная версией
+ * ("...\Application\151.0.7922.77"). Запасной - `chrome --version`, но только
+ * не на Windows: там Chrome в консоль ничего не пишет.
+ */
+function detectChromeVersion(exePath) {
+  if (versionCache.has(exePath)) return versionCache.get(exePath);
+  let version = '';
+  try {
+    const dirs = fs.readdirSync(path.dirname(exePath))
+      .filter((n) => /^\d+\.\d+\.\d+\.\d+$/.test(n))
+      // Во время обновления рядом лежат две папки - берём старшую. Сравнение
+      // строкой тут не годится: "9.0" оказалась бы больше "151.0".
+      .sort((a, b) => {
+        const x = a.split('.').map(Number);
+        const y = b.split('.').map(Number);
+        for (let i = 0; i < 4; i++) { if (x[i] !== y[i]) return x[i] - y[i]; }
+        return 0;
+      });
+    if (dirs.length) version = dirs[dirs.length - 1];
+  } catch (_e) { /* нестандартная раскладка установки */ }
+  if (!version && process.platform !== 'win32') {
+    try {
+      const out = execFileSync(exePath, ['--version'], { encoding: 'utf-8', timeout: 5000 });
+      const m = /(\d+\.\d+\.\d+\.\d+)/.exec(out || '');
+      if (m) version = m[1];
+    } catch (_e) { /* остаёмся на запасной версии из фингерпринта */ }
+  }
+  versionCache.set(exePath, version);
+  return version;
 }
 
 function portFree(port) {
@@ -304,14 +342,19 @@ class PlaywrightManager {
         `--window-size=${fp.screen.width - 100},${fp.screen.height - 120}`,
         `--lang=${fp.languages[0]}`,
       ],
-      ...fingerprint.contextOptions(fp),
+      // UA собираем под версию установленного Chrome, а не под сохранённую в
+      // профиле: браузер обновляется сам, а Client Hints всё равно показывают
+      // настоящую версию, и расходиться с ними UA не должен.
+      ...fingerprint.contextOptions(fp, detectChromeVersion(chromePath)),
     });
     context.setDefaultTimeout(T_LONG);
 
     const inst = {
       context, port, profileId: profile.id,
-      // Профиль с mac-фингерпринтом: Gmail в нём ждёт Cmd+Enter вместо Ctrl+Enter.
-      mac: /Mac OS X|Macintosh/.test(fp.userAgent || ''),
+      // Профиль с mac-фингерпринтом: Gmail в нём ждёт Cmd+Enter вместо
+      // Ctrl+Enter. Смотрим на platform, а не на UA: UA теперь пересобирается
+      // под установленный браузер и хранимым значением не является.
+      mac: fp.platform === 'MacIntel' || /Mac OS X|Macintosh/.test(fp.userAgent || ''),
       // Цепочка задач по вкладке почты, см. _serial.
       queue: Promise.resolve(),
       page: null,

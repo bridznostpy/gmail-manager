@@ -31,7 +31,21 @@ function mulberry32(seed) {
   };
 }
 
-const CHROME_VERSIONS = ['122.0.6261.94', '123.0.6312.86', '124.0.6367.60', '125.0.6422.60'];
+/**
+ * Версия Chrome в UA НЕ случайная и в профиле не хранится. Причины:
+ *
+ * - Client Hints (sec-ch-ua, navigator.userAgentData) опцией userAgent не
+ *   подменяются и всегда показывают настоящую версию бинарника. Случайная
+ *   версия в UA просто разошлась бы с ними.
+ * - Профили запускают ОДИН И ТОТ ЖЕ установленный Chrome, так что разные
+ *   версии в разных профилях сами по себе нестыковка.
+ * - Chrome обновляется сам, и сохранённая в profiles.json версия протухает.
+ *
+ * Поэтому UA собирается под реально установленный браузер, см. userAgentFor.
+ * Константа ниже - запасной вариант, если версию прочитать не удалось.
+ */
+const FALLBACK_CHROME_VERSION = '151.0.0.0';
+
 const PLATFORMS = [
   { platform: 'Win32', ua: 'Windows NT 10.0; Win64; x64', uaPlatform: 'Windows' },
   { platform: 'MacIntel', ua: 'Macintosh; Intel Mac OS X 10_15_7', uaPlatform: 'macOS' },
@@ -50,20 +64,43 @@ const LANGS = [['en-US', 'en'], ['en-GB', 'en'], ['en-US', 'en', 'es']];
 const HW = [4, 8, 12, 16];
 const MEM = [4, 8, 16];
 
+/**
+ * Настоящий Chrome с версии 110 шлёт в UA УРЕЗАННУЮ версию - "151.0.0.0", а не
+ * полный билд "151.0.7922.77". Полный билд в UA сам по себе выдаёт подделку.
+ */
+function reduceVersion(version) {
+  const major = String(version || '').split('.')[0];
+  return /^\d+$/.test(major) ? major + '.0.0.0' : FALLBACK_CHROME_VERSION;
+}
+
+function buildUserAgent(osUa, version) {
+  return `Mozilla/5.0 (${osUa}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${reduceVersion(version)} Safari/537.36`;
+}
+
+/**
+ * UA профиля под реально установленный Chrome. Версию берём снаружи, а не из
+ * `fp`: сохранённый в profiles.json UA протухает при каждом обновлении
+ * браузера, и старые профили тоже должны чиниться сами собой.
+ */
+function userAgentFor(fp, chromeVersion) {
+  const known = PLATFORMS.find((p) => p.platform === fp.platform) || PLATFORMS[0];
+  return buildUserAgent(known.ua, chromeVersion || fp.chromeVersion || FALLBACK_CHROME_VERSION);
+}
+
 function generate(seed) {
   const s = typeof seed === 'number' ? seed : Math.floor(Math.random() * 1e9);
   const rnd = mulberry32(s);
   const os = pick(PLATFORMS, rnd);
-  const ver = pick(CHROME_VERSIONS, rnd);
   const screen = pick(SCREENS, rnd);
   const gpu = pick(VENDORS, rnd);
-  const userAgent = `Mozilla/5.0 (${os.ua}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${ver} Safari/537.36`;
   return {
     seed: s,
-    userAgent,
+    // Запасное значение: при запуске UA всё равно пересобирается под реальный
+    // бинарник (userAgentFor).
+    userAgent: buildUserAgent(os.ua, FALLBACK_CHROME_VERSION),
     platform: os.platform,
     uaPlatform: os.uaPlatform,
-    chromeVersion: ver,
+    chromeVersion: FALLBACK_CHROME_VERSION,
     screen,
     languages: pick(LANGS, rnd),
     timezone: pick(TIMEZONES, rnd),
@@ -82,9 +119,9 @@ function generate(seed) {
  * окно профиля перестаёт вести себя как обычное окно Chrome, которое
  * пользователь может растянуть.
  */
-function contextOptions(fp) {
+function contextOptions(fp, chromeVersion) {
   return {
-    userAgent: fp.userAgent,
+    userAgent: userAgentFor(fp, chromeVersion),
     locale: fp.languages[0],
     timezoneId: fp.timezone,
     viewport: null,
@@ -128,4 +165,4 @@ function injectionScript(fp) {
   })();`;
 }
 
-module.exports = { generate, contextOptions, injectionScript };
+module.exports = { generate, contextOptions, injectionScript, userAgentFor };

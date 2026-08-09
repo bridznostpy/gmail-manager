@@ -16,6 +16,18 @@ body {
 /* Фильтры-заготовки для стекла не должны занимать место. */
 .lg-defs { position: absolute; width: 0; height: 0; overflow: hidden; }
 
+/* Подложка рабочей области - отдельным слоем, а не фоном .main: у .main есть
+   маска растушёвки сверху, она бы съела и подложку, оставив светлую полосу.
+   Отсчёт от высоты шапки - её подложка не касается. */
+.content-scrim {
+  position: fixed;
+  top: var(--topbar-h); left: 0; right: 0; bottom: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: var(--content-scrim);
+  transition: background var(--dur-slow) var(--ease);
+}
+
 /* minmax(0, 1fr) обязателен: без него колонка сетки растягивается по самой
    широкой строке (шапке), и всё остальное уезжает за край окна. */
 #app {
@@ -45,7 +57,7 @@ body {
   align-items: center;
   gap: 18px;
   padding: 0 8px 0 16px;
-  height: 56px;
+  height: var(--topbar-h);
   min-width: 0;
   overflow: hidden;
   border-radius: 0;
@@ -123,7 +135,7 @@ body {
 /* Кнопки окна: те же пропорции, что у Windows, чтобы попадать привычно. */
 .win-controls { display: flex; align-items: center; margin-left: 6px; }
 .win-btn {
-  width: 42px; height: 56px;
+  width: 42px; height: var(--topbar-h);
   display: grid; place-items: center;
   background: transparent; border: none; cursor: pointer;
   color: var(--text-dim);
@@ -167,6 +179,10 @@ body {
 /* Верхний край контента растворяем: он уезжает под заголовок страницы, и без
    растушёвки карточки обрубались бы ровной линией. */
 .main {
+  /* Позиционирование обязательно: без него содержимое ушло бы ПОД
+     .content-scrim - фиксированный слой рисуется поверх непозиционированных. */
+  position: relative;
+  z-index: 10;
   overflow-y: auto;
   overflow-x: hidden;
   padding: 4px 32px 40px;

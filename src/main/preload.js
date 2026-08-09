@@ -61,6 +61,10 @@ contextBridge.exposeInMainWorld('api', {
     testSend: (id, payload) => ipcRenderer.invoke('gmail:testSend', { id, ...payload }),
     dryRun: (id) => ipcRenderer.invoke('gmail:dryRun', { id }),
   },
+  texts: {
+    openFile: () => ipcRenderer.invoke('texts:openFile'),
+    saveFile: (content) => ipcRenderer.invoke('texts:saveFile', content),
+  },
   stats: {
     overview: (days) => ipcRenderer.invoke('stats:overview', days),
   },

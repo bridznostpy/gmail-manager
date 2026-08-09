@@ -22,6 +22,10 @@ const DICT = {
     'sys.languageChanged': 'Язык приложения переключён на {lang}',
 
     // ── Оформление ──────────────────────────────────────────
+    'texts.dialogOpen': 'Выберите файл с текстами рассылки',
+    'texts.dialogSave': 'Сохранить тексты рассылки',
+    'texts.readFailed': 'Не удалось прочитать файл с текстами: {error}',
+    'texts.writeFailed': 'Не удалось сохранить файл с текстами: {error}',
     'appear.dialogTitle': 'Выберите картинку для фона',
     'appear.dialogFilter': 'Изображения',
     'appear.picked': 'Фон обновлён',
@@ -162,6 +166,10 @@ const DICT = {
     'sys.profileCreated': 'Created profile "{label}"',
     'sys.languageChanged': 'Application language switched to {lang}',
 
+    'texts.dialogOpen': 'Pick an outreach texts file',
+    'texts.dialogSave': 'Save the outreach texts',
+    'texts.readFailed': 'Could not read the texts file: {error}',
+    'texts.writeFailed': 'Could not save the texts file: {error}',
     'appear.dialogTitle': 'Pick a background image',
     'appear.dialogFilter': 'Images',
     'appear.picked': 'Background updated',

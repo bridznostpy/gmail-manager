@@ -30,6 +30,7 @@ const state = {
   notesSeen: 0,
   // Выбранная группа на странице настроек - переживает уход на другой раздел.
   settingsGroup: 'interface',
+  textsLang: 'en', // язык, открытый на экране текстов рассылки
   runStatus: { running: false, paused: false, uptimeSec: 0, queueSize: 0 },
   // Живые логи держим массивом, а не только в DOM: иначе их нечем фильтровать.
   logs: [],
@@ -1847,20 +1848,272 @@ function buildSetTelegram() {
   return el;
 }
 
+// ── Тексты рассылки ────────────────────────────────────────────────
+// Три словаря, каждый разбит по языку (см. src/main/texts.js). Раньше здесь
+// была голая textarea с JSON: понять, что куда уходит и что вообще загружено,
+// было невозможно. Теперь загруженное показывается как есть - по словарям,
+// языкам и вариантам.
+
+const TEXT_DICTS = [
+  { id: 'MESSAGES_DICT', icon: 'send', key: 'first' },
+  { id: 'PASTE_DICT', icon: 'chat', key: 'reply' },
+  { id: 'CONFIRM_DICT', icon: 'target', key: 'nudge' },
+];
+
+// Плейсхолдеры, которые понимает fillPlaceholders в src/main/texts.js.
+const TEXT_SLOTS = ['{link}', '{title}', '{price}', '{seller_username}', '{image_url}', '{date}', '{ad_url}'];
+
+/**
+ * Проверка формата. Возвращает список замечаний, а не бросает исключение:
+ * показать сразу все проблемы полезнее, чем первую попавшуюся.
+ */
+function validateTexts(json) {
+  const errors = [];
+  const warns = [];
+  const infos = [];
+  if (!json || typeof json !== 'object' || Array.isArray(json)) {
+    return { errors: [t('txt.errRoot')], warns, infos };
+  }
+  for (const d of TEXT_DICTS) {
+    const dict = json[d.id];
+    if (dict === undefined) { errors.push(t('txt.errNoDict', { dict: d.id })); continue; }
+    if (!dict || typeof dict !== 'object' || Array.isArray(dict)) {
+      errors.push(t('txt.errDictShape', { dict: d.id }));
+      continue;
+    }
+    const langs = Object.keys(dict);
+    if (!langs.length) { errors.push(t('txt.errDictEmpty', { dict: d.id })); continue; }
+    for (const lang of langs) {
+      const arr = dict[lang];
+      if (!Array.isArray(arr)) { errors.push(t('txt.errLangShape', { dict: d.id, lang })); continue; }
+      if (!arr.length) { warns.push(t('txt.warnLangEmpty', { dict: d.id, lang })); continue; }
+      if (arr.some((s) => typeof s !== 'string')) errors.push(t('txt.errNotString', { dict: d.id, lang }));
+      if (arr.some((s) => typeof s === 'string' && !s.trim())) warns.push(t('txt.warnBlank', { dict: d.id, lang }));
+    }
+    // Где ссылка встанет сама, а где допишется с новой строки. Это не ошибка -
+    // движок допишет её в любом случае (см. withLink в texts.js), - поэтому
+    // говорим спокойно и одной строкой на словарь, а не на каждый язык.
+    if (d.id !== 'MESSAGES_DICT') {
+      let n = 0;
+      const where = [];
+      for (const lang of langs) {
+        const arr = Array.isArray(dict[lang]) ? dict[lang] : [];
+        const bad = arr.filter((s) => typeof s === 'string' && !/\{link\}/.test(s) && !/(link|lien|enlace)\s*:\s*$/i.test(s.trimEnd()));
+        if (bad.length) { n += bad.length; where.push(lang.toUpperCase()); }
+      }
+      if (n) infos.push(t('txt.infoNoLink', { dict: d.id, n, langs: where.join(', ') }));
+    }
+  }
+  return { errors, warns, infos };
+}
+
+/** Языки, встречающиеся хотя бы в одном словаре. */
+function textLangs(json) {
+  const set = new Set();
+  for (const d of TEXT_DICTS) {
+    const dict = (json && json[d.id]) || {};
+    Object.keys(dict).forEach((l) => set.add(l));
+  }
+  return [...set].sort();
+}
+
 function buildSetTexts() {
-  const el = h(setCard('texts', `
-    <div class="field"><label>${esc(t('set.textsLabel'))}</label><textarea id="mTexts" placeholder='{ "subjects": [...], "bodies": [...] }'>${state.settings.texts ? esc(JSON.stringify(state.settings.texts, null, 2)) : ''}</textarea></div>
-    <button class="btn primary" id="mLoadTexts">${esc(t('set.loadTexts'))}</button>
-    <div class="hint" id="mTextsResult" style="margin-top:12px"></div>`));
-  $('#mLoadTexts', el).addEventListener('click', async () => {
-    try {
-      const json = JSON.parse($('#mTexts', el).value);
-      state.settings.texts = await api.settings.loadTexts(json);
-      $('#mTextsResult', el).textContent = t('set.textsLoaded');
-      toast(t('set.textsToast'), 'success');
-    } catch (e) { $('#mTextsResult', el).textContent = t('set.textsInvalid', { error: e.message }); }
-  });
+  const loaded = state.settings.texts;
+  const el = h(setCard('texts', `<div id="txtBody"></div>`));
+  renderTextsBody($('#txtBody', el), loaded);
   return el;
+}
+
+function renderTextsBody(box, loaded) {
+  if (!box) return;
+  if (!loaded) { renderTextsEmpty(box); return; }
+  renderTextsView(box, loaded);
+}
+
+/** Пусто: объясняем формат и даём два пути - файл или вставка. */
+function renderTextsEmpty(box) {
+  box.innerHTML = `
+    <div class="txt-drop">
+      ${ICONS.inbox}
+      <div class="txt-drop-title">${esc(t('txt.emptyTitle'))}</div>
+      <div class="hint" style="max-width:46ch">${esc(t('txt.emptySub'))}</div>
+      <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap;justify-content:center">
+        <button class="btn primary" id="txtOpen">${ICONS.image}<span>${esc(t('txt.openFile'))}</span></button>
+        <button class="btn" id="txtPaste">${ICONS.parser}<span>${esc(t('txt.paste'))}</span></button>
+      </div>
+    </div>
+    <div class="txt-schema">
+      <div class="section-label">${esc(t('txt.schemaTitle'))}</div>
+      ${TEXT_DICTS.map((d) => `<div class="schema-row">
+        <span class="sk">${esc(d.id)}</span>
+        <span class="sv">${esc(t('txt.d.' + d.key))}</span>
+      </div>`).join('')}
+    </div>`;
+  $('#txtOpen', box).addEventListener('click', () => openTextsFile());
+  $('#txtPaste', box).addEventListener('click', () => openTextsEditor(''));
+  wireRipples(box);
+}
+
+/** Загружено: словари, языки, варианты. */
+function renderTextsView(box, loaded) {
+  const langs = textLangs(loaded);
+  const active = langs.includes(state.textsLang) ? state.textsLang : (langs[0] || 'en');
+  state.textsLang = active;
+  const outreach = state.settings.system.outreachLang || 'en';
+  const check = validateTexts(loaded);
+
+  const total = TEXT_DICTS.reduce((n, d) => {
+    const dict = loaded[d.id] || {};
+    return n + Object.values(dict).reduce((m, arr) => m + (Array.isArray(arr) ? arr.length : 0), 0);
+  }, 0);
+
+  box.innerHTML = `
+    <div class="txt-head">
+      <div class="txt-sum">
+        <span class="s"><b>${total}</b>${esc(t('txt.variants'))}</span>
+        <span class="s"><b>${langs.length}</b>${esc(t('txt.langs'))}</span>
+      </div>
+      <div class="txt-acts">
+        <button class="btn ghost" id="txtOpen2">${ICONS.image}<span>${esc(t('txt.replace'))}</span></button>
+        <button class="btn ghost" id="txtEdit">${ICONS.parser}<span>${esc(t('txt.editJson'))}</span></button>
+        <button class="btn ghost" id="txtSave">${ICONS.reset}<span>${esc(t('txt.export'))}</span></button>
+      </div>
+    </div>
+
+    <div class="txt-issues">
+      ${check.errors.map((m) => `<div class="issue bad">${ICONS.alert}<span>${esc(m)}</span></div>`).join('')}
+      ${check.warns.map((m) => `<div class="issue warn">${ICONS.alert}<span>${esc(m)}</span></div>`).join('')}
+      ${!check.errors.length && !check.warns.length ? `<div class="issue ok">${ICONS.check}<span>${esc(t('txt.allGood'))}</span></div>` : ''}
+      ${check.infos.map((m) => `<div class="issue info">${ICONS.link}<span>${esc(m)}</span></div>`).join('')}
+    </div>
+
+    <div class="filter-row" style="margin-top:14px">
+      <div class="seg filters" id="txtLangs">
+        ${langs.map((l) => `<button data-v="${esc(l)}" class="${l === active ? 'active' : ''}">
+          ${esc(l.toUpperCase())}${l === outreach ? '<span class="count">' + esc(t('txt.inUse')) + '</span>' : ''}
+        </button>`).join('')}
+      </div>
+      <span class="spacer"></span>
+      <label class="switch"><span class="lbl" style="color:var(--text-faint);font-size:11.5px">${esc(t('txt.outreachLang'))}</span></label>
+      <select id="txtOutreach" style="width:auto;min-width:92px">
+        ${langs.map((l) => `<option value="${esc(l)}" ${l === outreach ? 'selected' : ''}>${esc(l.toUpperCase())}</option>`).join('')}
+      </select>
+    </div>
+
+    <div class="txt-dicts" id="txtDicts"></div>`;
+
+  renderTextDicts($('#txtDicts', box), loaded, active);
+
+  $$('#txtLangs button', box).forEach((b) => b.addEventListener('click', () => {
+    state.textsLang = b.dataset.v;
+    renderTextsView(box, loaded);
+  }));
+  $('#txtOutreach', box).addEventListener('change', async (e) => {
+    await saveSection('system', { outreachLang: e.target.value });
+    toast(t('txt.outreachSaved', { lang: e.target.value.toUpperCase() }), 'success');
+    renderTextsView(box, loaded);
+  });
+  $('#txtOpen2', box).addEventListener('click', () => openTextsFile());
+  $('#txtEdit', box).addEventListener('click', () => openTextsEditor(JSON.stringify(loaded, null, 2)));
+  $('#txtSave', box).addEventListener('click', async () => {
+    const res = await api.texts.saveFile(JSON.stringify(loaded, null, 2));
+    if (res && res.ok) toast(t('txt.exported'), 'success');
+  });
+  wireRipples(box);
+}
+
+function renderTextDicts(box, loaded, lang) {
+  if (!box) return;
+  box.innerHTML = TEXT_DICTS.map((d) => {
+    const dict = loaded[d.id] || {};
+    const arr = Array.isArray(dict[lang]) ? dict[lang] : [];
+    return `<section class="txt-dict">
+      <div class="td-head">
+        <span class="td-icon">${ICONS[d.icon]}</span>
+        <span class="td-id">
+          <span class="td-title">${esc(t('txt.d.' + d.key))}</span>
+          <span class="td-code">${esc(d.id)}</span>
+        </span>
+        <span class="td-count">${arr.length}</span>
+      </div>
+      <div class="hint td-when">${esc(t('txt.w.' + d.key))}</div>
+      ${arr.length
+        ? `<ol class="td-list">${arr.map((s) => `<li><span class="tl-body">${highlightSlots(s)}</span></li>`).join('')}</ol>`
+        : `<div class="empty" style="padding:22px 0">${esc(t('txt.noLang', { lang: lang.toUpperCase() }))}</div>`}
+    </section>`;
+  }).join('');
+}
+
+/**
+ * Подсветка служебных мест в тексте: плейсхолдеры, хвост "link:" и переносы
+ * строк. Экранируем СНАЧАЛА, потом вставляем разметку - иначе текст с угловыми
+ * скобками уехал бы в HTML.
+ */
+function highlightSlots(text) {
+  let out = esc(String(text == null ? '' : text));
+  for (const slot of TEXT_SLOTS) {
+    out = out.split(esc(slot)).join(`<mark class="slot">${esc(slot)}</mark>`);
+  }
+  out = out.replace(/(link|lien|enlace)(\s*):(\s*)$/i, '<mark class="slot">$1$2:</mark>$3');
+  // Перенос строки показываем знаком: в тексте письма он значимый, а пустое
+  // место в списке выглядит как случайный отступ.
+  return out.replace(/\n/g, '<span class="nl">¶</span><br>');
+}
+
+async function openTextsFile() {
+  const res = await api.texts.openFile();
+  if (!res || !res.ok) {
+    if (res && res.reason === 'read_failed') toast(t('txt.readFailed'), 'error');
+    return;
+  }
+  applyTextsSource(res.content);
+}
+
+/** Модалка с JSON: и для вставки нового, и для правки загруженного. */
+function openTextsEditor(initial) {
+  modal(
+    `<h3>${esc(t('txt.editTitle'))}</h3>
+     <div class="modal-text">${esc(t('txt.editSub'))}</div>
+     <div class="field"><textarea id="txtRaw" style="min-height:260px" spellcheck="false" placeholder='{ "MESSAGES_DICT": { "en": [ ... ] } }'>${esc(initial || '')}</textarea></div>
+     <div class="hint" id="txtRawMsg" style="min-height:18px"></div>
+     <div class="modal-actions">
+       <button class="btn" id="txtCancel">${esc(t('common.cancel'))}</button>
+       <button class="btn primary" id="txtApply">${esc(t('txt.apply'))}</button>
+     </div>`,
+    (overlay, done) => {
+      const area = $('#txtRaw', overlay);
+      const msg = $('#txtRawMsg', overlay);
+      area.focus();
+      $('#txtCancel', overlay).addEventListener('click', () => done(null));
+      $('#txtApply', overlay).addEventListener('click', async () => {
+        const ok = await applyTextsSource(area.value, (text) => { msg.textContent = text; });
+        if (ok) done(true);
+      });
+    },
+  );
+}
+
+/** Разобрать, проверить и сохранить. Ошибки формата не сохраняем вовсе. */
+async function applyTextsSource(raw, onError) {
+  let json;
+  try {
+    json = JSON.parse(raw);
+  } catch (e) {
+    const text = t('set.textsInvalid', { error: e.message });
+    if (onError) onError(text); else toast(text, 'error');
+    return false;
+  }
+  const check = validateTexts(json);
+  if (check.errors.length) {
+    const text = check.errors[0];
+    if (onError) onError(text); else toast(text, 'error');
+    return false;
+  }
+  state.settings.texts = await api.settings.loadTexts(json);
+  toast(t('set.textsToast'), 'success');
+  const root = $('.settings');
+  if (root) renderSettingsGroup(root);
+  return true;
 }
 
 // ── Выезжающая панель ──────────────────────────────────────────────

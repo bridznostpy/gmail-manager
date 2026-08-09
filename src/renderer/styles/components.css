@@ -876,6 +876,97 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
 .dlg-head { display: flex; align-items: flex-start; gap: 11px; padding: 14px 15px 12px; }
 .dlg-card .pc-meta { border-top: 1px solid var(--border); }
 
+/* ── Тексты рассылки ─────────────────────────────────────── */
+.txt-drop {
+  display: flex; flex-direction: column; align-items: center; text-align: center;
+  gap: 10px; padding: 34px 20px 30px;
+  border: 1px dashed var(--border-strong); border-radius: var(--radius);
+}
+.txt-drop svg { width: 28px; height: 28px; color: var(--text-faint); }
+.txt-drop-title { font-size: 15px; font-weight: 650; }
+
+.txt-schema { margin-top: 18px; }
+.txt-schema > .section-label { display: block; margin-bottom: 8px; }
+.schema-row {
+  display: flex; align-items: baseline; gap: 12px;
+  padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 12px;
+}
+.schema-row:last-child { border-bottom: none; }
+.schema-row .sk {
+  font-family: var(--font-mono); font-size: 11px; color: var(--accent);
+  flex: 0 0 152px;
+}
+.schema-row .sv { color: var(--text-dim); }
+
+.txt-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.txt-sum { display: flex; gap: 22px; }
+.txt-sum .s { font-size: 11.5px; color: var(--text-faint); }
+.txt-sum .s b {
+  display: block; font-size: 22px; font-weight: 750;
+  letter-spacing: -0.03em; color: var(--text);
+}
+.txt-acts { display: flex; gap: 6px; flex-wrap: wrap; }
+
+.txt-issues { display: flex; flex-direction: column; gap: 6px; margin-top: 14px; }
+.issue {
+  display: flex; align-items: flex-start; gap: 9px;
+  padding: 9px 12px; border-radius: var(--radius-sm);
+  font-size: 11.5px; line-height: 1.5;
+}
+.issue svg { width: 14px; height: 14px; flex-shrink: 0; margin-top: 1px; }
+.issue.ok { background: var(--green-soft); color: var(--green); }
+.issue.warn { background: var(--amber-soft); color: var(--amber); }
+.issue.bad { background: var(--red-soft); color: var(--red); }
+/* Нейтральное пояснение: не проблема, просто стоит знать. */
+.issue.info { background: var(--control-bg); color: var(--text-dim); border: 1px solid var(--border); }
+
+.txt-dicts { display: flex; flex-direction: column; gap: 14px; }
+.txt-dict {
+  border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 14px 16px 6px;
+  background: rgba(var(--glass-rgb), calc(var(--glass-alpha) * 0.35));
+}
+.td-head { display: flex; align-items: center; gap: 11px; }
+.td-icon {
+  display: grid; place-items: center; flex-shrink: 0;
+  width: 30px; height: 30px; border-radius: 10px;
+  background: var(--accent-soft); color: var(--accent);
+}
+.td-icon svg { width: 15px; height: 15px; }
+.td-id { flex: 1 1 auto; min-width: 0; }
+.td-title { display: block; font-size: 13px; font-weight: 650; }
+.td-code {
+  display: block; font-family: var(--font-mono);
+  font-size: 9.5px; color: var(--text-faint); letter-spacing: 0.04em;
+}
+.td-count {
+  font-family: var(--font-mono); font-size: 11px; color: var(--text-dim);
+  background: var(--control-bg); border: 1px solid var(--border);
+  padding: 3px 10px; border-radius: 20px; flex-shrink: 0;
+}
+.td-when { margin: 14px 0 6px; }
+
+.td-list { list-style: none; counter-reset: tl; margin: 0; padding: 0; }
+.td-list li {
+  counter-increment: tl;
+  display: flex; gap: 12px;
+  padding: 9px 0; border-top: 1px solid var(--border);
+  font-size: 12px; line-height: 1.6;
+}
+.td-list li::before {
+  content: counter(tl);
+  flex: 0 0 22px; text-align: right;
+  font-family: var(--font-mono); font-size: 10px; color: var(--text-faint);
+  padding-top: 2px;
+}
+.td-list .tl-body { flex: 1 1 auto; min-width: 0; color: var(--text-dim); word-break: break-word; }
+.td-list mark.slot {
+  background: rgba(var(--accent-rgb), 0.18); color: var(--accent);
+  border-radius: 4px; padding: 1px 4px;
+  font-family: var(--font-mono); font-size: 11px;
+}
+.td-list .nl { color: var(--text-faint); opacity: 0.5; font-size: 10px; margin-left: 2px; }
+
 /* ── Командная палитра (Ctrl+K) ──────────────────────────── */
 .palette-scrim {
   position: fixed; inset: 0; z-index: 420;

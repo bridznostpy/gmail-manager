@@ -3,7 +3,8 @@
  * All IPC handlers. The renderer only ever talks to main through these named
  * channels (see preload.js). Keeps the privileged surface small and explicit.
  */
-const { ipcMain } = require('electron');
+const { ipcMain, dialog } = require('electron');
+const fs = require('fs');
 const logger = require('./logger');
 const i18n = require('./i18n');
 const { t } = i18n;
@@ -56,6 +57,40 @@ function register(ctx) {
   ipcMain.handle('appearance:set', (_e, patch) => store.set('appearance', patch));
   ipcMain.handle('appearance:pick', () => appearance.pick(store, mainWindow));
   ipcMain.handle('appearance:clear', () => appearance.clear(store));
+
+  // ── тексты рассылки: файл ──────────────────────────────────────────
+  // Main только читает и пишет файл. Разбор и проверка формата живут в
+  // рендере, чтобы правила были в одном месте и для файла, и для вставки.
+  ipcMain.handle('texts:openFile', async () => {
+    const res = await dialog.showOpenDialog(mainWindow || null, {
+      title: t('texts.dialogOpen'),
+      properties: ['openFile'],
+      filters: [{ name: 'JSON', extensions: ['json', 'txt'] }],
+    });
+    if (res.canceled || !res.filePaths.length) return { ok: false, reason: 'cancelled' };
+    try {
+      return { ok: true, content: fs.readFileSync(res.filePaths[0], 'utf-8') };
+    } catch (e) {
+      logger.warn('system', t('texts.readFailed', { error: e.message }));
+      return { ok: false, reason: 'read_failed', error: e.message };
+    }
+  });
+
+  ipcMain.handle('texts:saveFile', async (_e, content) => {
+    const res = await dialog.showSaveDialog(mainWindow || null, {
+      title: t('texts.dialogSave'),
+      defaultPath: 'texts.json',
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+    });
+    if (res.canceled || !res.filePath) return { ok: false, reason: 'cancelled' };
+    try {
+      fs.writeFileSync(res.filePath, String(content == null ? '' : content), 'utf-8');
+      return { ok: true, path: res.filePath };
+    } catch (e) {
+      logger.warn('system', t('texts.writeFailed', { error: e.message }));
+      return { ok: false, reason: 'write_failed', error: e.message };
+    }
+  });
 
   ipcMain.handle('settings:loadTexts', (_e, json) => {
     store.set('texts', json);

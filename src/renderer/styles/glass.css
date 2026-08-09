@@ -31,10 +31,31 @@
 
 /* Размытие - только тем, кто лежит прямо на фоне. Их горсть на всё приложение,
    и это единственные места, где за элементом действительно фотография. */
-.rail, .shell, .drawer, .palette, .modal, .notes, .toast {
+.rail, .drawer, .palette, .modal, .notes, .toast {
   backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
 }
+
+/* У рабочей панели размытие вынесено на подложку, а не на саму панель.
+   Прокручиваемая область лежит ВНУТРИ панели, и пока размытие висело на
+   родителе, браузер не мог прокручивать её на видеокарте: каждый кадр
+   пересчитывался на процессоре, отсюда подфризывание при листании.
+   Подложка не прокручивается, поэтому скролл снова быстрый.
+
+   Заливка тоже переехала на подложку: она должна лежать ПОВЕРХ размытия, а
+   фон самой панели оказался бы под ним и был бы размыт заодно. */
+.shell { background: transparent; }
+.shell::before {
+  content: "";
+  position: absolute; inset: 0;
+  border-radius: inherit;
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
+  pointer-events: none;
+  z-index: 0;
+}
+.shell-head, .shell-body { position: relative; z-index: 1; }
 
 /* Изоляция перерисовки - только внутренним карточкам.
    На элементы с backdrop-filter её вешать нельзя: contain: paint делает

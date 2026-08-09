@@ -657,7 +657,7 @@ function renderLogs() {
   const shown = state.logs.filter(logPasses);
   box.innerHTML = '';
   if (!shown.length) {
-    box.appendChild(h(`<div class="empty">${esc(state.logs.length ? t('logs.emptyFiltered') : t('dash.logs'))}</div>`));
+    box.appendChild(h(`<div class="empty">${esc(state.logs.length ? t('logs.emptyFiltered') : t('logs.empty'))}</div>`));
   } else {
     const frag = document.createDocumentFragment();
     shown.forEach((e) => frag.appendChild(logLineEl(e)));
@@ -1190,12 +1190,16 @@ function wireHotkeys() {
   document.addEventListener('keydown', (e) => {
     const tag = (e.target.tagName || '').toLowerCase();
     const typing = tag === 'input' || tag === 'textarea' || tag === 'select';
+    // Пока открыта модалка, она сама разбирает Esc и Enter, а уводить из-под
+    // неё навигацию цифрами нельзя.
+    const modalOpen = !!$('.modal-overlay');
 
     if (e.key === 'Escape') {
       if (drawerOpen()) { toggleDrawer(false); return; }
       if (typing) e.target.blur();
       return;
     }
+    if (modalOpen) return;
     if (e.ctrlKey && e.key === 'Enter') {
       e.preventDefault();
       runAction(runState() === 'idle' ? 'start' : 'stop');
@@ -1212,7 +1216,7 @@ function wireHotkeys() {
       setTimeout(() => { const s = $('#logSearch'); if (s) s.focus(); }, 60);
       return;
     }
-    if (typing || e.ctrlKey || e.altKey || e.metaKey) return;
+    if (typing || modalOpen || e.ctrlKey || e.altKey || e.metaKey) return;
     const n = Number(e.key);
     if (n >= 1 && n <= ROUTES.length) go(ROUTES[n - 1].id);
   });
@@ -1283,6 +1287,9 @@ async function boot() {
   setInterval(refreshRun, 1000);
   setInterval(refreshProfiles, 4000);
   window.addEventListener('resize', debounce(moveNavPill, 120));
+  // Гротеск подгружается с font-display: swap - ширина пунктов навигации после
+  // подмены шрифта меняется, и пилюля без пересчёта съезжает.
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(moveNavPill);
   wireHotkeys();
 }
 

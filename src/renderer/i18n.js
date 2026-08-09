@@ -243,6 +243,7 @@ const DICT = {
     'logs.paused': 'Автоскролл остановлен',
     'logs.shown': 'показано {shown} из {total}',
     'logs.emptyFiltered': 'Под фильтр ничего не подходит.',
+    'logs.empty': 'Пока пусто. Записи появятся во время работы.',
 
     // ── Оформление ──────────────────────────────────────────
     'appear.title': 'Оформление',
@@ -509,6 +510,7 @@ const DICT = {
     'logs.paused': 'Auto-scroll paused',
     'logs.shown': 'showing {shown} of {total}',
     'logs.emptyFiltered': 'Nothing matches the filter.',
+    'logs.empty': 'Nothing yet. Entries show up while the system runs.',
 
     'appear.title': 'Appearance',
     'appear.background': 'Background',

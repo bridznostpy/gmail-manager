@@ -15,7 +15,7 @@ const I18N = window.I18N;
 const t = (key, params) => I18N.t(key, params);
 
 const state = {
-  route: 'overview',
+  route: 'home',
   booted: false,
   settings: null,
   profiles: [],
@@ -46,6 +46,7 @@ const state = {
 // раз в начале прогона. Управление живёт своим разделом, а состояние прогона
 // видно из любого места по пилюле и быстрой кнопке в шапке.
 const ROUTES = [
+  { id: 'home', labelKey: 'nav.home', icon: 'home', titleKey: 'home.title', subKey: 'home.sub', bare: true },
   { id: 'overview', labelKey: 'nav.overview', icon: 'dashboard', titleKey: 'ov.title', subKey: 'ov.sub' },
   { id: 'run', labelKey: 'nav.run', icon: 'play', titleKey: 'run.title', subKey: 'run.sub' },
   { id: 'dialogs', labelKey: 'nav.dialogs', icon: 'chat', titleKey: 'dlg.title', subKey: 'dlg.sub' },
@@ -98,6 +99,30 @@ const dash = '-'; // прочерк для пустых значений
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
 const debounce = (fn, ms = 400) => { let timer; return (...a) => { clearTimeout(timer); timer = setTimeout(() => fn(...a), ms); }; };
+
+/**
+ * Числовое поле настроек с нижней границей.
+ *
+ * Стирать поле, чтобы вписать новое значение, - нормальный способ ввода, и во
+ * время правки там на мгновение пусто. Сохранять этот момент как 0 нельзя:
+ * ноль в лимитах тихо ломает прогон. Поэтому в настройки уходит только
+ * осмысленное значение, а поле поправляется на blur.
+ */
+function bindNumber(input, section, key, min) {
+  if (!input) return;
+  input.setAttribute('min', String(min));
+  input.addEventListener('input', debounce(() => {
+    const raw = input.value.trim();
+    if (raw === '') return;
+    const val = Math.max(min, Math.floor(Number(raw)) || min);
+    saveSection(section, { [key]: val });
+  }));
+  input.addEventListener('blur', () => {
+    const val = Math.max(min, Math.floor(Number(input.value)) || min);
+    input.value = String(val);
+    saveSection(section, { [key]: val });
+  });
+}
 
 let toastTimer = null;
 function toast(msg, kind = '') {
@@ -384,8 +409,11 @@ const ACTIONS = {};
 
 function render() {
   const route = ROUTES.find((r) => r.id === state.route) || ROUTES[0];
-  $('#pageTitle').textContent = t(route.titleKey);
-  $('#pageSub').textContent = t(route.subKey);
+  // У витрины свой крупный заголовок внутри - дублировать его в шапке незачем.
+  // Элемент оставляем на месте: он распирает шапку, и без него кнопки окна
+  // уехали бы к левому краю.
+  $('#pageTitle').textContent = route.bare ? '' : t(route.titleKey);
+  $('#pageSub').textContent = route.bare ? '' : t(route.subKey);
 
   const main = $('#main');
   main.innerHTML = '';
@@ -403,6 +431,181 @@ function render() {
   wireRipples(main);
   wireSheen(main);
   paintRun();
+}
+
+// ── Главная: витрина ───────────────────────────────────────────────
+// Стартовый экран, с которого расходятся все разделы. Держим его крупным и
+// нерабочим: одно главное действие, живые числа и понятные входы дальше.
+
+/** Плитки-входы. Число берётся живьём, чтобы витрина не была декорацией. */
+const HOME_TILES = [
+  { route: 'run', icon: 'play', titleKey: 'nav.run', descKey: 'home.tile.run', value: (s) => fmtUptime(s.runStatus.uptimeSec) },
+  { route: 'profiles', icon: 'profiles', titleKey: 'nav.profiles', descKey: 'home.tile.profiles', value: (s) => s.profiles.length },
+  { route: 'dialogs', icon: 'chat', titleKey: 'nav.dialogs', descKey: 'home.tile.dialogs', value: (s) => (s.dialogs || []).length },
+  { route: 'overview', icon: 'dashboard', titleKey: 'nav.overview', descKey: 'home.tile.overview', value: (s) => sumMetric(s, 'written') },
+];
+
+function sumMetric(s, key) {
+  return Object.values(s.profileMetrics || {}).reduce((n, x) => n + (x[key] || 0), 0);
+}
+
+/** Приветствие по часам - мелочь, от которой экран перестаёт быть безликим. */
+function greetingKey() {
+  const h = new Date().getHours();
+  if (h < 5) return 'home.hi.night';
+  if (h < 12) return 'home.hi.morning';
+  if (h < 18) return 'home.hi.day';
+  return 'home.hi.evening';
+}
+
+/**
+ * Шаги готовности. Каждый проверяется по настоящим данным и ведёт туда, где
+ * его закрывают: чек-лист без перехода - просто упрёк.
+ */
+function readySteps() {
+  const s = state.settings;
+  const ready = state.profiles.filter((p) => p.gmailStatus === 'ready').length;
+  return [
+    { key: 'profile', done: state.profiles.length > 0, go: () => go('profiles') },
+    { key: 'login', done: ready > 0, go: () => go('profiles') },
+    { key: 'texts', done: !!s.texts, go: () => goSettings('texts') },
+    { key: 'parser', done: !!(s.parser.apiKey && s.parser.platforms.length), go: () => goSettings('parser') },
+    { key: 'link', done: !!s.link.apiKey, go: () => goSettings('link') },
+  ];
+}
+
+VIEWS.home = () => {
+  const wrap = h(`<div class="home">
+    <section class="home-hero glass glass-refract glass-sheen">
+      <div class="hero-glow"></div>
+      <div class="home-hero-in">
+        <div class="home-main">
+          <div class="home-brand">
+            <span class="home-logo">GM</span>
+            <span>
+              <span class="home-name">Gmail Manager</span>
+              <span class="home-ver">v0.1.0</span>
+            </span>
+          </div>
+
+          <h1 class="home-greet" id="homeGreet"></h1>
+          <p class="home-lead" id="homeLead"></p>
+
+          <div class="home-cta" id="homeCta"></div>
+        </div>
+
+        <aside class="home-quick glass">
+          <div class="section-label">${esc(t('home.quick'))}</div>
+          <div id="homeQuick"></div>
+        </aside>
+      </div>
+
+      <div class="home-facts" id="homeFacts"></div>
+    </section>
+
+    <section class="home-tiles" id="homeTiles"></section>
+
+    <section class="card glass home-ready" id="homeReady"></section>
+  </div>`);
+
+  setTimeout(() => paintHome(), 0);
+  return wrap;
+};
+
+function paintHome() {
+  const greet = $('#homeGreet');
+  if (!greet) return;
+
+  greet.textContent = t(greetingKey());
+  const mode = runState();
+  $('#homeLead').textContent = mode === 'running' ? t('home.leadRunning')
+    : mode === 'paused' ? t('home.leadPaused') : t('home.leadIdle');
+
+  // Главное действие одно. Второй кнопкой - самый уместный сейчас переход.
+  const cta = $('#homeCta');
+  cta.innerHTML = '';
+  const primary = h(`<button class="btn big ${mode === 'idle' ? 'primary' : 'stop'}">
+    ${mode === 'idle' ? ICONS.play : ICONS.stop}
+    <span>${esc(t(mode === 'idle' ? 'home.ctaStart' : 'dash.stop'))}</span></button>`);
+  primary.disabled = state.runBusy;
+  primary.addEventListener('click', () => runAction(mode === 'idle' ? 'start' : 'stop'));
+
+  const secondary = h(`<button class="btn ghost big">${ICONS.chevron}
+    <span>${esc(t('home.ctaOpen'))}</span></button>`);
+  secondary.addEventListener('click', () => go('run'));
+  cta.append(primary, secondary);
+  wireRipples(cta);
+
+  const today = todayRow();
+  $('#homeFacts').innerHTML = [
+    [t('home.factSent'), sumMetric(state, 'written')],
+    [t('home.factToday'), today.sent],
+    [t('home.factReplies'), sumMetric(state, 'replies')],
+    [t('dash.ready'), state.profiles.filter((p) => p.gmailStatus === 'ready').length],
+  ].map(([cap, val]) => `<span class="fact"><b>${esc(String(val))}</b><span>${esc(cap)}</span></span>`).join('');
+
+  paintHomeQuick();
+  paintHomeTiles();
+  paintHomeReady();
+}
+
+/** Быстрые действия витрины: то, что делают руками и часто. */
+function paintHomeQuick() {
+  const box = $('#homeQuick');
+  if (!box) return;
+  const acts = [
+    { icon: 'plus', key: 'prof.new', run: () => createProfile() },
+    { icon: 'send', key: 'dash.testLead', run: () => testLeadFlow() },
+    { icon: 'target', key: 'nudge.btn', run: () => nudgeFlow() },
+    { icon: 'palette', key: 'app.appearance', run: () => openAppearanceDrawer() },
+  ];
+  box.innerHTML = acts.map((a, i) => `<button class="quick-row" data-i="${i}">
+    <span class="qi">${ICONS[a.icon]}</span>
+    <span class="qt">${esc(t(a.key))}</span>
+    <span class="qg">${ICONS.chevron}</span>
+  </button>`).join('');
+  $$('.quick-row', box).forEach((el) => el.addEventListener('click', () => acts[+el.dataset.i].run()));
+}
+
+function paintHomeTiles() {
+  const box = $('#homeTiles');
+  if (!box) return;
+  box.innerHTML = HOME_TILES.map((tile) => `<button class="home-tile glass glass-sheen" data-route="${tile.route}">
+    <span class="ht-icon">${ICONS[tile.icon]}</span>
+    <span class="ht-val">${esc(String(tile.value(state)))}</span>
+    <span class="ht-title">${esc(t(tile.titleKey))}</span>
+    <span class="ht-desc">${esc(t(tile.descKey))}</span>
+    <span class="ht-go">${ICONS.chevron}</span>
+  </button>`).join('');
+  $$('.home-tile', box).forEach((el) => el.addEventListener('click', () => go(el.dataset.route)));
+  wireSheen(box);
+}
+
+function paintHomeReady() {
+  const box = $('#homeReady');
+  if (!box) return;
+  const steps = readySteps();
+  const done = steps.filter((s) => s.done).length;
+  const all = done === steps.length;
+
+  box.innerHTML = `
+    <div class="ready-head">
+      <div>
+        <h3 style="font-size:15px;margin:0">${all ? ICONS.check : ICONS.alert} ${esc(t(all ? 'home.readyAll' : 'home.readyTitle'))}</h3>
+        <div class="hint" style="margin-top:4px">${esc(t(all ? 'home.readyAllSub' : 'home.readySub'))}</div>
+      </div>
+      <div class="ready-count">${done} / ${steps.length}</div>
+    </div>
+    <div class="ready-bar"><span style="width:${(done / steps.length * 100).toFixed(0)}%"></span></div>
+    <div class="ready-list">
+      ${steps.map((s, i) => `<button class="ready-step ${s.done ? 'done' : ''}" data-i="${i}">
+        <span class="mark">${s.done ? ICONS.check : ''}</span>
+        <span class="txt">${esc(t('home.step.' + s.key))}</span>
+        ${s.done ? '' : '<span class="go">' + ICONS.chevron + '</span>'}
+      </button>`).join('')}
+    </div>`;
+
+  $$('.ready-step', box).forEach((el) => el.addEventListener('click', () => steps[+el.dataset.i].go()));
 }
 
 // ── Обзор: статистика ──────────────────────────────────────────────
@@ -609,14 +812,7 @@ VIEWS.run = () => {
   // Диагностическая кнопка - призрачная: рядом с "Запустить" она не должна
   // читаться как равное по важности действие.
   const leadBtn = h(`<button class="btn ghost big">${ICONS.send}<span>${esc(t('dash.testLead'))}</span></button>`);
-  leadBtn.addEventListener('click', async () => {
-    const email = await askText(t('dash.testLeadAsk'), { placeholder: 'me@gmail.com' });
-    if (!email) return;
-    const res = await api.run.testLead(email.trim());
-    if (res && res.ok) toast(t('dash.testLeadOk', { email: res.lead.email }), 'success');
-    else toast(t('dash.testLeadFail'), 'error');
-    refreshRun();
-  });
+  leadBtn.addEventListener('click', () => testLeadFlow());
   controls.append(primary, secondary, leadBtn);
 
   wireTargetChips(wrap.querySelector('#dTargets'), wrap.querySelector('#dTargetsHint'));
@@ -782,6 +978,7 @@ function paintRun() {
   paintRunControls();
   paintQuickRun();
   paintSpark();
+  if (state.route === 'home') paintHome();
 }
 
 function notePlate(kind, text) {
@@ -1451,9 +1648,14 @@ function buildSetLimits() {
       <div class="field"><label>${esc(t('set.threshold'))}</label><input type="number" id="mThresh" min="0" value="${s.queueRefillThreshold}"/></div>
     </div>
     <div class="hint">${esc(t('set.limitsHint'))}</div>`));
-  const bind = (id, key) => $(id, el).addEventListener('input', debounce((e) => saveSection('system', { [key]: +e.target.value || 0 })));
-  bind('#mMails', 'mailsPerAccount'); bind('#mReplies', 'maxRepliesPerDialog'); bind('#mCheck', 'checkIntervalSec');
-  bind('#mBatch', 'parserBatchSize'); bind('#mThresh', 'queueRefillThreshold');
+  // Минимумы обязательны. Пустое поле или ноль в "Писем на аккаунт" делали
+  // прогон бессмысленным: движок не находил ни одного аккаунта под лимитом,
+  // ничего не отправлял и писал в лог "все лимиты достигнуты".
+  bindNumber($('#mMails', el), 'system', 'mailsPerAccount', 1);
+  bindNumber($('#mReplies', el), 'system', 'maxRepliesPerDialog', 0);
+  bindNumber($('#mCheck', el), 'system', 'checkIntervalSec', 3);
+  bindNumber($('#mBatch', el), 'system', 'parserBatchSize', 1);
+  bindNumber($('#mThresh', el), 'system', 'queueRefillThreshold', 1);
   return el;
 }
 
@@ -1481,7 +1683,7 @@ function buildSetParser() {
   }));
   $('#pEnabled', el).addEventListener('change', (e) => saveSection('parser', { enabled: e.target.checked }));
   $('#pAi', el).addEventListener('change', (e) => saveSection('parser', { aiTemplateSwap: e.target.checked }));
-  $('#pSwapN', el).addEventListener('input', debounce((e) => saveSection('parser', { swapKeyEveryN: +e.target.value || 0 })));
+  bindNumber($('#pSwapN', el), 'parser', 'swapKeyEveryN', 0);
   $('#pToTargets', el).addEventListener('click', (e) => { e.preventDefault(); goSettings('targets'); });
   return el;
 }
@@ -1504,8 +1706,8 @@ function buildSetCdp() {
     <div class="field"><label>${esc(t('cdp.path'))}</label><input type="text" id="cPath" value="${esc(c.chromePath)}" placeholder="${esc(t('cdp.pathPh'))}"/></div>
     <button class="btn" id="cDetect">${ICONS.search}<span>${esc(t('cdp.detect'))}</span></button>
     <div class="hint" id="cDetected" style="margin-top:12px"></div>`));
-  $('#cStart', el).addEventListener('input', debounce((e) => saveSection('cdp', { portStart: +e.target.value || 9222 })));
-  $('#cEnd', el).addEventListener('input', debounce((e) => saveSection('cdp', { portEnd: +e.target.value || 9322 })));
+  bindNumber($('#cStart', el), 'cdp', 'portStart', 1024);
+  bindNumber($('#cEnd', el), 'cdp', 'portEnd', 1024);
   $('#cPath', el).addEventListener('input', debounce((e) => saveSection('cdp', { chromePath: e.target.value })));
   $('#cDetect', el).addEventListener('click', async () => {
     const found = await api.cdp.detectChrome();
@@ -1918,6 +2120,16 @@ function buildPalette() {
   });
 }
 
+/** Тестовый лид: письмо на свой адрес обычным путём рассылки. */
+async function testLeadFlow() {
+  const email = await askText(t('dash.testLeadAsk'), { placeholder: 'me@gmail.com' });
+  if (!email) return;
+  const res = await api.run.testLead(email.trim());
+  if (res && res.ok) toast(t('dash.testLeadOk', { email: res.lead.email }), 'success');
+  else toast(t('dash.testLeadFail'), 'error');
+  refreshRun();
+}
+
 /** Подталкивание вынесено отдельно - зовётся и с кнопки, и из палитры. */
 async function nudgeFlow() {
   const email = await askText(t('nudge.ask'), { placeholder: 'seller@example.com' });
@@ -2003,6 +2215,8 @@ async function refreshProfiles() {
     paintOverview();
   } else if (state.route === 'dialogs') {
     renderDialogs();
+  } else if (state.route === 'home') {
+    paintHome();
   }
   // Открытые детали профиля тоже подтягиваем: пользователь мог нажать
   // "Запустить" и ждёт, что кнопка сменится на "Остановить".

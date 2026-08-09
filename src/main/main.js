@@ -48,11 +48,56 @@ function appIcon() {
   return fs.existsSync(file) ? file : undefined;
 }
 
+/**
+ * Снимок окна для проверки интерфейса: `electron . --shot`, путь в SHOT_PATH,
+ * необязательный SHOT_JS выполняется в странице перед съёмкой.
+ *
+ * Живёт в коде постоянно, потому что скриншот рабочего стола для Electron не
+ * работает: окно рисуется на GPU, и GDI-захват отдаёт ровную заливку цветом
+ * фона. Единственный честный способ увидеть интерфейс - capturePage.
+ */
+function wireShotMode(win) {
+  if (!process.argv.includes('--shot')) return;
+  win.webContents.on('console-message', (_e, level, msg, line, src) => {
+    console.log('[renderer]', level, msg, '@', src + ':' + line);
+  });
+  win.webContents.on('did-finish-load', () => {
+    setTimeout(async () => {
+      if (process.env.SHOT_JS) {
+        try { await win.webContents.executeJavaScript(process.env.SHOT_JS); }
+        catch (e) { console.log('[shot-js]', e.message); }
+        await new Promise((r) => setTimeout(r, 900));
+      }
+      const img = await win.webContents.capturePage();
+      fs.writeFileSync(process.env.SHOT_PATH || 'shot.png', img.toPNG());
+      console.log('[shot] saved');
+      app.quit();
+    }, 2500);
+  });
+}
+
+/** Геометрия окна между запусками: растянул на второй монитор - пусть таким и
+    останется. Проверяем, что окно попадает хоть на один экран: монитор могли
+    отключить, и окно уехало бы за пределы видимого. */
+function savedBounds(store) {
+  const b = store.get('window');
+  if (!b || !b.width || !b.height) return null;
+  const { screen } = require('electron');
+  const visible = screen.getAllDisplays().some((d) => {
+    const a = d.workArea;
+    return b.x < a.x + a.width && b.x + b.width > a.x && b.y < a.y + a.height && b.y + b.height > a.y;
+  });
+  return visible ? b : null;
+}
+
 function createWindow() {
+  const saved = savedBounds(ctx.store);
   mainWindow = new BrowserWindow({
     icon: appIcon(),
-    width: 1320,
-    height: 860,
+    width: (saved && saved.width) || 1320,
+    height: (saved && saved.height) || 860,
+    x: saved ? saved.x : undefined,
+    y: saved ? saved.y : undefined,
     minWidth: 1100,
     minHeight: 700,
     // Своя шапка вместо рамки Windows: она же тащит окно и держит кнопки
@@ -73,13 +118,32 @@ function createWindow() {
   // Окно можно развернуть и мимо нашей кнопки (двойной клик по шапке, Win+Up,
   // Snap), поэтому иконку в UI ведём от событий окна, а не от своего флага.
   const sendState = () => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('window:state', { maximized: mainWindow.isMaximized() });
-    }
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    const maximized = mainWindow.isMaximized();
+    mainWindow.webContents.send('window:state', { maximized });
+    ctx.store.set('window', { maximized });
   };
   mainWindow.on('maximize', sendState);
   mainWindow.on('unmaximize', sendState);
+
+  // Размеры пишем с задержкой: во время перетаскивания событие сыплется
+  // десятками раз в секунду, и на каждое писать файл незачем. Развёрнутое
+  // окно не запоминаем - иначе восстановится на весь экран без рамки.
+  const saveBounds = debounce(() => {
+    if (!mainWindow || mainWindow.isDestroyed() || mainWindow.isMaximized()) return;
+    ctx.store.set('window', mainWindow.getBounds());
+  }, 500);
+  mainWindow.on('resize', saveBounds);
+  mainWindow.on('move', saveBounds);
+
+  if (saved && saved.maximized) mainWindow.maximize();
+  wireShotMode(mainWindow);
   mainWindow.on('closed', () => { mainWindow = null; });
+}
+
+function debounce(fn, ms) {
+  let timer = null;
+  return (...args) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), ms); };
 }
 
 app.whenReady().then(() => {

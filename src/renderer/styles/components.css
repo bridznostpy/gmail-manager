@@ -502,8 +502,15 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
   display: flex; gap: 10px; padding: 1px 12px;
   white-space: pre-wrap; word-break: break-word;
   border-left: 2px solid transparent;
-  animation: slideInLeft var(--dur) var(--ease);
+  /* Строки за пределами видимой части списка браузер не размечает и не рисует.
+     На двух сотнях записей это решает разницу между рывками и гладким
+     прокручиванием. Высота-подсказка нужна, чтобы полоса прокрутки не прыгала. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 20px;
 }
+/* Анимация появления - только у строки, которая только что пришла. При полной
+   перерисовке списка она запускалась разом у всех, и прокрутка захлёбывалась. */
+.log-line.fresh { animation: slideInLeft var(--dur) var(--ease); }
 .log-line:hover { background: rgba(255, 255, 255, 0.05); }
 .log-line .t { color: var(--text-faint); flex-shrink: 0; }
 .log-line .s { color: var(--accent); flex-shrink: 0; opacity: 0.85; }

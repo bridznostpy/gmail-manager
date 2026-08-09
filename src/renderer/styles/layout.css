@@ -157,7 +157,9 @@ body {
   flex: 1 1 auto; min-height: 0;
   overflow-y: auto; overflow-x: hidden;
   padding: 20px 26px 28px;
-  scroll-behavior: smooth;
+  /* scroll-behavior: smooth здесь намеренно нет: он превращает каждую
+     программную прокрутку в анимацию, а при прокрутке колесом даёт ощущение
+     запаздывания. Где плавность нужна, она задаётся вызовом scrollTo. */
   -webkit-app-region: no-drag;
 }
 

@@ -99,6 +99,9 @@ const BG_PRESETS = {
 };
 
 const LOG_LEVELS = ['all', 'info', 'success', 'warn', 'error'];
+// Сколько строк держим в разметке. Буфер state.logs больше - он нужен фильтру
+// и поиску, но рисовать всю историю разом незачем.
+const LOG_DOM_MAX = 200;
 
 // ── helpers ────────────────────────────────────────────────────────
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -1235,9 +1238,9 @@ function highlight(text, query) {
   return safe.replace(new RegExp(needle, 'gi'), (m) => `<mark>${m}</mark>`);
 }
 
-function logLineEl(entry) {
+function logLineEl(entry, fresh) {
   const time = new Date(entry.ts).toLocaleTimeString();
-  return h(`<div class="log-line ${entry.level}"><span class="t">${esc(time)}</span><span class="s">[${esc(entry.scope)}]</span><span class="m">${highlight(entry.message, state.logFilter.query)}</span></div>`);
+  return h(`<div class="log-line ${entry.level}${fresh ? ' fresh' : ''}"><span class="t">${esc(time)}</span><span class="s">[${esc(entry.scope)}]</span><span class="m">${highlight(entry.message, state.logFilter.query)}</span></div>`);
 }
 
 function renderLogs() {
@@ -1249,7 +1252,9 @@ function renderLogs() {
     box.appendChild(h(`<div class="empty">${esc(state.logs.length ? t('logs.emptyFiltered') : t('logs.empty'))}</div>`));
   } else {
     const frag = document.createDocumentFragment();
-    shown.forEach((e) => frag.appendChild(logLineEl(e)));
+    // Показываем хвост: старые записи в списке всё равно не читают, а каждая
+    // лишняя строка - это работа при каждой прокрутке.
+    shown.slice(-LOG_DOM_MAX).forEach((e) => frag.appendChild(logLineEl(e, false)));
     box.appendChild(frag);
   }
   paintLogCount(shown.length);
@@ -1270,9 +1275,14 @@ function paintLogFollow() {
   btn.querySelector('svg').style.transform = 'rotate(90deg)';
 }
 
+let logScrollFrame = null;
 function scrollLogsToEnd() {
-  const box = $('#logs');
-  if (box) box.scrollTop = box.scrollHeight;
+  if (logScrollFrame) return;
+  logScrollFrame = requestAnimationFrame(() => {
+    logScrollFrame = null;
+    const box = $('#logs');
+    if (box) box.scrollTop = box.scrollHeight;
+  });
 }
 
 function appendLog(entry) {
@@ -1280,12 +1290,12 @@ function appendLog(entry) {
   while (state.logs.length > 500) state.logs.shift();
   const box = $('#logs');
   if (!box) return;
-  if (!logPasses(entry)) { paintLogCount($$('.log-line', box).length); return; }
+  if (!logPasses(entry)) { paintLogCount(box.children.length); return; }
   const empty = box.querySelector('.empty');
   if (empty) empty.remove();
-  box.appendChild(logLineEl(entry));
-  while (box.children.length > 500) box.removeChild(box.firstChild);
-  paintLogCount($$('.log-line', box).length);
+  box.appendChild(logLineEl(entry, true));
+  while (box.children.length > LOG_DOM_MAX) box.removeChild(box.firstChild);
+  paintLogCount(box.children.length);
   if (state.logFollow) scrollLogsToEnd();
 }
 

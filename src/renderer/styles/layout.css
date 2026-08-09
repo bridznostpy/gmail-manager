@@ -141,6 +141,16 @@ body {
   gap: 20px;
   padding: 22px 32px 16px;
 }
+/* Заголовок страницы лежит прямо на фоне, без стекла. Светлая картинка съедала
+   бы его целиком, поэтому под ним всегда мягкая подложка. */
+.pagehead::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 -28px 0;
+  z-index: -1;
+  pointer-events: none;
+  background: linear-gradient(to bottom, var(--head-scrim), transparent);
+}
 .crumbs {
   font-family: var(--font-mono);
   font-size: 9.5px; letter-spacing: var(--track-wide);

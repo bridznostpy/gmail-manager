@@ -21,6 +21,8 @@ const state = {
   profiles: [],
   profileStats: null,
   selectedProfile: null,
+  // Выбранная группа на странице настроек - переживает уход на другой раздел.
+  settingsGroup: 'interface',
   runStatus: { running: false, paused: false, uptimeSec: 0, queueSize: 0 },
   // Живые логи держим массивом, а не только в DOM: иначе их нечем фильтровать.
   logs: [],
@@ -33,13 +35,11 @@ const state = {
   runBusy: false,
 };
 
+// Разделов ровно три: всё настраиваемое живёт в "Настройках" одним местом,
+// а не разбросано по верхней панели (см. SETTINGS_GROUPS).
 const ROUTES = [
   { id: 'dashboard', labelKey: 'nav.dashboard', icon: 'dashboard', titleKey: 'dash.title', subKey: 'dash.sub' },
   { id: 'profiles', labelKey: 'nav.profiles', icon: 'profiles', titleKey: 'prof.title', subKey: 'prof.sub' },
-  { id: 'parser', labelKey: 'nav.parser', icon: 'parser', titleKey: 'parser.title', subKey: 'parser.sub' },
-  { id: 'cdp', labelKey: 'nav.cdp', icon: 'cdp', titleKey: 'cdp.title', subKey: 'cdp.sub' },
-  { id: 'link', labelKey: 'nav.link', icon: 'link', titleKey: 'link.title', subKey: 'link.sub' },
-  { id: 'telegram', labelKey: 'nav.telegram', icon: 'telegram', titleKey: 'tg.title', subKey: 'tg.sub' },
   { id: 'settings', labelKey: 'nav.settings', icon: 'settings', titleKey: 'set.title', subKey: 'set.sub' },
 ];
 
@@ -468,7 +468,7 @@ VIEWS.dashboard = () => {
   });
   controls.append(primary, secondary, leadBtn);
 
-  renderTargets(wrap);
+  wireTargetChips(wrap.querySelector('#dTargets'), wrap.querySelector('#dTargetsHint'));
 
   // Логи
   $$('#logLevels button', wrap).forEach((b) => b.addEventListener('click', () => {
@@ -501,19 +501,19 @@ VIEWS.dashboard = () => {
   return wrap;
 };
 
-function renderTargets(root) {
-  const box = root.querySelector('#dTargets');
-  const hint = root.querySelector('#dTargetsHint');
+/** Чипы площадок. Один код на два места: блок на дашборде и группу настроек -
+    настройка одна и та же, разъезжаться ей нельзя. */
+function wireTargetChips(box, hint) {
   if (!box) return;
   const selected = (state.settings.parser.platforms || []);
   box.innerHTML = PLATFORMS.map((p) => `<div class="chip ${selected.includes(p.id) ? 'on' : ''}" data-v="${p.id}">
     <span class="code">${esc(p.code)}</span>${esc(p.label)}</div>`).join('');
-  hint.textContent = selected.length ? '' : t('targets.empty');
+  if (hint) hint.textContent = selected.length ? '' : t('targets.empty');
   $$('.chip', box).forEach((c) => c.addEventListener('click', async () => {
     c.classList.toggle('on');
     const sel = $$('.chip.on', box).map((x) => x.dataset.v);
     await saveSection('parser', { platforms: sel });
-    hint.textContent = sel.length ? '' : t('targets.empty');
+    if (hint) hint.textContent = sel.length ? '' : t('targets.empty');
     toast(t('targets.saved'), 'success');
   }));
 }
@@ -892,155 +892,226 @@ async function launchProfile(id, openGmail) {
   catch (e) { toast(t('prof.launchFailed', { error: e.message }), 'error'); }
 }
 
-// ── Парсер ─────────────────────────────────────────────────────────
-VIEWS.parser = () => {
-  const p = state.settings.parser;
-  const wrap = h(`<div>
-    ${panelHtml(true, `<h3>${ICONS.parser} ${esc(t('parser.apiSource'))}</h3>`, `
-      <div class="row">
-        <div class="field"><label>${esc(t('parser.apiKey'))}</label><input type="password" id="pKey" value="${esc(p.apiKey)}" placeholder="${esc(t('parser.apiKeyPh'))}"/></div>
-        <div class="field" style="flex:0 0 190px"><label>${esc(t('parser.type'))}</label>
-          <div class="seg" id="pType">
-            <button data-v="xproject" class="${p.apiType === 'xproject' ? 'active' : ''}">xproject</button>
-            <button data-v="vvs" class="${p.apiType === 'vvs' ? 'active' : ''}">vvs</button>
-          </div>
-        </div>
-      </div>
-      <div class="field" style="margin-bottom:0"><label>${esc(t('parser.platforms'))}</label>
-        <div class="hint">${esc(t('parser.targetsMoved'))}</div>
-      </div>`)}
-    ${panelHtml(true, `<h3>${esc(t('parser.behaviour'))}</h3>`, `
-      <div class="field"><label class="switch"><input type="checkbox" id="pEnabled" ${p.enabled ? 'checked' : ''}/><span class="track"></span><span class="lbl">${esc(t('parser.enabled'))}</span></label></div>
-      <div class="field"><label class="switch"><input type="checkbox" id="pAi" ${p.aiTemplateSwap ? 'checked' : ''}/><span class="track"></span><span class="lbl">${esc(t('parser.aiSwap'))}</span></label></div>
-      <div class="field" style="max-width:340px;margin-bottom:0"><label>${esc(t('parser.swapN'))}</label><input type="number" id="pSwapN" min="0" value="${p.swapKeyEveryN}"/></div>`)}
+// ── Настройки: одна страница, группы слева ─────────────────────────
+// Всё настраиваемое собрано здесь. Отдельных разделов под парсер, CDP,
+// ссылки и Telegram в верхней панели больше нет: одно место правды.
+
+const SETTINGS_GROUPS = [
+  { id: 'interface', icon: 'settings', build: buildSetInterface },
+  { id: 'appearance', icon: 'palette', build: buildSetAppearance },
+  { id: 'limits', icon: 'dashboard', build: buildSetLimits },
+  { id: 'parser', icon: 'parser', build: buildSetParser },
+  { id: 'targets', icon: 'target', build: buildSetTargets },
+  { id: 'cdp', icon: 'cdp', build: buildSetCdp },
+  { id: 'link', icon: 'link', build: buildSetLink },
+  { id: 'telegram', icon: 'telegram', build: buildSetTelegram },
+  { id: 'texts', icon: 'inbox', build: buildSetTexts },
+];
+
+VIEWS.settings = () => {
+  const wrap = h(`<div class="settings">
+    <aside class="set-menu glass">
+      ${SETTINGS_GROUPS.map((g) => `<button class="set-tab" data-g="${g.id}">
+        <span class="icon">${ICONS[g.icon]}</span><span>${esc(t('set.g.' + g.id))}</span></button>`).join('')}
+    </aside>
+    <div class="set-panel" id="setPanel"></div>
   </div>`);
 
-  wrap.querySelector('#pKey').addEventListener('input', debounce((e) => saveSection('parser', { apiKey: e.target.value })));
-  $$('#pType button', wrap).forEach((b) => b.addEventListener('click', () => {
-    $$('#pType button', wrap).forEach((x) => x.classList.remove('active'));
-    b.classList.add('active');
+  $$('.set-tab', wrap).forEach((b) => b.addEventListener('click', () => {
+    state.settingsGroup = b.dataset.g;
+    renderSettingsGroup(wrap);
+  }));
+
+  setTimeout(() => renderSettingsGroup(wrap), 0);
+  return wrap;
+};
+
+function renderSettingsGroup(root) {
+  const group = SETTINGS_GROUPS.find((g) => g.id === state.settingsGroup) || SETTINGS_GROUPS[0];
+  $$('.set-tab', root).forEach((b) => b.classList.toggle('active', b.dataset.g === group.id));
+
+  const panel = root.querySelector('#setPanel');
+  if (!panel) return;
+  panel.innerHTML = '';
+  const el = group.build();
+  el.classList.add('view-enter');
+  panel.appendChild(el);
+  wireRipples(panel);
+  wireSheen(panel);
+}
+
+/** Открыть настройки сразу на нужной группе (например, из подсказки). */
+function goSettings(groupId) {
+  state.settingsGroup = groupId;
+  if (state.route === 'settings') {
+    const root = $('.settings');
+    if (root) { renderSettingsGroup(root); return; }
+  }
+  go('settings');
+}
+
+/** Заголовок группы: одинаковая шапка у каждой карточки настроек. */
+function setCard(groupId, bodyHtml) {
+  return `<div class="card glass">
+    <div class="section-label">${esc(t('set.g.' + groupId))}</div>
+    <h3 style="margin:8px 0 14px;font-size:16px">${esc(t('set.h.' + groupId))}</h3>
+    ${bodyHtml}
+  </div>`;
+}
+
+function buildSetInterface() {
+  const lang = I18N.getLanguage();
+  const el = h(setCard('interface', `
+    <div class="field"><label>${esc(t('set.language'))}</label>
+      <div class="seg" id="mLang">
+        ${I18N.LANGUAGES.map((x) => `<button data-v="${x.id}" class="${lang === x.id ? 'active' : ''}">${esc(x.label)}</button>`).join('')}
+      </div>
+    </div>
+    <div class="hint">${esc(t('set.langHint'))}</div>`));
+  $$('#mLang button', el).forEach((b) => b.addEventListener('click', () => setLanguage(b.dataset.v)));
+  return el;
+}
+
+function buildSetAppearance() {
+  const el = h(setCard('appearance', `<div class="opt-list">${appearanceControlsHtml()}</div>`));
+  wireAppearanceControls(el, () => renderSettingsGroup($('.settings')));
+  return el;
+}
+
+function buildSetLimits() {
+  const s = state.settings.system;
+  const el = h(setCard('limits', `
+    <div class="row">
+      <div class="field"><label>${esc(t('set.mails'))}</label><input type="number" id="mMails" min="1" value="${s.mailsPerAccount}"/></div>
+      <div class="field"><label>${esc(t('set.replies'))}</label><input type="number" id="mReplies" min="0" value="${s.maxRepliesPerDialog}"/></div>
+    </div>
+    <div class="row">
+      <div class="field"><label>${esc(t('set.checkInterval'))}</label><input type="number" id="mCheck" min="3" value="${s.checkIntervalSec}"/></div>
+      <div class="field"><label>${esc(t('set.batch'))}</label><input type="number" id="mBatch" min="1" value="${s.parserBatchSize}"/></div>
+      <div class="field"><label>${esc(t('set.threshold'))}</label><input type="number" id="mThresh" min="0" value="${s.queueRefillThreshold}"/></div>
+    </div>
+    <div class="hint">${esc(t('set.limitsHint'))}</div>`));
+  const bind = (id, key) => $(id, el).addEventListener('input', debounce((e) => saveSection('system', { [key]: +e.target.value || 0 })));
+  bind('#mMails', 'mailsPerAccount'); bind('#mReplies', 'maxRepliesPerDialog'); bind('#mCheck', 'checkIntervalSec');
+  bind('#mBatch', 'parserBatchSize'); bind('#mThresh', 'queueRefillThreshold');
+  return el;
+}
+
+function buildSetParser() {
+  const p = state.settings.parser;
+  const el = h(setCard('parser', `
+    <div class="row">
+      <div class="field"><label>${esc(t('parser.apiKey'))}</label><input type="password" id="pKey" value="${esc(p.apiKey)}" placeholder="${esc(t('parser.apiKeyPh'))}"/></div>
+      <div class="field" style="flex:0 0 190px"><label>${esc(t('parser.type'))}</label>
+        <div class="seg" id="pType">
+          <button data-v="xproject" class="${p.apiType === 'xproject' ? 'active' : ''}">xproject</button>
+          <button data-v="vvs" class="${p.apiType === 'vvs' ? 'active' : ''}">vvs</button>
+        </div>
+      </div>
+    </div>
+    <div class="field"><label class="switch"><input type="checkbox" id="pEnabled" ${p.enabled ? 'checked' : ''}/><span class="track"></span><span class="lbl">${esc(t('parser.enabled'))}</span></label></div>
+    <div class="field"><label class="switch"><input type="checkbox" id="pAi" ${p.aiTemplateSwap ? 'checked' : ''}/><span class="track"></span><span class="lbl">${esc(t('parser.aiSwap'))}</span></label></div>
+    <div class="field" style="max-width:340px"><label>${esc(t('parser.swapN'))}</label><input type="number" id="pSwapN" min="0" value="${p.swapKeyEveryN}"/></div>
+    <div class="hint">${esc(t('parser.platformsHint'))} <a href="#" id="pToTargets">${esc(t('set.g.targets'))}</a>.</div>`));
+
+  $('#pKey', el).addEventListener('input', debounce((e) => saveSection('parser', { apiKey: e.target.value })));
+  $$('#pType button', el).forEach((b) => b.addEventListener('click', () => {
+    $$('#pType button', el).forEach((x) => x.classList.toggle('active', x === b));
     saveSection('parser', { apiType: b.dataset.v });
   }));
-  wrap.querySelector('#pEnabled').addEventListener('change', (e) => saveSection('parser', { enabled: e.target.checked }));
-  wrap.querySelector('#pAi').addEventListener('change', (e) => saveSection('parser', { aiTemplateSwap: e.target.checked }));
-  wrap.querySelector('#pSwapN').addEventListener('input', debounce((e) => saveSection('parser', { swapKeyEveryN: +e.target.value || 0 })));
-  return wrap;
-};
+  $('#pEnabled', el).addEventListener('change', (e) => saveSection('parser', { enabled: e.target.checked }));
+  $('#pAi', el).addEventListener('change', (e) => saveSection('parser', { aiTemplateSwap: e.target.checked }));
+  $('#pSwapN', el).addEventListener('input', debounce((e) => saveSection('parser', { swapKeyEveryN: +e.target.value || 0 })));
+  $('#pToTargets', el).addEventListener('click', (e) => { e.preventDefault(); goSettings('targets'); });
+  return el;
+}
 
-// ── Chrome CDP ─────────────────────────────────────────────────────
-VIEWS.cdp = () => {
+function buildSetTargets() {
+  const el = h(setCard('targets', `
+    <div class="chips" id="setTargets"></div>
+    <div class="hint" id="setTargetsHint" style="margin-top:12px"></div>`));
+  wireTargetChips($('#setTargets', el), $('#setTargetsHint', el));
+  return el;
+}
+
+function buildSetCdp() {
   const c = state.settings.cdp;
-  const wrap = h(`<div>
-    ${panelHtml(true, `<h3>${ICONS.cdp} ${esc(t('cdp.portRange'))}</h3>`, `
-      <div class="row">
-        <div class="field"><label>${esc(t('cdp.portStart'))}</label><input type="number" id="cStart" value="${c.portStart}"/></div>
-        <div class="field"><label>${esc(t('cdp.portEnd'))}</label><input type="number" id="cEnd" value="${c.portEnd}"/></div>
-      </div>
-      <div class="field"><label>${esc(t('cdp.path'))}</label><input type="text" id="cPath" value="${esc(c.chromePath)}" placeholder="${esc(t('cdp.pathPh'))}"/></div>
-      <button class="btn" id="cDetect">${ICONS.search}<span>${esc(t('cdp.detect'))}</span></button>
-      <div class="hint" id="cDetected" style="margin-top:10px"></div>`)}
-  </div>`);
-  wrap.querySelector('#cStart').addEventListener('input', debounce((e) => saveSection('cdp', { portStart: +e.target.value || 9222 })));
-  wrap.querySelector('#cEnd').addEventListener('input', debounce((e) => saveSection('cdp', { portEnd: +e.target.value || 9322 })));
-  wrap.querySelector('#cPath').addEventListener('input', debounce((e) => saveSection('cdp', { chromePath: e.target.value })));
-  wrap.querySelector('#cDetect').addEventListener('click', async () => {
+  const el = h(setCard('cdp', `
+    <div class="row">
+      <div class="field"><label>${esc(t('cdp.portStart'))}</label><input type="number" id="cStart" value="${c.portStart}"/></div>
+      <div class="field"><label>${esc(t('cdp.portEnd'))}</label><input type="number" id="cEnd" value="${c.portEnd}"/></div>
+    </div>
+    <div class="field"><label>${esc(t('cdp.path'))}</label><input type="text" id="cPath" value="${esc(c.chromePath)}" placeholder="${esc(t('cdp.pathPh'))}"/></div>
+    <button class="btn" id="cDetect">${ICONS.search}<span>${esc(t('cdp.detect'))}</span></button>
+    <div class="hint" id="cDetected" style="margin-top:12px"></div>`));
+  $('#cStart', el).addEventListener('input', debounce((e) => saveSection('cdp', { portStart: +e.target.value || 9222 })));
+  $('#cEnd', el).addEventListener('input', debounce((e) => saveSection('cdp', { portEnd: +e.target.value || 9322 })));
+  $('#cPath', el).addEventListener('input', debounce((e) => saveSection('cdp', { chromePath: e.target.value })));
+  $('#cDetect', el).addEventListener('click', async () => {
     const found = await api.cdp.detectChrome();
-    wrap.querySelector('#cDetected').textContent = found ? t('cdp.found', { path: found }) : t('cdp.notFound');
+    $('#cDetected', el).textContent = found ? t('cdp.found', { path: found }) : t('cdp.notFound');
   });
-  return wrap;
-};
+  return el;
+}
 
-// ── Генератор ссылок ───────────────────────────────────────────────
-VIEWS.link = () => {
+function buildSetLink() {
   const l = state.settings.link;
-  const wrap = h(`<div>
-    ${panelHtml(true, `<h3>${ICONS.link} Haron Rent</h3>`, `
-      <div class="row">
-        <div class="field"><label>${esc(t('link.apiKey'))}</label><input type="password" id="lKey" value="${esc(l.apiKey)}"/></div>
-        <div class="field" style="flex:0 0 210px"><label>${esc(t('link.team'))}</label>
-          <select id="lTeam"><option value="haron_rent" ${l.team === 'haron_rent' ? 'selected' : ''}>Haron Rent</option></select>
-        </div>
+  const el = h(setCard('link', `
+    <div class="row">
+      <div class="field"><label>${esc(t('link.apiKey'))}</label><input type="password" id="lKey" value="${esc(l.apiKey)}"/></div>
+      <div class="field" style="flex:0 0 210px"><label>${esc(t('link.team'))}</label>
+        <select id="lTeam"><option value="haron_rent" ${l.team === 'haron_rent' ? 'selected' : ''}>Haron Rent</option></select>
       </div>
-      <div class="row">
-        <div class="field"><label>${esc(t('link.mode'))}</label><input type="text" id="lMode" value="${esc(l.mode)}" placeholder="${esc(t('link.modePh'))}"/></div>
-        <div class="field"><label>${esc(t('link.profileId'))}</label><input type="text" id="lPid" value="${esc(l.profileId)}"/></div>
-        <div class="field" style="flex:0 0 140px"><label>${esc(t('link.country'))}</label>
-          <select id="lCountry"><option value="US" ${l.country === 'US' ? 'selected' : ''}>US</option></select>
-        </div>
+    </div>
+    <div class="row">
+      <div class="field"><label>${esc(t('link.mode'))}</label><input type="text" id="lMode" value="${esc(l.mode)}" placeholder="${esc(t('link.modePh'))}"/></div>
+      <div class="field"><label>${esc(t('link.profileId'))}</label><input type="text" id="lPid" value="${esc(l.profileId)}"/></div>
+      <div class="field" style="flex:0 0 140px"><label>${esc(t('link.country'))}</label>
+        <select id="lCountry"><option value="US" ${l.country === 'US' ? 'selected' : ''}>US</option></select>
       </div>
-      <div class="hint">${esc(t('link.hint'))}</div>`)}
-  </div>`);
-  wrap.querySelector('#lKey').addEventListener('input', debounce((e) => saveSection('link', { apiKey: e.target.value })));
-  wrap.querySelector('#lTeam').addEventListener('change', (e) => saveSection('link', { team: e.target.value }));
-  wrap.querySelector('#lMode').addEventListener('input', debounce((e) => saveSection('link', { mode: e.target.value })));
-  wrap.querySelector('#lPid').addEventListener('input', debounce((e) => saveSection('link', { profileId: e.target.value })));
-  wrap.querySelector('#lCountry').addEventListener('change', (e) => saveSection('link', { country: e.target.value }));
-  return wrap;
-};
+    </div>
+    <div class="hint">${esc(t('link.hint'))}</div>`));
+  $('#lKey', el).addEventListener('input', debounce((e) => saveSection('link', { apiKey: e.target.value })));
+  $('#lTeam', el).addEventListener('change', (e) => saveSection('link', { team: e.target.value }));
+  $('#lMode', el).addEventListener('input', debounce((e) => saveSection('link', { mode: e.target.value })));
+  $('#lPid', el).addEventListener('input', debounce((e) => saveSection('link', { profileId: e.target.value })));
+  $('#lCountry', el).addEventListener('change', (e) => saveSection('link', { country: e.target.value }));
+  return el;
+}
 
-// ── Telegram ───────────────────────────────────────────────────────
-VIEWS.telegram = () => {
+function buildSetTelegram() {
   const tg = state.settings.telegram;
-  const wrap = h(`<div>
-    ${panelHtml(true, `<h3>${ICONS.telegram} ${esc(t('tg.bot'))}</h3>`, `
-      <div class="field"><label>${esc(t('tg.token'))}</label><input type="password" id="tToken" value="${esc(tg.botToken)}"/></div>
-      <div class="field"><label>${esc(t('tg.chatId'))}</label><input type="text" id="tId" value="${esc(tg.botId)}"/></div>
-      <button class="btn" id="tTest">${ICONS.send}<span>${esc(t('tg.test'))}</span></button>
-      <div class="hint" id="tResult" style="margin-top:10px"></div>`)}
-  </div>`);
-  wrap.querySelector('#tToken').addEventListener('input', debounce((e) => saveSection('telegram', { botToken: e.target.value })));
-  wrap.querySelector('#tId').addEventListener('input', debounce((e) => saveSection('telegram', { botId: e.target.value })));
-  wrap.querySelector('#tTest').addEventListener('click', async () => {
-    const res = await api.telegram.test(wrap.querySelector('#tToken').value);
-    wrap.querySelector('#tResult').textContent = res && res.ok
+  const el = h(setCard('telegram', `
+    <div class="field"><label>${esc(t('tg.token'))}</label><input type="password" id="tToken" value="${esc(tg.botToken)}"/></div>
+    <div class="field"><label>${esc(t('tg.chatId'))}</label><input type="text" id="tId" value="${esc(tg.botId)}"/></div>
+    <button class="btn" id="tTest">${ICONS.send}<span>${esc(t('tg.test'))}</span></button>
+    <div class="hint" id="tResult" style="margin-top:12px"></div>`));
+  $('#tToken', el).addEventListener('input', debounce((e) => saveSection('telegram', { botToken: e.target.value })));
+  $('#tId', el).addEventListener('input', debounce((e) => saveSection('telegram', { botId: e.target.value })));
+  $('#tTest', el).addEventListener('click', async () => {
+    const res = await api.telegram.test($('#tToken', el).value);
+    $('#tResult', el).textContent = res && res.ok
       ? t('tg.ok', { username: (res.result && res.result.username) || 'bot' })
       : t('tg.fail');
   });
-  return wrap;
-};
+  return el;
+}
 
-// ── Системные настройки ────────────────────────────────────────────
-VIEWS.settings = () => {
-  const s = state.settings.system;
-  const lang = I18N.getLanguage();
-  const wrap = h(`<div>
-    ${panelHtml(true, `<h3>${ICONS.settings} ${esc(t('set.interface'))}</h3>`, `
-      <div class="field"><label>${esc(t('set.language'))}</label>
-        <div class="seg" id="mLang">
-          ${I18N.LANGUAGES.map((x) => `<button data-v="${x.id}" class="${lang === x.id ? 'active' : ''}">${esc(x.label)}</button>`).join('')}
-        </div>
-      </div>
-      <div class="hint">${esc(t('set.langHint'))}</div>`)}
-    ${panelHtml(true, `<h3>${esc(t('set.limits'))}</h3>`, `
-      <div class="row">
-        <div class="field"><label>${esc(t('set.mails'))}</label><input type="number" id="mMails" min="1" value="${s.mailsPerAccount}"/></div>
-        <div class="field"><label>${esc(t('set.replies'))}</label><input type="number" id="mReplies" min="0" value="${s.maxRepliesPerDialog}"/></div>
-      </div>
-      <div class="row">
-        <div class="field"><label>${esc(t('set.checkInterval'))}</label><input type="number" id="mCheck" min="3" value="${s.checkIntervalSec}"/></div>
-        <div class="field"><label>${esc(t('set.batch'))}</label><input type="number" id="mBatch" min="1" value="${s.parserBatchSize}"/></div>
-        <div class="field" style="margin-bottom:0"><label>${esc(t('set.threshold'))}</label><input type="number" id="mThresh" min="0" value="${s.queueRefillThreshold}"/></div>
-      </div>`)}
-    ${panelHtml(true, `<h3>${esc(t('set.texts'))}</h3>`, `
-      <div class="field"><label>${esc(t('set.textsLabel'))}</label><textarea id="mTexts" placeholder='{ "subjects": [...], "bodies": [...] }'>${state.settings.texts ? esc(JSON.stringify(state.settings.texts, null, 2)) : ''}</textarea></div>
-      <button class="btn primary" id="mLoadTexts">${esc(t('set.loadTexts'))}</button>
-      <div class="hint" id="mTextsResult" style="margin-top:10px"></div>`)}
-  </div>`);
-
-  $$('#mLang button', wrap).forEach((b) => b.addEventListener('click', () => setLanguage(b.dataset.v)));
-  const bind = (id, key) => wrap.querySelector(id).addEventListener('input', debounce((e) => saveSection('system', { [key]: +e.target.value || 0 })));
-  bind('#mMails', 'mailsPerAccount'); bind('#mReplies', 'maxRepliesPerDialog'); bind('#mCheck', 'checkIntervalSec');
-  bind('#mBatch', 'parserBatchSize'); bind('#mThresh', 'queueRefillThreshold');
-  wrap.querySelector('#mLoadTexts').addEventListener('click', async () => {
+function buildSetTexts() {
+  const el = h(setCard('texts', `
+    <div class="field"><label>${esc(t('set.textsLabel'))}</label><textarea id="mTexts" placeholder='{ "subjects": [...], "bodies": [...] }'>${state.settings.texts ? esc(JSON.stringify(state.settings.texts, null, 2)) : ''}</textarea></div>
+    <button class="btn primary" id="mLoadTexts">${esc(t('set.loadTexts'))}</button>
+    <div class="hint" id="mTextsResult" style="margin-top:12px"></div>`));
+  $('#mLoadTexts', el).addEventListener('click', async () => {
     try {
-      const json = JSON.parse(wrap.querySelector('#mTexts').value);
+      const json = JSON.parse($('#mTexts', el).value);
       state.settings.texts = await api.settings.loadTexts(json);
-      wrap.querySelector('#mTextsResult').textContent = t('set.textsLoaded');
+      $('#mTextsResult', el).textContent = t('set.textsLoaded');
       toast(t('set.textsToast'), 'success');
-    } catch (e) { wrap.querySelector('#mTextsResult').textContent = t('set.textsInvalid', { error: e.message }); }
+    } catch (e) { $('#mTextsResult', el).textContent = t('set.textsInvalid', { error: e.message }); }
   });
-  return wrap;
-};
+  return el;
+}
 
 // ── Панель "Оформление" ────────────────────────────────────────────
 function drawerOpen() { return $('#drawer').classList.contains('open'); }
@@ -1054,17 +1125,16 @@ function toggleDrawer(open) {
   scrim.classList.toggle('open', next);
 }
 
-function renderDrawer() {
+/**
+ * Разметка контролов оформления. Живёт в двух местах сразу - в выезжающей
+ * панели и в группе "Оформление" на странице настроек, - поэтому собирается
+ * одной функцией: разъехаться двум копиям нельзя.
+ */
+function appearanceControlsHtml() {
   const ap = appearance();
   const theme = document.documentElement.getAttribute('data-theme');
-  const drawer = $('#drawer');
-  drawer.innerHTML = `
-    <div class="drawer-head">
-      <h3>${esc(t('appear.title'))}</h3>
-      <button class="btn ghost icon-only" id="drawerClose">${ICONS.x}</button>
-    </div>
-    <div class="drawer-body">
-      <div class="drawer-group">
+  return `
+      <div class="opt-group">
         <span class="section-label">${esc(t('appear.background'))}</span>
         <div class="bg-preview ${ap.bgType === 'image' && ap.bgFile ? '' : 'gradient'}"></div>
         <div style="display:flex;gap:8px">
@@ -1073,7 +1143,7 @@ function renderDrawer() {
         </div>
       </div>
 
-      <div class="drawer-group">
+      <div class="opt-group">
         <span class="section-label">${esc(t('appear.presets'))}</span>
         <div class="preset-grid" id="bgPresets">
           ${Object.keys(BG_PRESETS).map((id) => `<div class="preset ${ap.bgPreset === id ? 'on' : ''}" data-v="${id}"
@@ -1082,7 +1152,7 @@ function renderDrawer() {
         </div>
       </div>
 
-      <div class="drawer-group">
+      <div class="opt-group">
         <span class="section-label">${esc(t('appear.fit'))}</span>
         <div class="seg" id="bgFit">
           ${['cover', 'contain', 'tile'].map((f) => `<button data-v="${f}" class="${ap.fit === f ? 'active' : ''}">${esc(t('appear.fit.' + f))}</button>`).join('')}
@@ -1099,7 +1169,7 @@ function renderDrawer() {
           <span class="num" id="apSatNum">${Number(ap.saturate).toFixed(2)}</span></div>
       </div>
 
-      <div class="drawer-group">
+      <div class="opt-group">
         <span class="section-label">${esc(t('appear.accent'))}</span>
         <div class="accent-grid" id="apAccents">
           ${Object.keys(ACCENTS).map((id) => `<div class="accent-dot ${ap.accent === id ? 'on' : ''}" data-v="${id}"
@@ -1108,7 +1178,7 @@ function renderDrawer() {
         </div>
       </div>
 
-      <div class="drawer-group">
+      <div class="opt-group">
         <span class="section-label">${esc(t('appear.theme'))}</span>
         <div class="seg" id="apTheme">
           <button data-v="dark" class="${theme === 'dark' ? 'active' : ''}">${esc(t('appear.theme.dark'))}</button>
@@ -1116,59 +1186,62 @@ function renderDrawer() {
         </div>
       </div>
 
-      <div class="drawer-group">
+      <div class="opt-group">
         <span class="section-label">${esc(t('appear.motion'))}</span>
         <label class="switch"><input type="checkbox" id="apMotion" ${ap.reduceMotion ? 'checked' : ''}/>
           <span class="track"></span><span class="lbl">${esc(t('appear.reduceMotion'))}</span></label>
       </div>
 
-      <div class="drawer-group">
+      <div class="opt-group">
         <span class="section-label">${esc(t('appear.keys'))}</span>
         <div class="keys">
-          <div class="k-row"><span>${esc(t('appear.keys.nav'))}</span><span><kbd>1</kbd> - <kbd>7</kbd></span></div>
+          <div class="k-row"><span>${esc(t('appear.keys.nav'))}</span><span><kbd>1</kbd> - <kbd>${ROUTES.length}</kbd></span></div>
           <div class="k-row"><span>${esc(t('appear.keys.run'))}</span><kbd>Ctrl + Enter</kbd></div>
           <div class="k-row"><span>${esc(t('appear.keys.pause'))}</span><kbd>Ctrl + P</kbd></div>
           <div class="k-row"><span>${esc(t('appear.keys.search'))}</span><kbd>Ctrl + K</kbd></div>
           <div class="k-row"><span>${esc(t('appear.keys.esc'))}</span><kbd>Esc</kbd></div>
         </div>
-      </div>
-    </div>`;
+      </div>`;
+}
 
-  $('#drawerClose', drawer).addEventListener('click', () => toggleDrawer(false));
-
-  $('#bgPick', drawer).addEventListener('click', async () => {
+/**
+ * Обработчики контролов оформления. `rerender` перерисовывает того, кто их
+ * приютил: смена картинки или пресета меняет и превью, и подсветку выбора.
+ */
+function wireAppearanceControls(root, rerender) {
+  $('#bgPick', root).addEventListener('click', async () => {
     const res = await api.appearance.pick();
-    if (res && res.ok) { state.settings.appearance = res.appearance; applyAppearance(); renderDrawer(); }
+    if (res && res.ok) { state.settings.appearance = res.appearance; applyAppearance(); rerender(); }
     else if (res && res.reason !== 'cancelled') toast(t('appear.pickFail'), 'error');
   });
-  $('#bgReset', drawer).addEventListener('click', async () => {
+  $('#bgReset', root).addEventListener('click', async () => {
     const res = await api.appearance.clear();
-    if (res && res.ok) { state.settings.appearance = res.appearance; applyAppearance(); renderDrawer(); }
+    if (res && res.ok) { state.settings.appearance = res.appearance; applyAppearance(); rerender(); }
   });
 
-  $$('#bgPresets .preset', drawer).forEach((el) => el.addEventListener('click', async () => {
-    $$('#bgPresets .preset', drawer).forEach((x) => x.classList.toggle('on', x === el));
+  $$('#bgPresets .preset', root).forEach((el) => el.addEventListener('click', async () => {
+    $$('#bgPresets .preset', root).forEach((x) => x.classList.toggle('on', x === el));
     await saveAppearance({ bgPreset: el.dataset.v });
   }));
-  $$('#bgFit button', drawer).forEach((b) => b.addEventListener('click', async () => {
-    $$('#bgFit button', drawer).forEach((x) => x.classList.toggle('active', x === b));
+  $$('#bgFit button', root).forEach((b) => b.addEventListener('click', async () => {
+    $$('#bgFit button', root).forEach((x) => x.classList.toggle('active', x === b));
     await saveAppearance({ fit: b.dataset.v });
   }));
-  $$('#apAccents .accent-dot', drawer).forEach((el) => el.addEventListener('click', async () => {
-    $$('#apAccents .accent-dot', drawer).forEach((x) => x.classList.toggle('on', x === el));
+  $$('#apAccents .accent-dot', root).forEach((el) => el.addEventListener('click', async () => {
+    $$('#apAccents .accent-dot', root).forEach((x) => x.classList.toggle('on', x === el));
     await saveAppearance({ accent: el.dataset.v });
   }));
-  $$('#apTheme button', drawer).forEach((b) => b.addEventListener('click', () => {
-    $$('#apTheme button', drawer).forEach((x) => x.classList.toggle('active', x === b));
+  $$('#apTheme button', root).forEach((b) => b.addEventListener('click', () => {
+    $$('#apTheme button', root).forEach((x) => x.classList.toggle('active', x === b));
     setTheme(b.dataset.v);
   }));
-  $('#apMotion', drawer).addEventListener('change', (e) => saveAppearance({ reduceMotion: e.target.checked }));
+  $('#apMotion', root).addEventListener('change', (e) => saveAppearance({ reduceMotion: e.target.checked }));
 
   // Ползунки применяем сразу, а в файл настроек пишем с задержкой: иначе на
   // каждое движение мыши уходил бы отдельный сброс на диск.
   const slider = (id, numId, key, fmt, parse) => {
-    const input = $(id, drawer);
-    const num = $(numId, drawer);
+    const input = $(id, root);
+    const num = $(numId, root);
     const save = debounce((v) => saveAppearance({ [key]: v }), 260);
     input.addEventListener('input', () => {
       const v = parse(input.value);
@@ -1182,7 +1255,19 @@ function renderDrawer() {
   slider('#apBlur', '#apBlurNum', 'blur', (v) => v + 'px', Number);
   slider('#apSat', '#apSatNum', 'saturate', (v) => v.toFixed(2), Number);
 
-  wireRipples(drawer);
+  wireRipples(root);
+}
+
+function renderDrawer() {
+  const drawer = $('#drawer');
+  drawer.innerHTML = `
+    <div class="drawer-head">
+      <h3>${esc(t('appear.title'))}</h3>
+      <button class="btn ghost icon-only" id="drawerClose">${ICONS.x}</button>
+    </div>
+    <div class="drawer-body">${appearanceControlsHtml()}</div>`;
+  $('#drawerClose', drawer).addEventListener('click', () => toggleDrawer(false));
+  wireAppearanceControls(drawer, renderDrawer);
 }
 
 // ── горячие клавиши ────────────────────────────────────────────────

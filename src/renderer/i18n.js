@@ -24,14 +24,34 @@ const DICT = {
     'nav.settings': 'Системные настройки',
 
     // Короткие подписи для верхней панели: полные названия остаются
-    // заголовками страниц, но в один ряд семь пунктов ими не влезают.
+    // заголовками страниц.
     'navShort.dashboard': 'Обзор',
     'navShort.profiles': 'Профили',
-    'navShort.parser': 'Парсер',
-    'navShort.cdp': 'Chrome CDP',
-    'navShort.link': 'Ссылки',
-    'navShort.telegram': 'Telegram',
     'navShort.settings': 'Настройки',
+
+    // ── Группы на странице настроек ─────────────────────────
+    'set.g.interface': 'Интерфейс',
+    'set.g.appearance': 'Оформление',
+    'set.g.limits': 'Лимиты и интервалы',
+    'set.g.parser': 'Парсер',
+    'set.g.targets': 'Цели рассылки',
+    'set.g.cdp': 'Chrome CDP',
+    'set.g.link': 'Генератор ссылок',
+    'set.g.telegram': 'Telegram',
+    'set.g.texts': 'Тексты рассылки',
+
+    'set.h.interface': 'Язык приложения',
+    'set.h.appearance': 'Фон, акцент и тема',
+    'set.h.limits': 'Сколько писать и как часто проверять',
+    'set.h.parser': 'Источник лидов',
+    'set.h.targets': 'Площадки для текущей кампании',
+    'set.h.cdp': 'Запуск Chrome и порты отладки',
+    'set.h.link': 'Ссылки Haron Rent',
+    'set.h.telegram': 'Уведомления в Telegram',
+    'set.h.texts': 'JSON с текстами писем',
+
+    'set.limitsHint': 'Лимит писем на аккаунт считается по каждому профилю отдельно. Интервал проверки задаёт, как часто автоответчик заглядывает в почту.',
+    'parser.platformsHint': 'Площадки настраиваются в группе',
 
     // ── Дашборд ─────────────────────────────────────────────
     'dash.title': 'Дашборд',
@@ -232,7 +252,6 @@ const DICT = {
     'targets.sub': 'Выберите площадки для текущей кампании.',
     'targets.empty': 'Площадки не выбраны - парсер возьмёт источник по умолчанию.',
     'targets.saved': 'Цели рассылки обновлены',
-    'parser.targetsMoved': 'Площадки переехали в блок "Цели рассылки" на дашборде.',
 
     // ── Живые логи ──────────────────────────────────────────
     'logs.all': 'Все',
@@ -307,11 +326,30 @@ const DICT = {
 
     'navShort.dashboard': 'Overview',
     'navShort.profiles': 'Profiles',
-    'navShort.parser': 'Parser',
-    'navShort.cdp': 'Chrome CDP',
-    'navShort.link': 'Links',
-    'navShort.telegram': 'Telegram',
     'navShort.settings': 'Settings',
+
+    'set.g.interface': 'Interface',
+    'set.g.appearance': 'Appearance',
+    'set.g.limits': 'Limits and intervals',
+    'set.g.parser': 'Parser',
+    'set.g.targets': 'Outreach targets',
+    'set.g.cdp': 'Chrome CDP',
+    'set.g.link': 'Link generator',
+    'set.g.telegram': 'Telegram',
+    'set.g.texts': 'Outreach texts',
+
+    'set.h.interface': 'Application language',
+    'set.h.appearance': 'Background, accent and theme',
+    'set.h.limits': 'How much to send and how often to check',
+    'set.h.parser': 'Lead source',
+    'set.h.targets': 'Platforms for the current campaign',
+    'set.h.cdp': 'Chrome launch and debug ports',
+    'set.h.link': 'Haron Rent links',
+    'set.h.telegram': 'Telegram notifications',
+    'set.h.texts': 'JSON with message texts',
+
+    'set.limitsHint': 'The per-account send limit is counted for each profile separately. The check interval sets how often the auto-responder looks into the mailbox.',
+    'parser.platformsHint': 'Platforms are configured in the group',
 
     'dash.title': 'Dashboard',
     'dash.sub': 'Live status and process logs',
@@ -500,7 +538,6 @@ const DICT = {
     'targets.sub': 'Pick the platforms for the current campaign.',
     'targets.empty': 'No platforms selected - the parser will use its default source.',
     'targets.saved': 'Outreach targets updated',
-    'parser.targetsMoved': 'Platforms moved to the "Outreach targets" block on the dashboard.',
 
     'logs.all': 'All',
     'logs.searchPh': 'Search the log',

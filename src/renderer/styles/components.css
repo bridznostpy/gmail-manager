@@ -86,7 +86,10 @@
 
 /* ── Поля формы ──────────────────────────────────────────── */
 .field { margin-bottom: 14px; }
-.field > label {
+/* :not(.switch) обязателен: сам переключатель - тоже label и прямой потомок
+   .field, а по весу селектора эта подпись перебивала бы его inline-flex и
+   раскладывала тумблер как заголовок поля. */
+.field > label:not(.switch) {
   display: block; font-family: var(--font-mono);
   font-size: 9.5px; color: var(--text-faint); margin-bottom: 7px;
   text-transform: uppercase; letter-spacing: var(--track-wide);
@@ -397,6 +400,39 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
 .modal .field { margin-bottom: 4px; }
 .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
 
+/* ── Страница настроек: группы слева, содержимое справа ──── */
+.settings { display: grid; grid-template-columns: 236px minmax(0, 1fr); gap: 16px; align-items: start; }
+.set-menu { padding: 8px; display: flex; flex-direction: column; gap: 2px; position: sticky; top: 0; }
+.set-tab {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; border-radius: var(--radius-sm);
+  background: transparent; border: 1px solid transparent;
+  color: var(--text-dim); cursor: pointer; text-align: left;
+  font-family: var(--font); font-size: 12.5px; font-weight: 500;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease);
+}
+.set-tab .icon { display: grid; place-items: center; flex-shrink: 0; }
+.set-tab .icon svg { width: 16px; height: 16px; }
+.set-tab:hover { background: rgba(255, 255, 255, 0.05); color: var(--text); }
+.set-tab.active {
+  background: var(--accent-soft); border-color: var(--accent-line);
+  color: var(--accent); font-weight: 600;
+}
+.set-panel > .card { padding: 22px 24px; }
+.set-panel .hint a { color: var(--accent); text-decoration: none; }
+.set-panel .hint a:hover { text-decoration: underline; }
+/* В настройках контролы оформления идут в две колонки: места больше, чем в
+   выезжающей панели, и вертикальная простыня там ни к чему. */
+.opt-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 28px; }
+.opt-list > .opt-group { margin-bottom: 18px; }
+
+@media (max-width: 1180px) {
+  .settings { grid-template-columns: 1fr; }
+  .set-menu { position: static; flex-direction: row; flex-wrap: wrap; }
+  .opt-list { grid-template-columns: 1fr; }
+}
+
 /* ── Панель "Оформление" ─────────────────────────────────── */
 .drawer-scrim {
   position: fixed; inset: 0; background: rgba(6, 8, 12, 0.4);
@@ -422,8 +458,8 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
 }
 .drawer-head h3 { font-size: 15px; font-weight: 650; }
 .drawer-body { padding: 18px 20px 28px; overflow-y: auto; }
-.drawer-group { margin-bottom: 22px; }
-.drawer-group > .section-label { display: block; margin-bottom: 10px; }
+.opt-group { margin-bottom: 22px; }
+.opt-group > .section-label { display: block; margin-bottom: 10px; }
 
 .bg-preview {
   height: 108px; border-radius: var(--radius-sm); border: 1px solid var(--border-strong);

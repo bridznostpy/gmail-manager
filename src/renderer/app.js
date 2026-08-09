@@ -2027,7 +2027,7 @@ function renderTextDicts(box, loaded, lang) {
   box.innerHTML = TEXT_DICTS.map((d) => {
     const dict = loaded[d.id] || {};
     const arr = Array.isArray(dict[lang]) ? dict[lang] : [];
-    return `<section class="txt-dict">
+    return `<section class="txt-dict" data-dict="${d.id}">
       <div class="td-head">
         <span class="td-icon">${ICONS[d.icon]}</span>
         <span class="td-id">
@@ -2038,10 +2038,130 @@ function renderTextDicts(box, loaded, lang) {
       </div>
       <div class="hint td-when">${esc(t('txt.w.' + d.key))}</div>
       ${arr.length
-        ? `<ol class="td-list">${arr.map((s) => `<li><span class="tl-body">${highlightSlots(s)}</span></li>`).join('')}</ol>`
-        : `<div class="empty" style="padding:22px 0">${esc(t('txt.noLang', { lang: lang.toUpperCase() }))}</div>`}
+        ? `<ol class="td-list">${arr.map((s, i) => textLineHtml(s, i)).join('')}</ol>`
+        : `<div class="empty" style="padding:18px 0">${esc(t('txt.noLang', { lang: lang.toUpperCase() }))}</div>`}
+      <button class="btn ghost td-add" data-add="${d.id}">${ICONS.plus}<span>${esc(t('txt.addLine'))}</span></button>
     </section>`;
   }).join('');
+
+  wireTextEditing(box, loaded, lang);
+}
+
+function textLineHtml(s, i) {
+  return `<li data-i="${i}">
+    <span class="tl-body">${highlightSlots(s)}</span>
+    <span class="tl-acts">
+      <button class="mini" data-edit="${i}" title="${esc(t('txt.edit'))}">${ICONS.pencil}</button>
+      <button class="mini danger" data-del="${i}" title="${esc(t('txt.remove'))}">${ICONS.trash}</button>
+    </span>
+  </li>`;
+}
+
+/** Правка вариантов прямо в списке: без выгрузки в JSON и обратно. */
+function wireTextEditing(box, loaded, lang) {
+  const dictOf = (el) => el.closest('.txt-dict').dataset.dict;
+
+  $$('[data-edit]', box).forEach((b) => b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    openLineEditor(b.closest('li'), dictOf(b), lang, +b.dataset.edit, loaded);
+  }));
+
+  $$('[data-del]', box).forEach((b) => b.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const dict = dictOf(b);
+    const i = +b.dataset.del;
+    const arr = loaded[dict][lang];
+    // Последний вариант удалять нельзя: пустой список означает, что письма на
+    // этом языке просто не уйдут, а понять это по интерфейсу будет негде.
+    if (arr.length <= 1) { toast(t('txt.lastLine'), 'error'); return; }
+    const ok = await askConfirm(t('txt.removeTitle'), t('txt.removeText', { text: shorten(arr[i], 90) }),
+      { danger: true, okLabel: t('txt.remove') });
+    if (!ok) return;
+    const next = cloneTexts(loaded);
+    next[dict][lang].splice(i, 1);
+    await saveTexts(next);
+  }));
+
+  $$('[data-add]', box).forEach((b) => b.addEventListener('click', () => {
+    const dict = b.dataset.add;
+    const next = cloneTexts(loaded);
+    if (!Array.isArray(next[dict][lang])) next[dict][lang] = [];
+    next[dict][lang].push('');
+    // Сохраняем сразу и открываем новую строку на правку: пустой вариант в
+    // списке существует ровно до того, как в него что-то впишут.
+    saveTexts(next, () => {
+      const sect = $(`.txt-dict[data-dict="${dict}"]`);
+      const li = sect && sect.querySelector(`li[data-i="${next[dict][lang].length - 1}"]`);
+      if (li) openLineEditor(li, dict, lang, next[dict][lang].length - 1, next);
+    });
+  }));
+
+  wireRipples(box);
+}
+
+function shorten(s, n) {
+  const one = String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
+  return one.length > n ? one.slice(0, n) + '...' : one;
+}
+
+function cloneTexts(loaded) {
+  return JSON.parse(JSON.stringify(loaded));
+}
+
+/** Строка превращается в поле ввода на месте. */
+function openLineEditor(li, dict, lang, index, loaded) {
+  if (!li || li.classList.contains('editing')) return;
+  const value = (loaded[dict] && loaded[dict][lang] && loaded[dict][lang][index]) || '';
+  li.classList.add('editing');
+  li.innerHTML = `
+    <div class="tl-edit">
+      <textarea class="tl-area" spellcheck="false">${esc(value)}</textarea>
+      <div class="tl-slots">${TEXT_SLOTS.map((s) => `<button class="slot-btn" data-slot="${esc(s)}">${esc(s)}</button>`).join('')}</div>
+      <div class="tl-edit-acts">
+        <span class="hint" style="flex:1 1 auto">${esc(t('txt.editHint'))}</span>
+        <button class="btn ghost" data-cancel>${esc(t('common.cancel'))}</button>
+        <button class="btn primary" data-save>${esc(t('txt.save'))}</button>
+      </div>
+    </div>`;
+
+  const area = $('.tl-area', li);
+  area.focus();
+  area.setSelectionRange(area.value.length, area.value.length);
+
+  // Плейсхолдер вставляем в место курсора - дописывать его руками в конец
+  // строки почти всегда не то, что нужно.
+  $$('.slot-btn', li).forEach((b) => b.addEventListener('click', () => {
+    const slot = b.dataset.slot;
+    const at = area.selectionStart;
+    area.value = area.value.slice(0, at) + slot + area.value.slice(area.selectionEnd);
+    area.focus();
+    area.setSelectionRange(at + slot.length, at + slot.length);
+  }));
+
+  const cancel = () => renderSettingsGroup($('.settings'));
+  $('[data-cancel]', li).addEventListener('click', cancel);
+  $('[data-save]', li).addEventListener('click', async () => {
+    const text = area.value;
+    if (!text.trim()) { toast(t('txt.emptyLine'), 'error'); return; }
+    const next = cloneTexts(loaded);
+    next[dict][lang][index] = text;
+    await saveTexts(next);
+  });
+  area.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.stopPropagation(); cancel(); }
+    // Enter переносит строку - в письмах абзацы значимые. Сохраняем по Ctrl+Enter.
+    else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); $('[data-save]', li).click(); }
+  });
+  wireRipples(li);
+}
+
+/** Записать изменённые тексты и перерисовать раздел. */
+async function saveTexts(next, after) {
+  state.settings.texts = await api.settings.loadTexts(next);
+  toast(t('txt.saved'), 'success');
+  const root = $('.settings');
+  if (root) renderSettingsGroup(root);
+  if (after) setTimeout(after, 0);
 }
 
 /**

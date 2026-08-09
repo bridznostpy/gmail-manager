@@ -944,15 +944,21 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
   background: var(--control-bg); border: 1px solid var(--border);
   padding: 3px 10px; border-radius: 20px; flex-shrink: 0;
 }
-.td-when { margin: 14px 0 6px; }
+/* Два класса обязательны: у ".card .hint" отрицательный верхний отступ, и по
+   весу селектора он перебивал одиночный ".td-when" - описание наползало на
+   заголовок словаря. */
+.txt-dict .td-when { margin: 12px 0 6px; }
 
 .td-list { list-style: none; counter-reset: tl; margin: 0; padding: 0; }
 .td-list li {
   counter-increment: tl;
-  display: flex; gap: 12px;
+  display: flex; align-items: flex-start; gap: 12px;
   padding: 9px 0; border-top: 1px solid var(--border);
   font-size: 12px; line-height: 1.6;
+  border-radius: var(--radius-xs);
+  transition: background var(--dur-fast) var(--ease);
 }
+.td-list li:hover { background: rgba(255, 255, 255, 0.04); }
 .td-list li::before {
   content: counter(tl);
   flex: 0 0 22px; text-align: right;
@@ -966,6 +972,36 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
   font-family: var(--font-mono); font-size: 11px;
 }
 .td-list .nl { color: var(--text-faint); opacity: 0.5; font-size: 10px; margin-left: 2px; }
+
+/* Действия строки появляются при наведении - в спокойном состоянии список
+   читается как текст, а не как панель управления. */
+.tl-acts {
+  display: flex; gap: 5px; flex-shrink: 0;
+  opacity: 0; transition: opacity var(--dur-fast) var(--ease);
+}
+.td-list li:hover .tl-acts, .td-list li:focus-within .tl-acts { opacity: 1; }
+.tl-acts .mini { width: 24px; height: 24px; }
+.tl-acts .mini svg { width: 12px; height: 12px; }
+
+.td-list li.editing { background: rgba(var(--accent-rgb), 0.07); }
+.td-list li.editing::before { color: var(--accent); }
+.tl-edit { flex: 1 1 auto; min-width: 0; padding: 2px 0 6px; }
+.tl-area {
+  width: 100%; min-height: 96px; resize: vertical;
+  font-family: var(--font); font-size: 12.5px; line-height: 1.6;
+}
+.tl-slots { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+.slot-btn {
+  font-family: var(--font-mono); font-size: 10px;
+  padding: 3px 8px; border-radius: 20px; cursor: pointer;
+  background: rgba(var(--accent-rgb), 0.12); color: var(--accent);
+  border: 1px solid var(--accent-line);
+  transition: background var(--dur-fast) var(--ease);
+}
+.slot-btn:hover { background: rgba(var(--accent-rgb), 0.24); }
+.tl-edit-acts { display: flex; align-items: center; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+
+.td-add { margin: 10px 0 12px; }
 
 /* ── Командная палитра (Ctrl+K) ──────────────────────────── */
 .palette-scrim {

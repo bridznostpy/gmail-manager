@@ -55,44 +55,85 @@
 .hero-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 22px; }
 .hero-note { color: var(--text-faint); font-size: 11.5px; margin-top: 14px; min-height: 17px; }
 
-.hero-side { display: flex; flex-direction: column; gap: 12px; }
-.hero-status { padding: 16px 18px; border-radius: var(--radius); }
-.hero-status .value { font-size: 19px; font-weight: 700; margin-top: 6px; letter-spacing: -0.02em; }
-.hero-facts { padding: 6px 18px 8px; border-radius: var(--radius); }
+/* Правая колонка hero - живая сводка сессии, а не одно слово статуса. */
+.hero-side { padding: 18px 20px; border-radius: var(--radius); align-self: start; }
+.hero-state { font-size: 21px; font-weight: 700; margin-top: 6px; letter-spacing: -0.02em; }
+
+.hero-progress { margin: 16px 0 14px; }
+.hero-progress .bar {
+  height: 6px; border-radius: 6px; overflow: hidden;
+  background: var(--border-strong);
+}
+.hero-progress .bar span {
+  display: block; height: 100%; width: 0;
+  border-radius: 6px; background: var(--gradient);
+  transition: width var(--dur-slow) var(--ease);
+}
+.hero-progress .bar-foot {
+  display: flex; justify-content: space-between; margin-top: 7px;
+  font-family: var(--font-mono); font-size: 10.5px; color: var(--text-faint);
+}
+.hero-side .kv { padding: 7px 0; font-size: 11.5px; }
 
 @media (max-width: 1180px) {
   .hero { grid-template-columns: 1fr; padding: 24px; }
   .hero h1 { font-size: 32px; }
 }
 
-/* ── Плитки статистики ───────────────────────────────────── */
-.stat { position: relative; overflow: hidden; padding: 16px 18px; }
+/* ── Плитки статистики ─────────────────────────────────────
+   Цвет несёт смысл: --tone задаётся из data-tone, и ноль готовых аккаунтов
+   выглядит иначе, чем просто пустая очередь. */
+.stat {
+  position: relative; overflow: hidden; padding: 16px 18px;
+  --tone: var(--text); /* цвет числа */
+  --bar: var(--accent); /* цвет полоски сверху и графика */
+}
+.stat[data-tone="ok"] { --tone: var(--green); --bar: var(--green); }
+.stat[data-tone="warn"] { --tone: var(--amber); --bar: var(--amber); }
+.stat[data-tone="bad"] { --tone: var(--red); --bar: var(--red); }
+.stat[data-tone="idle"] { --tone: var(--text-dim); --bar: var(--text-faint); }
 .stat::before {
   content: ""; position: absolute; inset: 0 0 auto 0; height: 2px;
-  background: var(--gradient); opacity: 0.7;
+  background: linear-gradient(90deg, var(--bar), transparent);
+  opacity: 0.85;
+  transition: background var(--dur) var(--ease);
 }
 .stat:hover { transform: translateY(-2px); box-shadow: var(--glass-shadow); }
+.stat > * { position: relative; z-index: 1; }
 .stat .label {
   color: var(--text-faint); font-family: var(--font-mono);
   font-size: 9.5px; text-transform: uppercase; letter-spacing: var(--track-wide);
 }
-.stat .value { font-size: 28px; font-weight: 700; margin-top: 6px; letter-spacing: -0.035em; }
-.stat .value.accent { color: var(--accent); }
-.stat .value.green { color: var(--green); }
+.stat .value {
+  font-size: 28px; font-weight: 700; margin-top: 6px;
+  letter-spacing: -0.035em; color: var(--tone);
+  transition: color var(--dur) var(--ease);
+}
 .stat .foot { color: var(--text-faint); font-size: 10.5px; margin-top: 4px; }
-.stat .spark { display: block; width: 100%; height: 26px; margin-top: 6px; overflow: visible; }
-.stat .spark path { fill: none; stroke: var(--accent); stroke-width: 1.6; stroke-linejoin: round; }
-.stat .spark .area { fill: rgba(var(--accent-rgb), 0.16); stroke: none; }
+
+/* Спарклайн - подложкой по низу плитки, а не в потоке: иначе пустой график
+   оставлял дыру и подпись съезжала ниже, чем у соседних плиток. */
+.stat .spark {
+  position: absolute; z-index: 0;
+  left: 0; right: 0; bottom: 0; height: 42px;
+  opacity: 0.55; pointer-events: none;
+}
+.stat .spark path { fill: none; stroke: var(--bar); stroke-width: 1.6; stroke-linejoin: round; }
+.stat .spark .area { fill: rgba(var(--accent-rgb), 0.14); stroke: none; }
 
 /* ── Поля формы ──────────────────────────────────────────── */
 .field { margin-bottom: 14px; }
-/* :not(.switch) обязателен: сам переключатель - тоже label и прямой потомок
+/* Подписи полей - обычным гротеском: их на экране десятки, и мелкий моно в
+   верхнем регистре читался тяжело. Моноширинный остаётся там, где данные
+   машинные: логи, порты, User-Agent, счётчики.
+
+   :not(.switch) обязателен: сам переключатель - тоже label и прямой потомок
    .field, а по весу селектора эта подпись перебивала бы его inline-flex и
    раскладывала тумблер как заголовок поля. */
 .field > label:not(.switch) {
-  display: block; font-family: var(--font-mono);
-  font-size: 9.5px; color: var(--text-faint); margin-bottom: 7px;
-  text-transform: uppercase; letter-spacing: var(--track-wide);
+  display: block; font-size: 11px; font-weight: 500;
+  color: var(--text-dim); margin-bottom: 7px;
+  letter-spacing: 0;
 }
 input[type="text"], input[type="number"], input[type="password"], select, textarea {
   width: 100%; background: var(--bg-input);
@@ -230,11 +271,36 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
 }
 
 /* ── Карточки профилей ───────────────────────────────────── */
-.profile-card { padding: 16px 17px; cursor: pointer; }
+/* Сетка тянется по ширине окна: колонок ровно столько, сколько влезает.
+   Фиксированные две колонки оставляли половину страницы пустой. */
+.cards-grid {
+  display: grid; gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+}
+.profile-card { position: relative; padding: 16px 17px 20px; cursor: pointer; overflow: hidden; }
 .profile-card:hover { transform: translateY(-2px); box-shadow: var(--glass-shadow); }
 .profile-card.selected { border-color: var(--accent-line); box-shadow: var(--focus-ring); }
+/* Аккаунт, который движок пишет прямо сейчас. */
+.profile-card.current { border-color: var(--accent); }
+.profile-card .pc-live {
+  font-family: var(--font-mono); font-size: 8.5px;
+  text-transform: uppercase; letter-spacing: var(--track-wide);
+  color: var(--accent); background: var(--accent-soft);
+  padding: 2px 7px; border-radius: 20px; margin-left: 8px;
+  animation: pulseDot 2s var(--ease) infinite;
+}
+.profile-card .pc-progress {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 3px;
+  background: var(--border-strong);
+}
+.profile-card .pc-progress span {
+  display: block; height: 100%;
+  background: var(--gradient);
+  transition: width var(--dur-slow) var(--ease);
+}
+.profile-card .pc-sent { color: var(--text-dim); }
 .profile-card .pc-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
-.profile-card .pc-name { font-weight: 600; font-size: 13px; display: flex; align-items: center; gap: 8px; }
+.profile-card .pc-name { font-weight: 600; font-size: 13px; display: flex; align-items: center; }
 .profile-card .pc-email {
   color: var(--text-dim); font-family: var(--font-mono);
   font-size: 11px; margin-top: 4px; word-break: break-all;
@@ -243,20 +309,6 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
   display: flex; gap: 14px; flex-wrap: wrap; align-items: center;
   margin-top: 13px; padding-top: 12px; border-top: 1px solid var(--border);
   font-family: var(--font-mono); font-size: 10.5px; color: var(--text-faint);
-}
-
-/* Кольцо лимита: сколько писем аккаунт уже отправил из своей нормы. */
-.ring { width: 34px; height: 34px; flex-shrink: 0; transform: rotate(-90deg); }
-.ring circle { fill: none; stroke-width: 3.5; }
-.ring .bg { stroke: var(--border-strong); }
-.ring .fg {
-  stroke: var(--accent); stroke-linecap: round;
-  transition: stroke-dashoffset var(--dur-slow) var(--ease);
-}
-.ring-wrap { position: relative; display: grid; place-items: center; }
-.ring-wrap .ring-txt {
-  position: absolute; font-family: var(--font-mono);
-  font-size: 8.5px; color: var(--text-dim);
 }
 
 .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
@@ -332,10 +384,11 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
 .pill.off .dot { background: var(--text-faint); }
 
 .empty {
-  display: flex; flex-direction: column; align-items: center; gap: 12px;
-  text-align: center; color: var(--text-faint); padding: 44px 20px; font-size: 12.5px;
+  display: flex; flex-direction: column; align-items: center; gap: 14px;
+  text-align: center; color: var(--text-dim); padding: 52px 20px; font-size: 12.5px;
 }
 .empty svg { width: 30px; height: 30px; opacity: 0.4; }
+.empty .btn svg { width: 15px; height: 15px; opacity: 1; }
 
 .kv {
   display: flex; justify-content: space-between; gap: 16px;
@@ -344,6 +397,10 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
 .kv:last-child { border-bottom: none; }
 .kv .k { color: var(--text-faint); flex-shrink: 0; }
 .kv .v { font-family: var(--font-mono); font-size: 11px; text-align: right; word-break: break-word; }
+/* Длинные машинные строки (User-Agent, видеокарта) в узкой панели не влезают
+   в строку - разворачиваем их под подписью на всю ширину. */
+.kv.stacked { display: block; }
+.kv.stacked .v { display: block; text-align: left; margin-top: 5px; line-height: 1.6; }
 
 .hint { color: var(--text-faint); font-size: 11px; line-height: 1.6; }
 
@@ -401,7 +458,12 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
 .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
 
 /* ── Страница настроек: группы слева, содержимое справа ──── */
-.settings { display: grid; grid-template-columns: 236px minmax(0, 1fr); gap: 16px; align-items: start; }
+/* Колонка настроек ограничена по ширине: на развёрнутом окне поле "Ключ API"
+   растягивалось на всю ширину экрана, а строку такой длины читать неудобно. */
+.settings {
+  display: grid; grid-template-columns: 236px minmax(0, 860px);
+  gap: 16px; align-items: start; justify-content: start;
+}
 .set-menu { padding: 8px; display: flex; flex-direction: column; gap: 2px; position: sticky; top: 0; }
 .set-tab {
   display: flex; align-items: center; gap: 10px;
@@ -458,6 +520,8 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
 }
 .drawer-head h3 { font-size: 15px; font-weight: 650; }
 .drawer-body { padding: 18px 20px 28px; overflow-y: auto; }
+.drawer-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 20px; }
+.drawer-actions .btn { flex: 1 1 auto; }
 .opt-group { margin-bottom: 22px; }
 .opt-group > .section-label { display: block; margin-bottom: 10px; }
 

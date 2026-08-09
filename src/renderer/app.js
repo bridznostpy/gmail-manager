@@ -402,37 +402,39 @@ VIEWS.dashboard = () => {
         <div class="hero-actions" id="runControls"></div>
         <div class="hero-note" id="runNote"></div>
       </div>
-      <div class="hero-side">
-        <div class="hero-status glass">
-          <div class="section-label">${esc(t('dash.currentStatus'))}</div>
-          <div class="value" id="hStatus">${dash}</div>
+      <div class="hero-side glass">
+        <div class="section-label">${esc(t('dash.currentStatus'))}</div>
+        <div class="hero-state" id="hStatus">${dash}</div>
+
+        <div class="hero-progress">
+          <div class="bar"><span id="hBar"></span></div>
+          <div class="bar-foot"><span id="hProgress">0 / 0</span><span id="hPercent">0%</span></div>
         </div>
-        <div class="hero-facts glass">
-          <div class="kv"><span class="k">${esc(t('dash.totalSent'))}</span><span class="v" id="hSent">0</span></div>
-          <div class="kv"><span class="k">${esc(t('dash.queue'))}</span><span class="v" id="hQueue">0</span></div>
-          <div class="kv"><span class="k">${esc(t('dash.ready'))}</span><span class="v" id="hReady">0</span></div>
-        </div>
+
+        <div class="kv"><span class="k">${esc(t('dash.currentAccount'))}</span><span class="v" id="hAccount">${dash}</span></div>
+        <div class="kv"><span class="k">${esc(t('dash.queue'))}</span><span class="v" id="hQueue">0</span></div>
+        <div class="kv"><span class="k">${esc(t('dash.ready'))}</span><span class="v" id="hReady">0</span></div>
       </div>
     </div>
 
     <div class="grid cols-4 stagger" style="margin-bottom:16px">
       <div class="stat glass"><div class="label">${esc(t('dash.uptime'))}</div>
         <div class="value" id="dUptime">0s</div><div class="foot">${esc(t('dash.uptimeFoot'))}</div></div>
-      <div class="stat glass"><div class="label">${esc(t('dash.queue'))}</div>
-        <div class="value accent" id="dQueue">0</div><div class="foot">${esc(t('dash.queueFoot'))}</div></div>
-      <div class="stat glass"><div class="label">${esc(t('dash.ready'))}</div>
-        <div class="value green" id="dReady">0</div><div class="foot">${esc(t('dash.readyFoot'))}</div></div>
+      <div class="stat glass" id="tQueue"><div class="label">${esc(t('dash.queue'))}</div>
+        <div class="value" id="dQueue">0</div><div class="foot">${esc(t('dash.queueFoot'))}</div></div>
+      <div class="stat glass" id="tReady"><div class="label">${esc(t('dash.ready'))}</div>
+        <div class="value" id="dReady">0</div><div class="foot">${esc(t('dash.readyFoot'))}</div></div>
       <div class="stat glass"><div class="label">${esc(t('dash.totalSent'))}</div>
         <div class="value" id="dSent">0</div>
-        <svg class="spark" id="dSpark" viewBox="0 0 100 26" preserveAspectRatio="none">
+        <div class="foot">${esc(t('dash.sentFoot'))}</div>
+        <svg class="spark" id="dSpark" viewBox="0 0 100 40" preserveAspectRatio="none">
           <path class="area"/><path vector-effect="non-scaling-stroke"/>
-        </svg>
-        <div class="foot">${esc(t('dash.sentFoot'))}</div></div>
+        </svg></div>
     </div>
 
     <div class="card glass" style="margin-bottom:16px">
-      <div class="section-label">${esc(t('targets.title'))}</div>
-      <h3 style="margin:8px 0 6px;font-size:16px">${ICONS.target} ${esc(t('targets.sub'))}</h3>
+      <h3 style="font-size:16px">${ICONS.target} ${esc(t('targets.title'))}</h3>
+      <div class="hint" style="margin-top:-8px;margin-bottom:14px">${esc(t('targets.sub'))}</div>
       <div class="chips" id="dTargets"></div>
       <div class="hint" id="dTargetsHint" style="margin-top:10px"></div>
     </div>
@@ -458,7 +460,9 @@ VIEWS.dashboard = () => {
   primary.addEventListener('click', () => runAction(primary.dataset.action));
   secondary.addEventListener('click', () => runAction(secondary.dataset.action));
 
-  const leadBtn = h(`<button class="btn big">${ICONS.send}<span>${esc(t('dash.testLead'))}</span></button>`);
+  // Диагностическая кнопка - призрачная: рядом с "Запустить" она не должна
+  // читаться как равное по важности действие.
+  const leadBtn = h(`<button class="btn ghost big">${ICONS.send}<span>${esc(t('dash.testLead'))}</span></button>`);
   leadBtn.addEventListener('click', async () => {
     const email = await askText(t('dash.testLeadAsk'), { placeholder: 'me@gmail.com' });
     if (!email) return;
@@ -592,31 +596,68 @@ function paintRun() {
       : mode === 'paused' ? t('dash.notePaused') : t('dash.noteIdle');
   }
 
-  const ready = state.profiles.filter((p) => p.gmailStatus === 'ready').length;
+  const readyProfiles = state.profiles.filter((p) => p.gmailStatus === 'ready');
+  const ready = readyProfiles.length;
   const sent = state.profiles.reduce((n, p) => n + (p.sentCount || 0), 0);
+  const plan = sessionPlan();
 
   const up = $('#dUptime'); if (up) up.textContent = fmtUptime(r.uptimeSec);
   setNumber($('#dQueue'), r.queueSize);
   setNumber($('#dReady'), ready);
   setNumber($('#dSent'), sent);
-  setNumber($('#hSent'), sent);
   setNumber($('#hQueue'), r.queueSize);
   setNumber($('#hReady'), ready);
+
+  // Плитки красим по смыслу: ноль готовых аккаунтов - это проблема, а не
+  // просто число, и выглядеть оно должно иначе, чем пустая очередь.
+  setTone($('#tReady'), ready > 0 ? 'ok' : 'bad');
+  setTone($('#tQueue'), r.queueSize > 0 ? 'ok' : (mode === 'running' ? 'warn' : 'idle'));
+
+  // Прогресс сессии: сколько писем ушло из общего плана по готовым аккаунтам.
+  const bar = $('#hBar');
+  if (bar) {
+    bar.style.width = (plan.total ? clamp(plan.done / plan.total, 0, 1) * 100 : 0).toFixed(1) + '%';
+    $('#hProgress').textContent = plan.done + ' / ' + plan.total;
+    $('#hPercent').textContent = (plan.total ? Math.round(plan.done / plan.total * 100) : 0) + '%';
+  }
+  const acc = $('#hAccount');
+  if (acc) acc.textContent = plan.current ? plan.current.label : dash;
 
   paintRunControls();
   paintSpark();
 }
 
+/**
+ * План сессии по готовым аккаунтам: сколько писем всего заложено лимитом,
+ * сколько уже ушло и кто пишет сейчас. Порядок тот же, что у движка -
+ * аккаунты заполняются последовательно (см. _currentAccount в senderEngine).
+ */
+function sessionPlan() {
+  const limit = state.settings.system.mailsPerAccount || 0;
+  const ready = state.profiles.filter((p) => p.gmailStatus === 'ready');
+  const done = ready.reduce((n, p) => n + Math.min(p.sentCount || 0, limit), 0);
+  return {
+    total: ready.length * limit,
+    done,
+    current: ready.find((p) => (p.sentCount || 0) < limit) || null,
+  };
+}
+
+function setTone(el, tone) {
+  if (el) el.dataset.tone = tone;
+}
+
 function paintSpark() {
   const svg = $('#dSpark');
   if (!svg) return;
-  const values = state.sendSeries;
+  // Пока истории нет, рисуем ровную линию по низу: пустой спарклайн оставлял
+  // в плитке дыру, и подпись съезжала ниже, чем у соседних плиток.
+  const values = state.sendSeries.length >= 2 ? state.sendSeries : [0, 0];
   const [area, line] = svg.children;
-  if (values.length < 2) { area.removeAttribute('d'); line.removeAttribute('d'); return; }
-  const w = 100, hh = 26;
+  const w = 100, hh = 40;
   const max = Math.max(1, ...values);
   const step = w / (values.length - 1);
-  const pts = values.map((v, i) => [i * step, hh - (v / max) * (hh - 3) - 1.5]);
+  const pts = values.map((v, i) => [i * step, hh - (v / max) * (hh - 4) - 2]);
   const d = 'M' + pts.map((p) => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' L');
   line.setAttribute('d', d);
   area.setAttribute('d', d + ` L${w},${hh} L0,${hh} Z`);
@@ -716,16 +757,7 @@ ACTIONS.profiles = () => {
   });
 
   const create = h(`<button class="btn primary">${ICONS.plus}<span>${esc(t('prof.new'))}</span></button>`);
-  create.addEventListener('click', async () => {
-    const label = await askText(t('prof.askName'), { value: t('prof.defaultName', { n: state.profiles.length + 1 }) });
-    if (label === null) return;
-    const p = await api.profiles.create(label);
-    toast(t('prof.created'), 'success');
-    await refreshProfiles();
-    state.selectedProfile = p.id;
-    // Сразу открываем профиль с Gmail - вход пользователь делает руками.
-    launchProfile(p.id, true);
-  });
+  create.addEventListener('click', () => createProfile());
   return [nudge, create];
 };
 
@@ -734,37 +766,27 @@ VIEWS.profiles = () => {
   const wrap = h(`<div>
     <div class="grid cols-4 stagger" style="margin-bottom:18px">
       <div class="stat glass"><div class="label">${esc(t('prof.total'))}</div><div class="value" id="sTotal">0</div></div>
-      <div class="stat glass"><div class="label">${esc(t('prof.runningCount'))}</div><div class="value accent" id="sRun">0</div></div>
-      <div class="stat glass"><div class="label">${esc(t('prof.gmailReady'))}</div><div class="value green" id="sReady">0</div></div>
+      <div class="stat glass" id="tRun"><div class="label">${esc(t('prof.runningCount'))}</div><div class="value" id="sRun">0</div></div>
+      <div class="stat glass" id="tReadyP"><div class="label">${esc(t('prof.gmailReady'))}</div><div class="value" id="sReady">0</div></div>
       <div class="stat glass"><div class="label">${esc(t('prof.portsOpen'))}</div><div class="value" id="sPorts">0</div></div>
     </div>
-    <div class="split">
-      <div class="grid cols-2" id="cards"></div>
-      <div id="detail"></div>
-    </div>
+    <div class="cards-grid" id="cards"></div>
   </div>`);
 
   setTimeout(() => {
-    setNumber(wrap.querySelector('#sTotal'), s.total);
-    setNumber(wrap.querySelector('#sRun'), s.running);
-    setNumber(wrap.querySelector('#sReady'), s.gmailReady);
-    setNumber(wrap.querySelector('#sPorts'), s.portsOpen);
+    paintProfileStats(s);
     renderProfileCards(wrap);
-    renderProfileDetail(wrap);
   }, 0);
   return wrap;
 };
 
-/** Кольцо "сколько из лимита уже отправлено". */
-function ringHtml(sent, limit) {
-  const r = 15;
-  const c = 2 * Math.PI * r;
-  const done = limit > 0 ? clamp(sent / limit, 0, 1) : 0;
-  return `<span class="ring-wrap" title="${esc(t('prof.limit'))}: ${sent} / ${limit}">
-    <svg class="ring" viewBox="0 0 34 34">
-      <circle class="bg" cx="17" cy="17" r="${r}"/>
-      <circle class="fg" cx="17" cy="17" r="${r}" stroke-dasharray="${c.toFixed(1)}" stroke-dashoffset="${(c * (1 - done)).toFixed(1)}"/>
-    </svg><span class="ring-txt">${Math.round(done * 100)}</span></span>`;
+function paintProfileStats(s) {
+  setNumber($('#sTotal'), s.total);
+  setNumber($('#sRun'), s.running);
+  setNumber($('#sReady'), s.gmailReady);
+  setNumber($('#sPorts'), s.portsOpen);
+  setTone($('#tRun'), s.running > 0 ? 'ok' : 'idle');
+  setTone($('#tReadyP'), s.gmailReady > 0 ? 'ok' : 'bad');
 }
 
 function renderProfileCards(root) {
@@ -773,56 +795,84 @@ function renderProfileCards(root) {
   const limit = state.settings.system.mailsPerAccount;
   cards.innerHTML = '';
   if (!state.booted) {
-    for (let i = 0; i < 2; i++) cards.appendChild(h(`<div class="skeleton tile"></div>`));
+    for (let i = 0; i < 3; i++) cards.appendChild(h(`<div class="skeleton tile"></div>`));
     return;
   }
   if (!state.profiles.length) {
-    cards.appendChild(h(`<div class="empty glass" style="grid-column:1/-1">${ICONS.profiles}<div>${esc(t('prof.empty'))}</div></div>`));
+    const empty = h(`<div class="empty glass" style="grid-column:1/-1">${ICONS.profiles}
+      <div>${esc(t('prof.empty'))}</div>
+      <button class="btn primary" id="emptyCreate">${ICONS.plus}<span>${esc(t('prof.emptyAction'))}</span></button></div>`);
+    empty.querySelector('#emptyCreate').addEventListener('click', () => createProfile());
+    cards.appendChild(empty);
+    wireRipples(cards);
     return;
   }
+  // Аккаунт, который движок пишет прямо сейчас - его карточку помечаем, чтобы
+  // было видно, куда уходят письма.
+  const current = sessionPlan().current;
   for (const p of state.profiles) {
-    const card = h(`<div class="profile-card glass glass-sheen ${state.selectedProfile === p.id ? 'selected' : ''}">
+    const done = limit > 0 ? clamp((p.sentCount || 0) / limit, 0, 1) : 0;
+    const isCurrent = !!(current && current.id === p.id && state.runStatus.running);
+    const card = h(`<div class="profile-card glass glass-sheen ${state.selectedProfile === p.id ? 'selected' : ''} ${isCurrent ? 'current' : ''}">
       <div class="pc-head">
-        <div><div class="pc-name"><span class="dot ${p.gmailStatus}"></span> ${esc(p.label)}</div>
+        <div><div class="pc-name">${esc(p.label)}${isCurrent ? ' <span class="pc-live">' + esc(t('prof.writingNow')) + '</span>' : ''}</div>
         <div class="pc-email">${esc(p.email || t('prof.notSignedIn'))}</div></div>
         <span class="badge ${p.gmailStatus}">${esc(t('status.' + p.gmailStatus))}</span>
       </div>
       <div class="pc-meta">
-        ${ringHtml(p.sentCount || 0, limit)}
         <span><span class="dot ${p.running ? 'running' : 'new'}"></span> ${esc(p.running ? t('prof.running') : t('prof.stopped'))}</span>
         <span>${esc(t('prof.port'))}: ${p.port || dash}</span>
-        <span>${esc(t('prof.sent'))}: ${p.sentCount}</span>
+        <span class="pc-sent">${esc(t('prof.sent'))}: ${p.sentCount} / ${limit}</span>
       </div>
+      <div class="pc-progress"><span style="width:${(done * 100).toFixed(1)}%"></span></div>
     </div>`);
-    card.addEventListener('click', () => { state.selectedProfile = p.id; render(); });
+    card.addEventListener('click', () => openProfileDrawer(p.id));
     cards.appendChild(card);
   }
   wireSheen(cards);
 }
 
-function renderProfileDetail(root) {
-  const box = root.querySelector('#detail') || $('#detail');
-  if (!box) return;
-  const p = state.profiles.find((x) => x.id === state.selectedProfile);
-  if (!p) {
-    box.innerHTML = `<div class="card glass"><div class="empty">${ICONS.scan}<div>${esc(t('prof.selectHint'))}</div></div></div>`;
-    return;
-  }
+async function createProfile() {
+  const label = await askText(t('prof.askName'), { value: t('prof.defaultName', { n: state.profiles.length + 1 }) });
+  if (label === null) return;
+  const p = await api.profiles.create(label);
+  toast(t('prof.created'), 'success');
+  await refreshProfiles();
+  state.selectedProfile = p.id;
+  // Сразу открываем профиль с Gmail - вход пользователь делает руками.
+  launchProfile(p.id, true);
+}
+
+/** Открыть детали профиля в выезжающей панели. */
+function openProfileDrawer(id) {
+  state.selectedProfile = id;
+  renderProfileCards(document);
+  openDrawer({
+    kind: 'profile',
+    id,
+    title: (state.profiles.find((x) => x.id === id) || {}).label || t('prof.title'),
+    build: (body) => {
+      const p = state.profiles.find((x) => x.id === id);
+      if (!p) { setDrawerOpen(false); return; }
+      body.appendChild(profileDetailCard(p));
+    },
+  });
+}
+
+function profileDetailCard(p) {
   const fp = p.fingerprint;
-  box.innerHTML = '';
-  const card = h(`<div class="card glass">
-    <h3><span class="dot ${p.gmailStatus}"></span> ${esc(p.label)}</h3>
+  const card = h(`<div>
     <div class="kv"><span class="k">${esc(t('prof.status'))}</span><span class="v"><span class="badge ${p.gmailStatus}">${esc(t('status.' + p.gmailStatus))}</span></span></div>
     <div class="kv"><span class="k">${esc(t('prof.email'))}</span><span class="v">${esc(p.email || dash)}</span></div>
     <div class="kv"><span class="k">${esc(t('prof.isRunning'))}</span><span class="v">${p.running ? esc(t('common.yes')) : esc(t('common.no'))}</span></div>
     <div class="kv"><span class="k">${esc(t('prof.port'))}</span><span class="v">${p.port || dash}</span></div>
     <div class="kv"><span class="k">${esc(t('prof.sentCount'))}</span><span class="v">${p.sentCount} / ${state.settings.system.mailsPerAccount}</span></div>
-    <div class="kv"><span class="k">${esc(t('prof.ua'))}</span><span class="v" style="max-width:210px">${esc(fp.userAgent)}</span></div>
+    <div class="kv stacked"><span class="k">${esc(t('prof.ua'))}</span><span class="v">${esc(fp.userAgent)}</span></div>
     <div class="kv"><span class="k">${esc(t('prof.platform'))}</span><span class="v">${esc(fp.platform)}</span></div>
     <div class="kv"><span class="k">${esc(t('prof.screen'))}</span><span class="v">${fp.screen.width}x${fp.screen.height}</span></div>
     <div class="kv"><span class="k">${esc(t('prof.timezone'))}</span><span class="v">${esc(fp.timezone)}</span></div>
-    <div class="kv"><span class="k">${esc(t('prof.gpu'))}</span><span class="v" style="max-width:210px">${esc(fp.webgl.renderer)}</span></div>
-    <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap">
+    <div class="kv stacked"><span class="k">${esc(t('prof.gpu'))}</span><span class="v">${esc(fp.webgl.renderer)}</span></div>
+    <div class="drawer-actions">
       ${p.running
         ? '<button class="btn stop" id="dStop">' + ICONS.stop + '<span>' + esc(t('prof.stopBtnFull')) + '</span></button>'
         : '<button class="btn primary" id="dLaunch">' + ICONS.play + '<span>' + esc(t('prof.launch')) + '</span></button>'}
@@ -879,12 +929,11 @@ function renderProfileDetail(root) {
     if (!ok) return;
     await api.profiles.remove(p.id);
     state.selectedProfile = null;
+    setDrawerOpen(false);
     await refreshProfiles();
   });
 
-  box.appendChild(card);
-  wireRipples(box);
-  wireSheen(box);
+  return card;
 }
 
 async function launchProfile(id, openGmail) {
@@ -951,11 +1000,11 @@ function goSettings(groupId) {
   go('settings');
 }
 
-/** Заголовок группы: одинаковая шапка у каждой карточки настроек. */
+/** Шапка карточки настроек. Название группы уже стоит в боковом меню, поэтому
+    здесь только поясняющий заголовок - иначе одно и то же трижды на экране. */
 function setCard(groupId, bodyHtml) {
   return `<div class="card glass">
-    <div class="section-label">${esc(t('set.g.' + groupId))}</div>
-    <h3 style="margin:8px 0 14px;font-size:16px">${esc(t('set.h.' + groupId))}</h3>
+    <h3 style="font-size:17px;margin-bottom:16px">${esc(t('set.h.' + groupId))}</h3>
     ${bodyHtml}
   </div>`;
 }
@@ -1114,16 +1163,54 @@ function buildSetTexts() {
   return el;
 }
 
-// ── Панель "Оформление" ────────────────────────────────────────────
+// ── Выезжающая панель ──────────────────────────────────────────────
+// Одна панель на всё: оформление и детали профиля. Что именно в ней
+// показано, помнит drawerView - он же умеет перерисовать себя, когда
+// данные обновились (например, профиль запустился).
+let drawerView = null;
+
 function drawerOpen() { return $('#drawer').classList.contains('open'); }
 
-function toggleDrawer(open) {
+function setDrawerOpen(open) {
+  $('#drawer').classList.toggle('open', open);
+  $('#drawerScrim').classList.toggle('open', open);
+  if (!open) drawerView = null;
+}
+
+function openDrawer(view) {
+  drawerView = view;
+  renderDrawerView();
+  setDrawerOpen(true);
+}
+
+function renderDrawerView() {
+  if (!drawerView) return;
   const drawer = $('#drawer');
-  const scrim = $('#drawerScrim');
-  const next = open === undefined ? !drawerOpen() : open;
-  if (next) renderDrawer();
-  drawer.classList.toggle('open', next);
-  scrim.classList.toggle('open', next);
+  drawer.innerHTML = `
+    <div class="drawer-head">
+      <h3>${esc(drawerView.title)}</h3>
+      <button class="btn ghost icon-only" id="drawerClose">${ICONS.x}</button>
+    </div>
+    <div class="drawer-body" id="drawerBody"></div>`;
+  $('#drawerClose', drawer).addEventListener('click', () => setDrawerOpen(false));
+  drawerView.build($('#drawerBody', drawer), renderDrawerView);
+  wireRipples(drawer);
+}
+
+function openAppearanceDrawer() {
+  openDrawer({
+    kind: 'appearance',
+    title: t('appear.title'),
+    build: (body, rerender) => {
+      body.innerHTML = appearanceControlsHtml();
+      wireAppearanceControls(body, rerender);
+    },
+  });
+}
+
+function toggleAppearanceDrawer() {
+  if (drawerOpen() && drawerView && drawerView.kind === 'appearance') setDrawerOpen(false);
+  else openAppearanceDrawer();
 }
 
 /**
@@ -1264,17 +1351,6 @@ function wireAppearanceControls(root, rerender) {
   wireRipples(root);
 }
 
-function renderDrawer() {
-  const drawer = $('#drawer');
-  drawer.innerHTML = `
-    <div class="drawer-head">
-      <h3>${esc(t('appear.title'))}</h3>
-      <button class="btn ghost icon-only" id="drawerClose">${ICONS.x}</button>
-    </div>
-    <div class="drawer-body">${appearanceControlsHtml()}</div>`;
-  $('#drawerClose', drawer).addEventListener('click', () => toggleDrawer(false));
-  wireAppearanceControls(drawer, renderDrawer);
-}
 
 // ── горячие клавиши ────────────────────────────────────────────────
 function wireHotkeys() {
@@ -1286,7 +1362,7 @@ function wireHotkeys() {
     const modalOpen = !!$('.modal-overlay');
 
     if (e.key === 'Escape') {
-      if (drawerOpen()) { toggleDrawer(false); return; }
+      if (drawerOpen()) { setDrawerOpen(false); return; }
       if (typing) e.target.blur();
       return;
     }
@@ -1330,15 +1406,13 @@ async function refreshProfiles() {
 
   if (state.route === 'profiles') {
     renderProfileCards(document);
-    renderProfileDetail(document);
-    const s = state.profileStats;
-    setNumber($('#sTotal'), s.total);
-    setNumber($('#sRun'), s.running);
-    setNumber($('#sReady'), s.gmailReady);
-    setNumber($('#sPorts'), s.portsOpen);
+    paintProfileStats(state.profileStats);
   } else if (state.route === 'dashboard') {
     paintRun();
   }
+  // Открытые детали профиля тоже подтягиваем: пользователь мог нажать
+  // "Запустить" и ждёт, что кнопка сменится на "Остановить".
+  if (drawerView && drawerView.kind === 'profile') renderDrawerView();
 }
 
 async function refreshRun() {
@@ -1354,8 +1428,8 @@ async function boot() {
   applyAppearance();
   renderChrome();
 
-  $('#appearanceBtn').addEventListener('click', () => toggleDrawer());
-  $('#drawerScrim').addEventListener('click', () => toggleDrawer(false));
+  $('#appearanceBtn').addEventListener('click', () => toggleAppearanceDrawer());
+  $('#drawerScrim').addEventListener('click', () => setDrawerOpen(false));
   $('#winMin').addEventListener('click', () => api.win.minimize());
   $('#winMax').addEventListener('click', async () => {
     const res = await api.win.maximize();

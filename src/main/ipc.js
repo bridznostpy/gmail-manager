@@ -89,6 +89,8 @@ function register(ctx) {
   // ── run control ───────────────────────────────────────────────────
   ipcMain.handle('run:start', () => sender.start());
   ipcMain.handle('run:stop', () => sender.stop());
+  ipcMain.handle('run:pause', () => sender.pause());
+  ipcMain.handle('run:resume', () => sender.resume());
   ipcMain.handle('run:status', () => sender.status());
   // Тестовый лид: своё письмо уходит обычным путём рассылки, чтобы можно было
   // ответить с этого адреса и посмотреть автоответ целиком.

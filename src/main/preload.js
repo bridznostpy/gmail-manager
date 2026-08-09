@@ -23,6 +23,8 @@ contextBridge.exposeInMainWorld('api', {
   run: {
     start: () => ipcRenderer.invoke('run:start'),
     stop: () => ipcRenderer.invoke('run:stop'),
+    pause: () => ipcRenderer.invoke('run:pause'),
+    resume: () => ipcRenderer.invoke('run:resume'),
     status: () => ipcRenderer.invoke('run:status'),
     testLead: (email) => ipcRenderer.invoke('run:testLead', { email }),
   },

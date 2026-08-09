@@ -37,6 +37,9 @@ class SenderEngine {
     // разобрали. Своё состояние вместо прочитанности Gmail, см. _pollReplies.
     this.dialogStore = dialogStore;
     this.running = false;
+    // Пауза - это остановленная ОТПРАВКА при живом прогоне: автоответчик
+    // продолжает опрашивать почту, аптайм идёт, очередь не теряется.
+    this.paused = false;
     this.startedAt = null;
     this._sendTimer = null;
     this._replyTimer = null;
@@ -48,6 +51,7 @@ class SenderEngine {
   status() {
     return {
       running: this.running,
+      paused: this.running && this.paused,
       startedAt: this.startedAt,
       uptimeSec: this.startedAt ? Math.floor((Date.now() - this.startedAt) / 1000) : 0,
       queueSize: this.parser.queueSize(),
@@ -83,6 +87,7 @@ class SenderEngine {
       return { ok: false, reason: 'no_ready_profiles' };
     }
     this.running = true;
+    this.paused = false;
     this.startedAt = Date.now();
     this._notifiedAllLimits = false;
     logger.success('system', t('run.started', { count: ready.length }));
@@ -113,7 +118,9 @@ class SenderEngine {
     // атомарной каждую задачу по отдельности, но проход автоответа - это
     // несколько задач подряд (скан, затем ответ на каждое письмо), и разрывать
     // его нельзя.
-    if (this._replying) {
+    // На паузе лид из очереди НЕ вынимаем - иначе он потерялся бы, пока
+    // пользователь думает. Просто ждём снятия паузы.
+    if (this._replying || this.paused) {
       this._sendTimer = setTimeout(() => this._sendLoop(), 1000);
       return;
     }
@@ -365,9 +372,28 @@ class SenderEngine {
     return { ok: !!(res && res.ok) };
   }
 
+  /**
+   * Пауза отправки. Автоответчик и парсер не трогаем: продавцы отвечают и во
+   * время паузы, и не ответить им - хуже, чем послать лишнее письмо.
+   */
+  pause() {
+    if (!this.running || this.paused) return { ok: false, paused: this.paused };
+    this.paused = true;
+    logger.warn('system', t('run.paused'));
+    return { ok: true, paused: true };
+  }
+
+  resume() {
+    if (!this.running || !this.paused) return { ok: false, paused: this.paused };
+    this.paused = false;
+    logger.success('system', t('run.resumed'));
+    return { ok: true, paused: false };
+  }
+
   async stop() {
     if (!this.running) return { ok: false };
     this.running = false;
+    this.paused = false;
     if (this._sendTimer) clearTimeout(this._sendTimer);
     if (this._replyTimer) clearTimeout(this._replyTimer);
     this.parser.stop();

@@ -158,6 +158,39 @@ function register(ctx) {
   });
   ipcMain.handle('logs:recent', (_e, n) => logger.recent(n || 200));
 
+  // ── статистика ────────────────────────────────────────────────────
+  ipcMain.handle('stats:overview', (_e, days) => {
+    const stats = ctx.statsStore;
+    return {
+      daily: stats ? stats.recent(days || 14) : [],
+      totals: stats ? stats.totals() : { sent: 0, replies: 0, errors: 0 },
+    };
+  });
+
+  // ── диалоги ───────────────────────────────────────────────────────
+  // Список переписок автоответчика, обогащённый данными контакта: у самой
+  // переписки названия товара нет, оно живёт в contactStore.
+  ipcMain.handle('dialogs:list', () => {
+    const byId = new Map(profileStore.list().map((p) => [p.id, p.label]));
+    return (ctx.dialogStore ? ctx.dialogStore.list() : []).map((d) => {
+      const c = contactStore ? contactStore.get(d.email) : null;
+      return {
+        key: d.key,
+        threadId: d.threadId,
+        profileId: d.profileId,
+        profileLabel: byId.get(d.profileId) || '',
+        email: d.email || '',
+        replies: d.replies || 0,
+        firstReplyAt: d.firstReplyAt || 0,
+        lastReplyAt: d.lastReplyAt || d.firstReplyAt || 0,
+        title: c ? c.title : '',
+        price: c ? c.price : '',
+        currency: c ? c.currency : '',
+        known: !!c,
+      };
+    }).sort((a, b) => b.lastReplyAt - a.lastReplyAt);
+  });
+
   // ── contacts / nudge ──────────────────────────────────────────────
   ipcMain.handle('contacts:list', () => (contactStore ? contactStore.list() : []));
   ipcMain.handle('contacts:nudge', async (_e, { email }) => sender.nudge(email));

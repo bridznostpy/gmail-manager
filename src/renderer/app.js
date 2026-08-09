@@ -15,7 +15,7 @@ const I18N = window.I18N;
 const t = (key, params) => I18N.t(key, params);
 
 const state = {
-  route: 'dashboard',
+  route: 'overview',
   booted: false,
   settings: null,
   profiles: [],
@@ -23,6 +23,11 @@ const state = {
   selectedProfile: null,
   profileFilter: 'all',
   profileMetrics: null, // id -> { written, dialogs, replies }
+  stats: null, // { daily: [...], totals: {...} }
+  dialogs: [],
+  dialogQuery: '',
+  notes: [], // лента уведомлений из потока логов
+  notesSeen: 0,
   // Выбранная группа на странице настроек - переживает уход на другой раздел.
   settingsGroup: 'interface',
   runStatus: { running: false, paused: false, uptimeSec: 0, queueSize: 0 },
@@ -37,10 +42,13 @@ const state = {
   runBusy: false,
 };
 
-// Разделов ровно три: всё настраиваемое живёт в "Настройках" одним местом,
-// а не разбросано по верхней панели (см. SETTINGS_GROUPS).
+// Главный экран - статистика: держать на нём пульт запуска незачем, он нужен
+// раз в начале прогона. Управление живёт своим разделом, а состояние прогона
+// видно из любого места по пилюле и быстрой кнопке в шапке.
 const ROUTES = [
-  { id: 'dashboard', labelKey: 'nav.dashboard', icon: 'dashboard', titleKey: 'dash.title', subKey: 'dash.sub' },
+  { id: 'overview', labelKey: 'nav.overview', icon: 'dashboard', titleKey: 'ov.title', subKey: 'ov.sub' },
+  { id: 'run', labelKey: 'nav.run', icon: 'play', titleKey: 'run.title', subKey: 'run.sub' },
+  { id: 'dialogs', labelKey: 'nav.dialogs', icon: 'chat', titleKey: 'dlg.title', subKey: 'dlg.sub' },
   { id: 'profiles', labelKey: 'nav.profiles', icon: 'profiles', titleKey: 'prof.title', subKey: 'prof.sub' },
   { id: 'settings', labelKey: 'nav.settings', icon: 'settings', titleKey: 'set.title', subKey: 'set.sub' },
 ];
@@ -305,6 +313,8 @@ function renderChrome() {
 
   $('#btnPalette').innerHTML = ICONS.search + '<kbd>Ctrl K</kbd>';
   $('#btnPalette').title = t('palette.title');
+  $('#btnBell').innerHTML = ICONS.bell;
+  $('#btnBell').title = t('notes.title');
 
   $('#winMin').innerHTML = ICONS.winMin;
   $('#winMin').title = t('win.minimize');
@@ -377,10 +387,6 @@ function render() {
   $('#pageTitle').textContent = t(route.titleKey);
   $('#pageSub').textContent = t(route.subKey);
 
-  const actions = $('#pageActions');
-  actions.innerHTML = '';
-  if (ACTIONS[route.id]) ACTIONS[route.id]().forEach((el) => actions.appendChild(el));
-
   const main = $('#main');
   main.innerHTML = '';
   const view = VIEWS[route.id]();
@@ -388,15 +394,152 @@ function render() {
   main.appendChild(view);
   main.scrollTop = 0;
 
+  // Кнопки раздела живут внутри вида, а не в шапке: в шапке уже поиск, часы,
+  // колокольчик, быстрый пуск и кнопки окна - ещё две туда не влезают.
+  const slot = view.querySelector('#viewActions');
+  if (slot && ACTIONS[route.id]) ACTIONS[route.id]().forEach((el) => slot.appendChild(el));
+
   wirePanels(main);
   wireRipples(main);
-  wireRipples(actions);
   wireSheen(main);
   paintRun();
 }
 
-// ── Дашборд ────────────────────────────────────────────────────────
-VIEWS.dashboard = () => {
+// ── Обзор: статистика ──────────────────────────────────────────────
+VIEWS.overview = () => {
+  const wrap = h(`<div>
+    <div class="stats-strip card glass">
+      <div class="stat-cell"><div class="num" id="oWritten">0</div><div class="cap">${esc(t('ov.written'))}</div></div>
+      <div class="stat-cell" id="oCellReplies"><div class="num" id="oReplies">0</div><div class="cap">${esc(t('ov.replies'))}</div></div>
+      <div class="stat-cell" id="oCellConv"><div class="num" id="oConv">0%</div><div class="cap">${esc(t('ov.conversion'))}</div></div>
+      <div class="stat-cell"><div class="num" id="oDialogs">0</div><div class="cap">${esc(t('ov.dialogs'))}</div></div>
+      <div class="stat-cell" id="oCellErr"><div class="num" id="oErrors">0</div><div class="cap">${esc(t('ov.errors'))}</div></div>
+      <div class="strip-note" id="oNote"></div>
+    </div>
+
+    <div class="card glass" style="margin-bottom:14px">
+      <div class="chart-head">
+        <h3 style="font-size:15px;margin:0">${ICONS.dashboard} ${esc(t('ov.chartTitle'))}</h3>
+        <div class="legend">
+          <span><i class="sw sent"></i>${esc(t('ov.sent'))}</span>
+          <span><i class="sw rep"></i>${esc(t('ov.replies'))}</span>
+        </div>
+      </div>
+      <div class="chart" id="oChart"></div>
+    </div>
+
+    <div class="grid cols-2">
+      <div class="card glass">
+        <h3 style="font-size:15px">${ICONS.profiles} ${esc(t('ov.topProfiles'))}</h3>
+        <div id="oTop"></div>
+      </div>
+      <div class="card glass">
+        <h3 style="font-size:15px">${ICONS.alert} ${esc(t('ov.events'))}</h3>
+        <div id="oEvents"></div>
+      </div>
+    </div>
+  </div>`);
+
+  setTimeout(() => paintOverview(), 0);
+  return wrap;
+};
+
+function paintOverview() {
+  if (!$('#oChart')) return;
+  const m = state.profileMetrics || {};
+  const written = Object.values(m).reduce((n, x) => n + x.written, 0);
+  const dialogs = Object.values(m).reduce((n, x) => n + x.dialogs, 0);
+  const replies = Object.values(m).reduce((n, x) => n + x.replies, 0);
+  const errors = (state.stats && state.stats.totals.errors) || 0;
+  // Конверсия считается от числа адресатов, а не от числа писем: несколько
+  // писем одному человеку - это всё ещё один ответивший или не ответивший.
+  const conv = written ? Math.round(replies / written * 100) : 0;
+
+  setNumber($('#oWritten'), written);
+  setNumber($('#oReplies'), replies);
+  setNumber($('#oDialogs'), dialogs);
+  setNumber($('#oErrors'), errors);
+  $('#oConv').textContent = conv + '%';
+
+  setTone($('#oCellReplies'), replies > 0 ? 'ok' : '');
+  setTone($('#oCellConv'), conv >= 10 ? 'ok' : conv > 0 ? 'accent' : '');
+  setTone($('#oCellErr'), errors > 0 ? 'bad' : '');
+
+  const plate = $('#oNote');
+  if (plate) {
+    const sentToday = todayRow().sent;
+    plate.innerHTML = sentToday
+      ? `<span class="note-plate ok">${ICONS.send}${esc(t('ov.today', { n: sentToday }))}</span>`
+      : '';
+  }
+
+  paintChart();
+  paintTopProfiles();
+  paintEvents();
+}
+
+function todayRow() {
+  const daily = (state.stats && state.stats.daily) || [];
+  return daily[daily.length - 1] || { sent: 0, replies: 0, errors: 0 };
+}
+
+/** Столбики за 14 дней. Высота считается от максимума по обеим сериям, чтобы
+    отправки и ответы читались в одном масштабе. */
+function paintChart() {
+  const box = $('#oChart');
+  if (!box) return;
+  const daily = (state.stats && state.stats.daily) || [];
+  const peak = Math.max(0, ...daily.map((d) => Math.max(d.sent, d.replies)));
+  // Пустые столбики за две недели выглядят как поломка. Пока цифр нет, честнее
+  // сказать это словами.
+  if (!daily.length || !peak) { box.innerHTML = `<div class="empty">${ICONS.dashboard}<div>${esc(t('ov.noData'))}</div></div>`; return; }
+
+  const max = Math.max(1, peak);
+  box.innerHTML = daily.map((d) => {
+    const [, mm, dd] = d.day.split('-');
+    const title = `${dd}.${mm} - ${t('ov.sent')}: ${d.sent}, ${t('ov.replies')}: ${d.replies}`;
+    return `<div class="bar-col" title="${esc(title)}">
+      <div class="bars">
+        <span class="b sent" style="height:${(d.sent / max * 100).toFixed(1)}%"></span>
+        <span class="b rep" style="height:${(d.replies / max * 100).toFixed(1)}%"></span>
+      </div>
+      <div class="bar-cap">${dd}</div>
+    </div>`;
+  }).join('');
+}
+
+function paintTopProfiles() {
+  const box = $('#oTop');
+  if (!box) return;
+  const m = state.profileMetrics || {};
+  const rows = state.profiles
+    .map((p) => ({ p, w: (m[p.id] || {}).written || 0, r: (m[p.id] || {}).replies || 0 }))
+    .sort((a, b) => b.w - a.w)
+    .slice(0, 6);
+  if (!rows.length || !rows[0].w) { box.innerHTML = `<div class="empty">${esc(t('ov.noProfiles'))}</div>`; return; }
+  const max = Math.max(1, ...rows.map((x) => x.w));
+  box.innerHTML = rows.map((x) => `<div class="acc-row">
+    <span class="nm">${esc(x.p.label)}</span>
+    <span class="track"><span style="width:${(x.w / max * 100).toFixed(1)}%"></span></span>
+    <span class="cnt">${x.w} / ${x.r}</span>
+  </div>`).join('');
+}
+
+/** Лента важных событий - из того же потока логов, что и живые логи. */
+function paintEvents() {
+  const box = $('#oEvents');
+  if (!box) return;
+  const rows = state.logs.filter((e) => e.level === 'error' || e.level === 'warn' || e.level === 'success').slice(-8).reverse();
+  if (!rows.length) { box.innerHTML = `<div class="empty">${esc(t('ov.noEvents'))}</div>`; return; }
+  box.innerHTML = rows.map((e) => `<div class="event ${e.level}">
+    <span class="dot"></span>
+    <span class="msg">${esc(e.message)}</span>
+    <span class="ts">${esc(new Date(e.ts).toLocaleTimeString())}</span>
+  </div>`).join('');
+}
+
+// ── Рассылка: центр управления ─────────────────────────────────────
+VIEWS.run = () => {
   const wrap = h(`<div>
     <div class="stats-strip card glass" id="dStrip">
       <div class="stat-cell"><div class="num" id="sRunState">${dash}</div><div class="cap">${esc(t('dash.status'))}</div></div>
@@ -637,6 +780,7 @@ function paintRun() {
 
   paintAccountRows(plan);
   paintRunControls();
+  paintQuickRun();
   paintSpark();
 }
 
@@ -790,6 +934,84 @@ ACTIONS.profiles = () => {
   return [nudge, create];
 };
 
+// ── Диалоги ────────────────────────────────────────────────────────
+// Показываем то, что действительно знаем: с кем переписка, по какому товару,
+// сколько автоответов ушло и когда был последний. Тел писем у приложения нет -
+// оно их не хранит, и выдумывать переписку в интерфейсе нечестно.
+VIEWS.dialogs = () => {
+  const wrap = h(`<div>
+    <div class="filter-row">
+      <div style="flex:1 1 320px;max-width:420px">
+        <input type="text" id="dlgSearch" placeholder="${esc(t('dlg.search'))}" value="${esc(state.dialogQuery)}"/>
+      </div>
+      <span class="logs-count" id="dlgCount"></span>
+      <span class="spacer"></span>
+      <span id="viewActions" style="display:flex;gap:8px"></span>
+    </div>
+    <div id="dlgList"></div>
+  </div>`);
+
+  wrap.querySelector('#dlgSearch').addEventListener('input', debounce((e) => {
+    state.dialogQuery = e.target.value;
+    renderDialogs();
+  }, 200));
+
+  setTimeout(() => renderDialogs(), 0);
+  return wrap;
+};
+
+function renderDialogs() {
+  const box = $('#dlgList');
+  if (!box) return;
+  const q = state.dialogQuery.trim().toLowerCase();
+  const rows = (state.dialogs || []).filter((d) => !q
+    || d.email.toLowerCase().includes(q)
+    || (d.title || '').toLowerCase().includes(q)
+    || (d.profileLabel || '').toLowerCase().includes(q));
+
+  const cnt = $('#dlgCount');
+  if (cnt) cnt.textContent = t('logs.shown', { shown: rows.length, total: (state.dialogs || []).length });
+
+  if (!rows.length) {
+    box.innerHTML = `<div class="card glass"><div class="empty">${ICONS.chat}
+      <div>${esc((state.dialogs || []).length ? t('dlg.emptyFiltered') : t('dlg.empty'))}</div></div></div>`;
+    return;
+  }
+
+  const cap = state.settings.system.maxRepliesPerDialog;
+  box.innerHTML = `<div class="cards-grid">` + rows.map((d) => `
+    <div class="dlg-card glass">
+      <div class="dlg-head">
+        <span class="pc-avatar" style="--av:${avatarColor({ email: d.email })}">${esc((d.email || '?').charAt(0).toUpperCase())}</span>
+        <span class="pc-id">
+          <span class="pc-name">${esc(d.email || dash)}</span>
+          <div class="pc-email">${esc(d.title || t('dlg.noTitle'))}</div>
+        </span>
+        <span class="pc-tag ${d.replies >= cap ? 'done' : 'live'}">${d.replies} / ${cap}</span>
+      </div>
+      <div class="pc-meta">
+        <span>${esc(d.profileLabel || dash)}</span>
+        <span class="chip-mini">${esc(d.price ? d.price + ' ' + (d.currency || '') : dash)}</span>
+      </div>
+      <div class="pc-foot">
+        <span>${esc(t('dlg.last'))}: ${esc(fmtDate(d.lastReplyAt))}</span>
+        <span class="acts">
+          <button class="mini go" data-nudge="${esc(d.email)}" title="${esc(t('nudge.btn'))}">${ICONS.send}</button>
+        </span>
+      </div>
+    </div>`).join('') + `</div>`;
+
+  $$('[data-nudge]', box).forEach((b) => b.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    toast(t('nudge.sending'));
+    try {
+      const res = await api.contacts.nudge(b.dataset.nudge);
+      if (res && res.ok) { toast(t('nudge.ok'), 'success'); await refreshProfiles(); }
+      else toast(t('nudge.fail.' + ((res && res.reason) || 'unknown')), 'error');
+    } catch (err) { toast(t('nudge.error', { error: err.message }), 'error'); }
+  }));
+}
+
 // Фильтры карточек профилей. Считаются по тем же полям, что рисует карточка.
 const PROFILE_FILTERS = [
   { id: 'all', match: () => true },
@@ -812,6 +1034,7 @@ VIEWS.profiles = () => {
     <div class="filter-row">
       <div class="seg filters" id="pFilters"></div>
       <span class="spacer"></span>
+      <span id="viewActions" style="display:flex;gap:8px"></span>
     </div>
 
     <div class="cards-grid" id="cards"></div>
@@ -900,10 +1123,7 @@ function renderProfileCards(root) {
         <span class="pc-id">
           <span class="pc-name">${esc(p.label)}</span>
           <div class="pc-email">${esc(p.email || t('prof.notSignedIn'))}</div>
-          <div class="pc-tags">
-            <span class="pc-tag">${esc(t('status.' + p.gmailStatus))}</span>
-            ${isCurrent ? '<span class="pc-tag live">' + esc(t('prof.writingNow')) + '</span>' : ''}
-          </div>
+          <div class="pc-tags">${profileTags(p, m, isCurrent, limit)}</div>
         </span>
         <span class="pc-head-actions">
           <button class="mini go" data-act="${p.running ? 'stop' : 'launch'}"
@@ -953,6 +1173,20 @@ function renderProfileCards(root) {
   cards.appendChild(add);
 
   wireSheen(cards);
+}
+
+/**
+ * Теги карточки. Только то, что видно по данным: выдуманных ярлыков вроде
+ * "надёжный" здесь быть не должно - они ничего не значат.
+ */
+function profileTags(p, m, isCurrent, limit) {
+  const tags = [];
+  if (isCurrent) tags.push(['live', t('prof.writingNow')]);
+  if (p.gmailStatus !== 'ready') tags.push([p.gmailStatus === 'error' ? 'bad' : 'warn', t('status.' + p.gmailStatus)]);
+  if (limit > 0 && (p.sentCount || 0) >= limit) tags.push(['done', t('prof.tagLimit')]);
+  if (m.replies > 0) tags.push(['ok', t('prof.tagReplies', { n: m.replies })]);
+  if (!tags.length) tags.push(['', t('status.ready')]);
+  return tags.map(([cls, text]) => `<span class="pc-tag ${cls}">${esc(text)}</span>`).join('');
 }
 
 /** Действия с карточки профиля. Те же, что в панели деталей. */
@@ -1528,6 +1762,56 @@ function wireAppearanceControls(root, rerender) {
 }
 
 
+// ── уведомления ────────────────────────────────────────────────────
+// Отдельного источника у ленты нет: важное и так проходит через логгер, так что
+// колокольчик просто отбирает из него предупреждения, ошибки и успехи.
+const NOTE_LEVELS = ['error', 'warn', 'success'];
+
+function noteFromLog(entry) {
+  if (!NOTE_LEVELS.includes(entry.level)) return;
+  state.notes.push(entry);
+  while (state.notes.length > 60) state.notes.shift();
+  paintBell();
+}
+
+function paintBell() {
+  const dot = $('#bellDot');
+  if (!dot) return;
+  const unread = Math.max(0, state.notes.length - state.notesSeen);
+  dot.textContent = unread > 9 ? '9+' : String(unread);
+  dot.classList.toggle('on', unread > 0);
+}
+
+function toggleNotes(open) {
+  const box = $('#notes');
+  const next = open === undefined ? !box.classList.contains('open') : open;
+  box.classList.toggle('open', next);
+  if (!next) return;
+  state.notesSeen = state.notes.length;
+  paintBell();
+  const rows = state.notes.slice(-25).reverse();
+  box.innerHTML = `<div class="notes-head">${esc(t('notes.title'))}</div>` + (rows.length
+    ? rows.map((e) => `<div class="event ${e.level}">
+        <span class="dot"></span>
+        <span class="msg">${esc(e.message)}</span>
+        <span class="ts">${esc(new Date(e.ts).toLocaleTimeString())}</span>
+      </div>`).join('')
+    : `<div class="empty" style="padding:26px 12px">${esc(t('notes.empty'))}</div>`);
+}
+
+/** Быстрый пуск в шапке: пульт живёт в своём разделе, но состояние менять
+    должно быть можно из любого места. */
+function paintQuickRun() {
+  const btn = $('#quickRun');
+  if (!btn) return;
+  const mode = runState();
+  const start = mode === 'idle';
+  btn.className = 'btn quick ' + (start ? 'primary' : 'stop');
+  btn.innerHTML = (start ? ICONS.play : ICONS.stop) + `<span>${esc(t(start ? 'dash.start' : 'dash.stop'))}</span>`;
+  btn.disabled = state.runBusy;
+  btn.dataset.action = start ? 'start' : 'stop';
+}
+
 // ── командная палитра ──────────────────────────────────────────────
 // Ctrl+K: один список из разделов, групп настроек и действий. Действия
 // собираются от текущего состояния - "Пауза" не появится на остановленном
@@ -1681,7 +1965,7 @@ function wireHotkeys() {
     }
     if (e.ctrlKey && (e.key === 'f' || e.key === 'F' || e.key === 'а' || e.key === 'А')) {
       e.preventDefault();
-      if (state.route !== 'dashboard') go('dashboard');
+      if (state.route !== 'run') go('run');
       setTimeout(() => { const s = $('#logSearch'); if (s) s.focus(); }, 60);
       return;
     }
@@ -1696,6 +1980,8 @@ async function refreshProfiles() {
   state.profiles = await api.profiles.list();
   state.profileStats = await api.profiles.stats();
   state.profileMetrics = await api.profiles.metrics();
+  state.stats = await api.stats.overview(14);
+  state.dialogs = await api.dialogs.list();
 
   // Спарклайн: прирост отправленного за тик. Первый замер только задаёт точку
   // отсчёта, иначе весь накопленный за прошлые запуски счёт нарисовался бы
@@ -1711,8 +1997,12 @@ async function refreshProfiles() {
     renderProfileFilters(document);
     renderProfileCards(document);
     paintProfileStats(state.profileStats);
-  } else if (state.route === 'dashboard') {
+  } else if (state.route === 'run') {
     paintRun();
+  } else if (state.route === 'overview') {
+    paintOverview();
+  } else if (state.route === 'dialogs') {
+    renderDialogs();
   }
   // Открытые детали профиля тоже подтягиваем: пользователь мог нажать
   // "Запустить" и ждёт, что кнопка сменится на "Остановить".
@@ -1740,6 +2030,12 @@ async function boot() {
     paintThemeBtn();
   });
   $('#btnPalette').addEventListener('click', () => togglePalette(true));
+  $('#btnBell').addEventListener('click', (e) => { e.stopPropagation(); toggleNotes(); });
+  $('#quickRun').addEventListener('click', () => runAction($('#quickRun').dataset.action));
+  // Клик мимо ленты закрывает её - отдельной кнопки закрытия там нет.
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('.bell-wrap')) toggleNotes(false);
+  });
   $('#drawerScrim').addEventListener('click', () => setDrawerOpen(false));
   $('#winMin').addEventListener('click', () => api.win.minimize());
   $('#winMax').addEventListener('click', async () => {
@@ -1759,7 +2055,11 @@ async function boot() {
   state.booted = true;
   render();
 
-  api.logs.onEntry((entry) => appendLog(entry));
+  state.notes = state.logs.filter((e) => NOTE_LEVELS.includes(e.level)).slice(-60);
+  state.notesSeen = state.notes.length;
+  paintBell();
+
+  api.logs.onEntry((entry) => { appendLog(entry); noteFromLog(entry); });
   setInterval(refreshRun, 1000);
   setInterval(refreshProfiles, 4000);
   setInterval(paintClock, 15000);

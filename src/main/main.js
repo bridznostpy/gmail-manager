@@ -5,11 +5,13 @@
  */
 const { app, BrowserWindow, Menu } = require('electron');
 const path = require('path');
+const fs = require('fs');
 
 const { Store } = require('./store');
 const { ProfileStore } = require('./profiles/profileStore');
 const { ContactStore } = require('./contacts/contactStore');
 const { DialogStore } = require('./dialogs/dialogStore');
+const { StatsStore } = require('./stats/statsStore');
 const { PlaywrightManager } = require('./cdp/chromeManager');
 const { ParserEngine } = require('./parser/parserEngine');
 const { SenderEngine } = require('./sender/senderEngine');
@@ -32,14 +34,23 @@ function buildContext() {
   const profileStore = new ProfileStore(path.join(userData, 'profiles.json'));
   const contactStore = new ContactStore(path.join(userData, 'contacts.json'));
   const dialogStore = new DialogStore(path.join(userData, 'dialogs.json'));
+  const statsStore = new StatsStore(path.join(userData, 'stats.json'));
   const chrome = new PlaywrightManager(store, userData);
   const parser = new ParserEngine(store);
-  const sender = new SenderEngine({ store, profileStore, chrome, parser, contactStore, dialogStore });
-  return { store, profileStore, contactStore, dialogStore, chrome, parser, sender, userData };
+  const sender = new SenderEngine({ store, profileStore, chrome, parser, contactStore, dialogStore, statsStore });
+  return { store, profileStore, contactStore, dialogStore, statsStore, chrome, parser, sender, userData };
+}
+
+/** Иконка окна и панели задач. Генерируется скриптом `npm run icon`; если её
+    нет, Electron просто возьмёт свою - падать из-за этого нечему. */
+function appIcon() {
+  const file = path.join(__dirname, '..', '..', 'assets', 'icon-256.png');
+  return fs.existsSync(file) ? file : undefined;
 }
 
 function createWindow() {
   mainWindow = new BrowserWindow({
+    icon: appIcon(),
     width: 1320,
     height: 860,
     minWidth: 1100,

@@ -27,7 +27,7 @@ const telegram = require('../telegram/telegram');
 const texts = require('../texts');
 
 class SenderEngine {
-  constructor({ store, profileStore, chrome, parser, contactStore, dialogStore }) {
+  constructor({ store, profileStore, chrome, parser, contactStore, dialogStore, statsStore }) {
     this.store = store;
     this.profileStore = profileStore;
     this.chrome = chrome;
@@ -36,6 +36,9 @@ class SenderEngine {
     // Учёт переписок автоответчика: сколько раз отвечали и какие письма уже
     // разобрали. Своё состояние вместо прочитанности Gmail, см. _pollReplies.
     this.dialogStore = dialogStore;
+    // Журнал по дням для графика статистики. Счётчик в профиле накопительный и
+    // исчезает вместе с профилем, а история должна оставаться.
+    this.statsStore = statsStore;
     this.running = false;
     // Пауза - это остановленная ОТПРАВКА при живом прогоне: автоответчик
     // продолжает опрашивать почту, аптайм идёт, очередь не теряется.
@@ -145,8 +148,10 @@ class SenderEngine {
       this.profileStore.update(account.id, { sentCount: account.sentCount + 1 });
       // Сохраняем контакт с данными товара, чтобы позже подтолкнуть по email.
       if (this.contactStore) this.contactStore.recordSent({ lead, profile: account });
+      if (this.statsStore) this.statsStore.note('sent');
       this.parser.noteSent();
     } catch (e) {
+      if (this.statsStore) this.statsStore.note('errors');
       logger.error('sender', t('send.failed', { label: account.label, error: e.message }));
     }
     // Small spacing between sends; the real cadence is bounded by Gmail itself.
@@ -251,6 +256,7 @@ class SenderEngine {
             logger.warn('sender', t('reply.failed', { tid: thread.threadId, error: t('reply.notConfirmed') }));
             continue;
           }
+          if (this.statsStore) this.statsStore.note('replies');
           const rec = this.dialogStore.recordReply(account.id, thread.threadId, {
             email: thread.from,
             seenMessageId: thread.lastMessageId,

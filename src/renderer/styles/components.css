@@ -369,6 +369,10 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
   color: var(--accent); background: var(--accent-soft); border-color: var(--accent-line);
   animation: pulseDot 2s var(--ease) infinite;
 }
+.pc-tag.ok { color: var(--green); background: var(--green-soft); border-color: rgba(61, 220, 132, 0.28); }
+.pc-tag.warn { color: var(--amber); background: var(--amber-soft); border-color: rgba(255, 180, 67, 0.28); }
+.pc-tag.bad { color: var(--red); background: var(--red-soft); border-color: rgba(255, 95, 109, 0.28); }
+.pc-tag.done { color: var(--text-dim); background: var(--glass-bg-2); }
 .pc-head-actions { display: flex; gap: 5px; flex-shrink: 0; }
 
 /* Три числа */
@@ -628,6 +632,81 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
   .set-menu { position: static; flex-direction: row; flex-wrap: wrap; }
   .opt-list { grid-template-columns: 1fr; }
 }
+
+/* ── График по дням ──────────────────────────────────────── */
+.chart-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+.chart-head .legend { display: flex; gap: 14px; font-size: 11px; color: var(--text-faint); }
+.chart-head .legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { width: 9px; height: 9px; border-radius: 3px; display: inline-block; }
+.sw.sent { background: var(--accent); }
+.sw.rep { background: var(--green); }
+
+.chart { display: flex; align-items: flex-end; gap: 6px; height: 152px; }
+.bar-col { flex: 1 1 0; display: flex; flex-direction: column; align-items: center; gap: 7px; height: 100%; }
+.bar-col .bars {
+  flex: 1 1 auto; width: 100%;
+  display: flex; align-items: flex-end; justify-content: center; gap: 3px;
+}
+.bar-col .b {
+  width: 44%; min-height: 2px; border-radius: 4px 4px 2px 2px;
+  transition: height var(--dur-slow) var(--ease);
+}
+.bar-col .b.sent { background: linear-gradient(180deg, var(--accent), rgba(var(--accent-rgb), 0.45)); }
+.bar-col .b.rep { background: linear-gradient(180deg, var(--green), rgba(61, 220, 132, 0.4)); }
+.bar-col:hover .b { filter: brightness(1.2); }
+.bar-cap { font-family: var(--font-mono); font-size: 9.5px; color: var(--text-faint); }
+
+/* ── Лента событий ───────────────────────────────────────── */
+.event {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 0; border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+.event:last-child { border-bottom: none; }
+.event .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; background: var(--text-faint); }
+.event.error .dot { background: var(--red); }
+.event.warn .dot { background: var(--amber); }
+.event.success .dot { background: var(--green); }
+.event .msg {
+  flex: 1 1 auto; min-width: 0; color: var(--text-dim);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.event .ts { font-family: var(--font-mono); font-size: 10px; color: var(--text-faint); flex-shrink: 0; }
+
+/* ── Колокольчик и лента уведомлений ─────────────────────── */
+.bell-wrap { position: relative; }
+.bell-dot {
+  position: absolute; top: -3px; right: -4px;
+  min-width: 16px; height: 16px; padding: 0 4px;
+  border-radius: 20px; display: none; place-items: center;
+  background: var(--red); color: #fff;
+  font-family: var(--font-mono); font-size: 9px; font-weight: 700;
+  pointer-events: none;
+}
+.bell-dot.on { display: grid; }
+.notes {
+  position: absolute; top: calc(100% + 10px); right: 0;
+  width: 340px; max-height: 60vh; overflow-y: auto;
+  border-radius: var(--radius); padding: 6px 14px 12px;
+  opacity: 0; pointer-events: none;
+  transform: translateY(-6px);
+  transition: opacity var(--dur) var(--ease), transform var(--dur) var(--ease);
+  z-index: 60;
+}
+.notes.open { opacity: 1; pointer-events: auto; transform: none; }
+.notes-head {
+  font-family: var(--font-mono); font-size: 9px;
+  text-transform: uppercase; letter-spacing: var(--track-wide);
+  color: var(--text-faint); padding: 10px 0 6px;
+}
+
+/* Быстрый пуск в шапке - компактнее обычной кнопки. */
+.btn.quick { height: 34px; padding: 0 14px; border-radius: 20px; font-size: 12px; }
+
+/* ── Карточка диалога ────────────────────────────────────── */
+.dlg-card { padding: 0; overflow: hidden; }
+.dlg-head { display: flex; align-items: flex-start; gap: 11px; padding: 14px 15px 12px; }
+.dlg-card .pc-meta { border-top: 1px solid var(--border); }
 
 /* ── Командная палитра (Ctrl+K) ──────────────────────────── */
 .palette-scrim {

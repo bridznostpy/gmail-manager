@@ -25,9 +25,44 @@ const DICT = {
 
     // Короткие подписи для верхней панели: полные названия остаются
     // заголовками страниц.
-    'navShort.dashboard': 'Обзор',
+    'nav.overview': 'Обзор',
+    'nav.run': 'Рассылка',
+    'nav.dialogs': 'Диалоги',
+    'navShort.overview': 'Обзор',
+    'navShort.run': 'Рассылка',
+    'navShort.dialogs': 'Диалоги',
     'navShort.profiles': 'Профили',
     'navShort.settings': 'Настройки',
+
+    // ── Обзор ───────────────────────────────────────────────
+    'ov.title': 'Обзор',
+    'ov.sub': 'Что происходит с рассылкой в цифрах',
+    'ov.written': 'Написано',
+    'ov.replies': 'Ответов',
+    'ov.conversion': 'Конверсия',
+    'ov.dialogs': 'Диалогов',
+    'ov.errors': 'Ошибок',
+    'ov.sent': 'Отправлено',
+    'ov.chartTitle': 'Активность за две недели',
+    'ov.topProfiles': 'Аккаунты по объёму',
+    'ov.events': 'Последние события',
+    'ov.today': 'Сегодня отправлено: {n}',
+    'ov.noData': 'Данных пока нет - они появятся после первого прогона.',
+    'ov.noProfiles': 'Пока никто не писал.',
+    'ov.noEvents': 'Событий пока не было.',
+
+    // ── Диалоги ─────────────────────────────────────────────
+    'dlg.title': 'Диалоги',
+    'dlg.sub': 'Переписки, в которых автоответчик уже отвечал',
+    'dlg.search': 'Поиск по адресу, товару или профилю',
+    'dlg.empty': 'Диалогов пока нет. Они появятся, когда продавцы начнут отвечать.',
+    'dlg.emptyFiltered': 'Под этот запрос диалогов нет.',
+    'dlg.noTitle': 'без названия товара',
+    'dlg.last': 'последний ответ',
+
+    // ── Уведомления ─────────────────────────────────────────
+    'notes.title': 'Уведомления',
+    'notes.empty': 'Пока тихо.',
 
     // ── Группы на странице настроек ─────────────────────────
     'set.g.interface': 'Интерфейс',
@@ -53,7 +88,9 @@ const DICT = {
     'set.limitsHint': 'Лимит писем на аккаунт считается по каждому профилю отдельно. Интервал проверки задаёт, как часто автоответчик заглядывает в почту.',
     'parser.platformsHint': 'Площадки настраиваются в группе',
 
-    // ── Дашборд ─────────────────────────────────────────────
+    // ── Рассылка ────────────────────────────────────────────
+    'run.title': 'Рассылка',
+    'run.sub': 'Запуск, пауза и живые логи прогона',
     'dash.title': 'Дашборд',
     'dash.sub': 'Живой статус и логи процессов',
     'dash.status': 'Статус',
@@ -109,6 +146,8 @@ const DICT = {
     'prof.filter.ready': 'Готовы',
     'prof.filter.running': 'Запущены',
     'prof.filter.problems': 'Проблемы',
+    'prof.tagLimit': 'лимит исчерпан',
+    'prof.tagReplies': 'ответов: {n}',
 
     // ── Командная палитра ───────────────────────────────────
     'palette.title': 'Поиск по разделам и действиям',
@@ -357,9 +396,41 @@ const DICT = {
     'nav.telegram': 'Telegram',
     'nav.settings': 'System Settings',
 
-    'navShort.dashboard': 'Overview',
+    'nav.overview': 'Overview',
+    'nav.run': 'Outreach',
+    'nav.dialogs': 'Dialogs',
+    'navShort.overview': 'Overview',
+    'navShort.run': 'Outreach',
+    'navShort.dialogs': 'Dialogs',
     'navShort.profiles': 'Profiles',
     'navShort.settings': 'Settings',
+
+    'ov.title': 'Overview',
+    'ov.sub': 'What is happening with the outreach, in numbers',
+    'ov.written': 'Written',
+    'ov.replies': 'Replies',
+    'ov.conversion': 'Conversion',
+    'ov.dialogs': 'Dialogs',
+    'ov.errors': 'Errors',
+    'ov.sent': 'Sent',
+    'ov.chartTitle': 'Activity over two weeks',
+    'ov.topProfiles': 'Accounts by volume',
+    'ov.events': 'Latest events',
+    'ov.today': 'Sent today: {n}',
+    'ov.noData': 'No data yet - it shows up after the first run.',
+    'ov.noProfiles': 'Nobody has written yet.',
+    'ov.noEvents': 'No events yet.',
+
+    'dlg.title': 'Dialogs',
+    'dlg.sub': 'Conversations the auto-responder has already answered',
+    'dlg.search': 'Search by address, item or profile',
+    'dlg.empty': 'No dialogs yet. They show up once sellers start replying.',
+    'dlg.emptyFiltered': 'No dialogs match this query.',
+    'dlg.noTitle': 'no item title',
+    'dlg.last': 'last reply',
+
+    'notes.title': 'Notifications',
+    'notes.empty': 'All quiet.',
 
     'set.g.interface': 'Interface',
     'set.g.appearance': 'Appearance',
@@ -384,6 +455,8 @@ const DICT = {
     'set.limitsHint': 'The per-account send limit is counted for each profile separately. The check interval sets how often the auto-responder looks into the mailbox.',
     'parser.platformsHint': 'Platforms are configured in the group',
 
+    'run.title': 'Outreach',
+    'run.sub': 'Start, pause and the live run log',
     'dash.title': 'Dashboard',
     'dash.sub': 'Live status and process logs',
     'dash.status': 'Status',
@@ -438,6 +511,8 @@ const DICT = {
     'prof.filter.ready': 'Ready',
     'prof.filter.running': 'Running',
     'prof.filter.problems': 'Problems',
+    'prof.tagLimit': 'limit reached',
+    'prof.tagReplies': 'replies: {n}',
 
     'palette.title': 'Search sections and actions',
     'palette.placeholder': 'Search sections and actions...',

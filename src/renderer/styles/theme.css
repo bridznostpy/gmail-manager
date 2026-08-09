@@ -102,9 +102,6 @@
      карточки можно держать читаемыми, а вокруг них показывать фото. */
   --scrim-alpha: 0.3;
   --content-scrim: rgba(var(--glass-rgb), var(--scrim-alpha));
-  /* Сдвиг фона от курсора (параллакс, пишет JS). */
-  --px: 0px;
-  --py: 0px;
   --glass-border: rgba(255, 255, 255, 0.11);
   --glass-hi: rgba(255, 255, 255, 0.34);
   --glass-lo: rgba(255, 255, 255, 0.04);

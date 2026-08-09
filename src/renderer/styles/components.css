@@ -229,13 +229,16 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
 .switch:hover .track { box-shadow: var(--focus-ring); }
 .switch .lbl { font-size: 12.5px; }
 
-/* ── Кнопки ──────────────────────────────────────────────── */
+/* ── Кнопки ──────────────────────────────────────────────────
+   Своего backdrop-filter у кнопки нет намеренно. Каждый такой фильтр -
+   отдельный слой, который браузер пересчитывает при любом изменении под ним,
+   а кнопок на экране десятки: на движении фона это давало заметные рывки.
+   Кнопка мелкая, и размытие в ней всё равно почти не читается - хватает
+   плотного фона поверх стекла карточки. */
 .btn {
   position: relative; overflow: hidden;
   display: inline-flex; align-items: center; gap: 8px; justify-content: center;
-  background: var(--glass-bg-2);
-  backdrop-filter: blur(10px) saturate(1.3);
-  -webkit-backdrop-filter: blur(10px) saturate(1.3);
+  background: var(--control-bg);
   border: 1px solid var(--border-strong);
   color: var(--text); padding: 9px 15px; border-radius: var(--radius-sm);
   font-family: var(--font); font-size: 12.5px; font-weight: 550;
@@ -261,9 +264,9 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
   box-shadow: 0 6px 20px rgba(217, 46, 63, 0.32);
 }
 .btn.stop:hover { filter: brightness(1.08); box-shadow: 0 10px 28px rgba(217, 46, 63, 0.44); }
-.btn.danger { color: var(--red); border-color: transparent; background: transparent; backdrop-filter: none; }
+.btn.danger { color: var(--red); border-color: transparent; background: transparent; }
 .btn.danger:hover { background: var(--red-soft); border-color: transparent; }
-.btn.ghost { background: transparent; border-color: transparent; backdrop-filter: none; color: var(--text-dim); }
+.btn.ghost { background: transparent; border-color: transparent; color: var(--text-dim); }
 .btn.ghost:hover { color: var(--text); background: rgba(255, 255, 255, 0.06); border-color: transparent; }
 .btn.big { padding: 12px 22px; font-size: 13.5px; border-radius: var(--radius); }
 .btn.icon-only { padding: 9px; }
@@ -367,7 +370,7 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
 }
 .pc-tag.live {
   color: var(--accent); background: var(--accent-soft); border-color: var(--accent-line);
-  animation: pulseDot 2s var(--ease) infinite;
+  animation: blink 2s var(--ease) infinite;
 }
 .pc-tag.ok { color: var(--green); background: var(--green-soft); border-color: rgba(61, 220, 132, 0.28); }
 .pc-tag.warn { color: var(--amber); background: var(--amber-soft); border-color: rgba(255, 180, 67, 0.28); }
@@ -486,6 +489,9 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
 
 .logs {
   position: relative;
+  /* Строки сыплются постоянно - изолируем список целиком, иначе каждая новая
+     запись заставляет пересчитывать раскладку всей страницы. */
+  contain: strict;
   background: var(--bg-code);
   border: 1px solid var(--border); border-radius: var(--radius-sm);
   font-family: var(--font-mono); font-size: 11.5px; line-height: 1.75;
@@ -521,7 +527,12 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
 }
 .pill .dot { width: 7px; height: 7px; }
 .pill.on { background: var(--green-soft); color: var(--green); border-color: rgba(var(--accent-rgb), 0.3); }
-.pill.on .dot { background: var(--green); animation: pulseDot 2s var(--ease) infinite; }
+.pill.on .dot { position: relative; background: var(--green); }
+.pill.on .dot::after {
+  content: ""; position: absolute; inset: 0;
+  border-radius: 50%; background: var(--green);
+  animation: pulseRing 2s var(--ease) infinite;
+}
 .pill.paused { background: var(--amber-soft); color: var(--amber); }
 .pill.paused .dot { background: var(--amber); }
 .pill.off { background: var(--bg-input); color: var(--text-dim); }
@@ -566,8 +577,6 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
 .toast {
   position: fixed; bottom: 22px; right: 22px;
   background: var(--glass-bg-2);
-  backdrop-filter: blur(16px) saturate(1.5);
-  -webkit-backdrop-filter: blur(16px) saturate(1.5);
   border: 1px solid var(--glass-border); border-left: 3px solid var(--accent);
   padding: 12px 17px; border-radius: var(--radius-sm); box-shadow: var(--glass-shadow);
   z-index: 300; max-width: 380px; font-size: 12.5px;
@@ -648,12 +657,14 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
   padding: 44px 44px 38px;
 }
 /* Мягкое свечение акцентом за текстом - чтобы витрина не была плоской. */
+/* Свечение за текстом. Размытие убрано: радиальный градиент и так мягкий, а
+   blur заставлял пересчитывать пятно в 620px на каждом кадре анимации. */
 .hero-glow {
   position: absolute; top: -45%; right: -12%;
   width: 620px; height: 620px; border-radius: 50%;
-  background: radial-gradient(circle, rgba(var(--accent-rgb), 0.24), transparent 62%);
-  filter: blur(24px);
+  background: radial-gradient(circle, rgba(var(--accent-rgb), 0.26), transparent 64%);
   pointer-events: none;
+  will-change: transform;
   animation: glowDrift 18s var(--ease) infinite alternate;
 }
 @keyframes glowDrift {

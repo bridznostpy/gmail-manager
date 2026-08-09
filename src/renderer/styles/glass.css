@@ -12,17 +12,35 @@
 
    .glass-sheen    - блик, ползущий за курсором (--mx/--my пишет JS).          */
 
+/* Размытия подложки у обычной карточки НЕТ намеренно.
+   Каждый backdrop-filter - отдельный слой, который браузер пересчитывает при
+   любом изменении под ним, а фон в приложении ездит за курсором. С полутора
+   десятками таких слоёв один сдвиг фона стоил около 15 мс - больше бюджета
+   кадра, отсюда и рывки.
+   Карточки лежат ПОВЕРХ рабочей панели, у которой размытие есть, так что
+   размывать им уже нечего: за ними матовое стекло, а не фотография. */
 .glass {
   position: relative;
   background: var(--glass-bg);
-  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
   border: 1px solid var(--glass-border);
   border-radius: var(--radius);
   box-shadow: var(--glass-shadow-sm);
   transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease),
     transform var(--dur) var(--ease), background var(--dur) var(--ease);
 }
+
+/* Размытие - только тем, кто лежит прямо на фоне. Их горсть на всё приложение,
+   и это единственные места, где за элементом действительно фотография. */
+.rail, .shell, .drawer, .palette, .modal, .notes, .toast {
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
+}
+
+/* Изоляция перерисовки - только внутренним карточкам.
+   На элементы с backdrop-filter её вешать нельзя: contain: paint делает
+   элемент границей для фона, и размывать ему становится нечего - фото за
+   панелью оставалось резким. */
+.card, .stat, .profile-card, .dlg-card, .home-tile, .txt-dict, .panel { contain: paint; }
 
 /* Внутренняя кромка: светлая сверху, гаснет книзу. Именно она читается как
    "толщина" стекла - без неё карточка выглядит просто полупрозрачной. */
@@ -41,10 +59,15 @@
   opacity: 0.9;
 }
 
-.glass-refract {
+/* Преломление считается заново при ЛЮБОМ изменении под элементом, включая
+   движение фона за курсором, и на большой карточке это самый дорогой эффект в
+   приложении. Поэтому по умолчанию его нет - включается тумблером в
+   "Оформлении" (класс на <html>), для тех, у кого запас по видеокарте есть. */
+.glass-refract { box-shadow: var(--glass-shadow); }
+
+:root.refract .glass-refract {
   backdrop-filter: url(#lg-refract) blur(var(--glass-blur)) saturate(var(--glass-sat));
   -webkit-backdrop-filter: url(#lg-refract) blur(var(--glass-blur)) saturate(var(--glass-sat));
-  box-shadow: var(--glass-shadow);
 }
 
 /* Блик за курсором. Радиус большой и мягкий: резкое пятно читается как баг. */
@@ -79,7 +102,9 @@
   background-position: var(--bg-position);
   background-repeat: var(--bg-repeat);
   filter: blur(var(--bg-blur)) saturate(var(--bg-saturate));
-  transform: translate3d(var(--px), var(--py), 0) scale(1.03);
+  /* Смещение параллакса пишет JS прямо сюда, в style.transform - через
+     переменную на :root это стоило бы пересчёта стилей всего документа. */
+  transform: scale(1.03);
   transition: filter var(--dur-slow) var(--ease), opacity var(--dur-slow) var(--ease),
     transform 0.6s cubic-bezier(0.16, 0.68, 0.28, 1);
   will-change: transform;
@@ -119,9 +144,11 @@
   content: "";
   position: absolute;
   inset: -18%;
+  /* Само пятно уже размытое - градиент мягкий по построению. Фильтр blur на
+     области во весь экран пересчитывался бы каждый кадр анимации. */
   background: var(--bg-blob-a);
-  filter: blur(70px);
   opacity: 0.85;
+  will-change: transform;
   animation: blobDrift 26s var(--ease) infinite alternate;
 }
 .bg-layer.gradient::after {
@@ -146,9 +173,16 @@
   from { opacity: 0; transform: translateX(-10px); }
   to { opacity: 1; transform: none; }
 }
-@keyframes pulseDot {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(var(--accent-rgb), 0.55); }
-  70% { box-shadow: 0 0 0 8px rgba(var(--accent-rgb), 0); }
+/* Пульсация точки статуса. Кольцо - отдельный псевдоэлемент, который растёт
+   через transform: анимировать box-shadow значит перерисовывать область на
+   каждом кадре, а точка живёт в шапке постоянно. */
+@keyframes pulseRing {
+  0% { transform: scale(1); opacity: 0.6; }
+  70%, 100% { transform: scale(2.6); opacity: 0; }
+}
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
 }
 @keyframes shimmer {
   from { background-position: -220% 0; }
@@ -177,12 +211,27 @@
   animation-delay: calc(var(--i, 0) * 55ms);
 }
 
-/* Логотип чуть "дышит" - приложение выглядит живым, даже когда простаивает. */
+/* Логотип чуть "дышит". Анимируем только transform и opacity - их считает
+   видеокарта. Тень в кадре менять нельзя: каждый шаг заставлял бы браузер
+   перерисовывать область заново. */
 @keyframes breathe {
-  0%, 100% { transform: scale(1); box-shadow: 0 6px 22px rgba(var(--accent-rgb), 0.34); }
-  50% { transform: scale(1.04); box-shadow: 0 10px 30px rgba(var(--accent-rgb), 0.5); }
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.04); }
 }
-.home-logo { animation: breathe 4.5s var(--ease) infinite; }
+@keyframes breatheGlow {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 0.75; }
+}
+.home-logo { position: relative; animation: breathe 4.5s var(--ease) infinite; }
+.home-logo::after {
+  content: "";
+  position: absolute; inset: -6px;
+  border-radius: inherit;
+  box-shadow: 0 8px 26px rgba(var(--accent-rgb), 0.55);
+  animation: breatheGlow 4.5s var(--ease) infinite;
+  pointer-events: none;
+  z-index: -1;
+}
 
 /* Полоса прогресса подсвечивается бегущим бликом, пока прогон идёт. */
 @keyframes sheenRun {

@@ -30,6 +30,7 @@ const DEFAULTS = {
     glassAlpha: 0.72, // плотность стекла карточек, 0..1 (светлое фото требует больше)
     scrimAlpha: 0.3, // вуаль поверх фото вокруг панелей, 0..1
     parallax: true, // фон едет за курсором
+    refract: false, // SVG-преломление на крупных панелях (дорого по видеокарте)
     fit: 'cover', // 'cover' | 'contain' | 'tile'
     accent: 'green', // green | violet | blue | amber | pink
     reduceMotion: false,

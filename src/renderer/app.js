@@ -24,6 +24,7 @@ const state = {
   profileFilter: 'all',
   profileMetrics: null, // id -> { written, dialogs, replies }
   stats: null, // { daily: [...], totals: {...} }
+  slowFetchedAt: 0, // когда последний раз тянули журнал и диалоги
   dialogs: [],
   dialogQuery: '',
   notes: [], // лента уведомлений из потока логов
@@ -183,19 +184,33 @@ function wireRipples(root) {
   });
 }
 
-/** Блик стекла, ползущий за курсором. */
+/**
+ * Блик стекла, ползущий за курсором.
+ *
+ * Координаты пишем только пока курсор внутри элемента, и берём их из события,
+ * а не из getBoundingClientRect на каждое движение: замер геометрии заставляет
+ * браузер пересчитать раскладку, и на карточке со стеклом это давало рывки.
+ * Размеры перечитываем на входе курсора - за время наведения они не меняются.
+ */
 function wireSheen(root) {
   $$('.glass-sheen', root).forEach((el) => {
     if (el.dataset.sheened) return;
     el.dataset.sheened = '1';
+    let box = null;
     let frame = null;
+    el.addEventListener('pointerenter', () => { box = el.getBoundingClientRect(); });
+    el.addEventListener('pointerleave', () => {
+      box = null;
+      if (frame) { cancelAnimationFrame(frame); frame = null; }
+    });
     el.addEventListener('pointermove', (e) => {
-      if (frame) return;
+      if (!box || frame) return;
+      const x = e.clientX, y = e.clientY;
       frame = requestAnimationFrame(() => {
         frame = null;
-        const r = el.getBoundingClientRect();
-        el.style.setProperty('--mx', ((e.clientX - r.left) / r.width * 100).toFixed(1) + '%');
-        el.style.setProperty('--my', ((e.clientY - r.top) / r.height * 100).toFixed(1) + '%');
+        if (!box) return;
+        el.style.setProperty('--mx', ((x - box.left) / box.width * 100).toFixed(1) + '%');
+        el.style.setProperty('--my', ((y - box.top) / box.height * 100).toFixed(1) + '%');
       });
     });
   });
@@ -328,30 +343,39 @@ function applyAppearance() {
   }
 
   root.classList.toggle('reduce-motion', !!ap.reduceMotion);
+  root.classList.toggle('refract', !!ap.refract);
   if (ap.parallax === false || ap.reduceMotion) {
-    css.setProperty('--px', '0px');
-    css.setProperty('--py', '0px');
+    const layer = $('#bgLayer');
+    if (layer) layer.style.transform = 'scale(1.03)';
   }
 }
 
 /**
  * Параллакс фона. Слой едет за курсором на несколько пикселей - этого хватает,
  * чтобы картинка перестала быть плоской заливкой, и мало, чтобы отвлекать.
+ *
+ * Трансформацию пишем ПРЯМО в стиль слоя, а не через переменную на :root.
+ * Замер показал разницу в полсотни раз: правка переменной в корне заставляет
+ * браузер пересчитать стили всего документа (около 16 мс - больше бюджета
+ * кадра), тогда как прямой transform одному элементу стоит доли миллисекунды.
+ *
  * Считаем в requestAnimationFrame: mousemove сыплется чаще, чем кадры.
  */
 function wireParallax() {
+  const layer = $('#bgLayer');
+  if (!layer) return;
   let frame = null;
   document.addEventListener('mousemove', (e) => {
     const ap = appearance();
     if (ap.parallax === false || ap.reduceMotion) return;
     if (frame) return;
+    // Координаты снимаем сразу: к моменту кадра событие уже "протухнет".
+    const x = e.clientX, y = e.clientY;
     frame = requestAnimationFrame(() => {
       frame = null;
-      const dx = (e.clientX / window.innerWidth - 0.5) * -26;
-      const dy = (e.clientY / window.innerHeight - 0.5) * -18;
-      const css = document.documentElement.style;
-      css.setProperty('--px', dx.toFixed(1) + 'px');
-      css.setProperty('--py', dy.toFixed(1) + 'px');
+      const dx = (x / window.innerWidth - 0.5) * -26;
+      const dy = (y / window.innerHeight - 0.5) * -18;
+      layer.style.transform = `translate3d(${dx.toFixed(1)}px, ${dy.toFixed(1)}px, 0) scale(1.03)`;
     });
   });
 }
@@ -606,38 +630,64 @@ function paintHome() {
   $('#homeLead').textContent = mode === 'running' ? t('home.leadRunning')
     : mode === 'paused' ? t('home.leadPaused') : t('home.leadIdle');
 
-  // Главное действие одно. Второй кнопкой - самый уместный сейчас переход.
+  // Кнопки не пересобираем: витрина перерисовывается раз в секунду по тику
+  // статуса, а замена узлов рвёт наведение, фокус и волну от клика.
   const cta = $('#homeCta');
-  cta.innerHTML = '';
-  const primary = h(`<button class="btn big ${mode === 'idle' ? 'primary' : 'stop'}">
-    ${mode === 'idle' ? ICONS.play : ICONS.stop}
-    <span>${esc(t(mode === 'idle' ? 'home.ctaStart' : 'dash.stop'))}</span></button>`);
+  if (!cta.children.length) {
+    const primary = h(`<button class="btn big" data-role="primary"></button>`);
+    primary.addEventListener('click', () => runAction(primary.dataset.action));
+    const secondary = h(`<button class="btn ghost big">${ICONS.chevron}
+      <span>${esc(t('home.ctaOpen'))}</span></button>`);
+    secondary.addEventListener('click', () => go('run'));
+    cta.append(primary, secondary);
+    wireRipples(cta);
+  }
+  const primary = cta.firstElementChild;
+  const start = mode === 'idle';
+  const wantHtml = (start ? ICONS.play : ICONS.stop) + `<span>${esc(t(start ? 'home.ctaStart' : 'dash.stop'))}</span>`;
+  if (primary.dataset.mode !== mode) {
+    primary.dataset.mode = mode;
+    primary.dataset.action = start ? 'start' : 'stop';
+    primary.className = 'btn big ' + (start ? 'primary' : 'stop');
+    primary.innerHTML = wantHtml;
+  }
   primary.disabled = state.runBusy;
-  primary.addEventListener('click', () => runAction(mode === 'idle' ? 'start' : 'stop'));
-
-  const secondary = h(`<button class="btn ghost big">${ICONS.chevron}
-    <span>${esc(t('home.ctaOpen'))}</span></button>`);
-  secondary.addEventListener('click', () => go('run'));
-  cta.append(primary, secondary);
-  wireRipples(cta);
 
   const today = todayRow();
-  $('#homeFacts').innerHTML = [
+  setFacts($('#homeFacts'), [
     [t('home.factSent'), sumMetric(state, 'written')],
     [t('home.factToday'), today.sent],
     [t('home.factReplies'), sumMetric(state, 'replies')],
     [t('dash.ready'), state.profiles.filter((p) => p.gmailStatus === 'ready').length],
-  ].map(([cap, val]) => `<span class="fact"><b>${esc(String(val))}</b><span>${esc(cap)}</span></span>`).join('');
+  ]);
 
   paintHomeQuick();
   paintHomeTiles();
   paintHomeReady();
 }
 
+/**
+ * Полоса чисел: разметку строим один раз, дальше меняем только сами значения.
+ * Раньше здесь был innerHTML на каждом тике - выбрасывать и создавать узлы
+ * секунду за секундой ради четырёх цифр незачем.
+ */
+function setFacts(box, rows) {
+  if (!box) return;
+  if (box.children.length !== rows.length) {
+    box.innerHTML = rows.map(([cap]) => `<span class="fact"><b></b><span>${esc(cap)}</span></span>`).join('');
+  }
+  rows.forEach(([, val], i) => {
+    const b = box.children[i].firstElementChild;
+    const next = String(val);
+    if (b.textContent !== next) b.textContent = next;
+  });
+}
+
 /** Быстрые действия витрины: то, что делают руками и часто. */
 function paintHomeQuick() {
   const box = $('#homeQuick');
-  if (!box) return;
+  // Список действий не зависит от данных - собираем его один раз.
+  if (!box || box.children.length) return;
   const acts = [
     { icon: 'plus', key: 'prof.new', run: () => createProfile() },
     { icon: 'send', key: 'dash.testLead', run: () => testLeadFlow() },
@@ -655,16 +705,25 @@ function paintHomeQuick() {
 function paintHomeTiles() {
   const box = $('#homeTiles');
   if (!box) return;
-  box.innerHTML = HOME_TILES.map((tile) => `<button class="home-tile glass glass-sheen" data-route="${tile.route}">
-    <span class="ht-icon">${ICONS[tile.icon]}</span>
-    <span class="ht-val">${esc(String(tile.value(state)))}</span>
-    <span class="ht-title">${esc(t(tile.titleKey))}</span>
-    <span class="ht-desc">${esc(t(tile.descKey))}</span>
-    <span class="ht-go">${ICONS.chevron}</span>
-  </button>`).join('');
-  $$('.home-tile', box).forEach((el) => el.addEventListener('click', () => go(el.dataset.route)));
-  wireSheen(box);
-  wireCascade(box.parentElement || document);
+  // Плитки строим один раз, потом обновляем только число: пересборка узлов по
+  // таймеру заново запускала бы каскад появления и рвала наведение.
+  if (!box.children.length) {
+    box.innerHTML = HOME_TILES.map((tile) => `<button class="home-tile glass glass-sheen" data-route="${tile.route}">
+      <span class="ht-icon">${ICONS[tile.icon]}</span>
+      <span class="ht-val"></span>
+      <span class="ht-title">${esc(t(tile.titleKey))}</span>
+      <span class="ht-desc">${esc(t(tile.descKey))}</span>
+      <span class="ht-go">${ICONS.chevron}</span>
+    </button>`).join('');
+    $$('.home-tile', box).forEach((el) => el.addEventListener('click', () => go(el.dataset.route)));
+    wireSheen(box);
+    wireCascade(box.parentElement || document);
+  }
+  HOME_TILES.forEach((tile, i) => {
+    const el = box.children[i] && box.children[i].querySelector('.ht-val');
+    const next = String(tile.value(state));
+    if (el && el.textContent !== next) el.textContent = next;
+  });
 }
 
 function paintHomeReady() {
@@ -673,6 +732,12 @@ function paintHomeReady() {
   const steps = readySteps();
   const done = steps.filter((s) => s.done).length;
   const all = done === steps.length;
+
+  // Чек-лист меняется редко - перерисовываем, только когда набор галочек стал
+  // другим. Иначе он пересобирался бы каждую секунду вместе со статусом.
+  const sign = steps.map((s) => (s.done ? '1' : '0')).join('');
+  if (box.dataset.sign === sign) return;
+  box.dataset.sign = sign;
 
   box.innerHTML = `
     <div class="ready-head">
@@ -757,14 +822,28 @@ function paintOverview() {
   const plate = $('#oNote');
   if (plate) {
     const sentToday = todayRow().sent;
-    plate.innerHTML = sentToday
+    setOnce(plate, sentToday
       ? `<span class="note-plate ok">${ICONS.send}${esc(t('ov.today', { n: sentToday }))}</span>`
-      : '';
+      : '');
   }
 
   paintChart();
   paintTopProfiles();
   paintEvents();
+}
+
+/**
+ * Заменить разметку, только если она отличается.
+ *
+ * Экраны обновляются по таймеру раз в секунду, и большинство блоков при этом
+ * не меняется. Сравнение строки дешевле, чем снос и постройка поддерева, а
+ * заодно не рвёт наведение мышью и не перезапускает анимации.
+ */
+function setOnce(el, html) {
+  if (!el || el.dataset.html === html) return false;
+  el.dataset.html = html;
+  el.innerHTML = html;
+  return true;
 }
 
 function todayRow() {
@@ -781,10 +860,10 @@ function paintChart() {
   const peak = Math.max(0, ...daily.map((d) => Math.max(d.sent, d.replies)));
   // Пустые столбики за две недели выглядят как поломка. Пока цифр нет, честнее
   // сказать это словами.
-  if (!daily.length || !peak) { box.innerHTML = `<div class="empty">${ICONS.dashboard}<div>${esc(t('ov.noData'))}</div></div>`; return; }
+  if (!daily.length || !peak) { setOnce(box, `<div class="empty">${ICONS.dashboard}<div>${esc(t('ov.noData'))}</div></div>`); return; }
 
   const max = Math.max(1, peak);
-  box.innerHTML = daily.map((d) => {
+  const html = daily.map((d) => {
     const [, mm, dd] = d.day.split('-');
     const title = `${dd}.${mm} - ${t('ov.sent')}: ${d.sent}, ${t('ov.replies')}: ${d.replies}`;
     return `<div class="bar-col" title="${esc(title)}">
@@ -795,6 +874,7 @@ function paintChart() {
       <div class="bar-cap">${dd}</div>
     </div>`;
   }).join('');
+  setOnce(box, html);
 }
 
 function paintTopProfiles() {
@@ -805,13 +885,13 @@ function paintTopProfiles() {
     .map((p) => ({ p, w: (m[p.id] || {}).written || 0, r: (m[p.id] || {}).replies || 0 }))
     .sort((a, b) => b.w - a.w)
     .slice(0, 6);
-  if (!rows.length || !rows[0].w) { box.innerHTML = `<div class="empty">${esc(t('ov.noProfiles'))}</div>`; return; }
+  if (!rows.length || !rows[0].w) { setOnce(box, `<div class="empty">${esc(t('ov.noProfiles'))}</div>`); return; }
   const max = Math.max(1, ...rows.map((x) => x.w));
-  box.innerHTML = rows.map((x) => `<div class="acc-row">
+  setOnce(box, rows.map((x) => `<div class="acc-row">
     <span class="nm">${esc(x.p.label)}</span>
     <span class="track"><span style="width:${(x.w / max * 100).toFixed(1)}%"></span></span>
     <span class="cnt">${x.w} / ${x.r}</span>
-  </div>`).join('');
+  </div>`).join(''));
 }
 
 /** Лента важных событий - из того же потока логов, что и живые логи. */
@@ -819,12 +899,12 @@ function paintEvents() {
   const box = $('#oEvents');
   if (!box) return;
   const rows = state.logs.filter((e) => e.level === 'error' || e.level === 'warn' || e.level === 'success').slice(-8).reverse();
-  if (!rows.length) { box.innerHTML = `<div class="empty">${esc(t('ov.noEvents'))}</div>`; return; }
-  box.innerHTML = rows.map((e) => `<div class="event ${e.level}">
+  if (!rows.length) { setOnce(box, `<div class="empty">${esc(t('ov.noEvents'))}</div>`); return; }
+  setOnce(box, rows.map((e) => `<div class="event ${e.level}">
     <span class="dot"></span>
     <span class="msg">${esc(e.message)}</span>
     <span class="ts">${esc(new Date(e.ts).toLocaleTimeString())}</span>
-  </div>`).join('');
+  </div>`).join(''));
 }
 
 // ── Рассылка: центр управления ─────────────────────────────────────
@@ -1080,10 +1160,10 @@ function paintAccountRows(plan) {
   const limit = state.settings.system.mailsPerAccount || 0;
   const ready = state.profiles.filter((p) => p.gmailStatus === 'ready');
   if (!ready.length) {
-    box.innerHTML = `<div class="empty" style="padding:24px 0">${esc(t('dash.noAccounts'))}</div>`;
+    setOnce(box, `<div class="empty" style="padding:24px 0">${esc(t('dash.noAccounts'))}</div>`);
     return;
   }
-  box.innerHTML = ready.map((p) => {
+  setOnce(box, ready.map((p) => {
     const done = limit > 0 ? clamp((p.sentCount || 0) / limit, 0, 1) : 0;
     const live = plan.current && plan.current.id === p.id && state.runStatus.running;
     return `<div class="acc-row">
@@ -1091,7 +1171,7 @@ function paintAccountRows(plan) {
       <span class="track"><span style="width:${(done * 100).toFixed(1)}%"></span></span>
       <span class="cnt">${p.sentCount || 0} / ${limit}</span>
     </div>`;
-  }).join('');
+  }).join(''));
 }
 
 /**
@@ -1370,6 +1450,20 @@ function renderProfileCards(root) {
   const cards = root.querySelector('#cards') || $('#cards');
   if (!cards) return;
   const limit = state.settings.system.mailsPerAccount;
+
+  // Список пересобираем, только когда изменилось что-то видимое на карточке.
+  // Опрос идёт каждые четыре секунды, и без этой проверки DOM выбрасывался и
+  // строился заново вхолостую - вместе с наведением, бликом и каскадом.
+  const current = sessionPlan().current;
+  const sign = JSON.stringify([
+    state.booted, state.profileFilter, limit, state.selectedProfile,
+    current && state.runStatus.running ? current.id : '',
+    state.profiles.map((p) => [p.id, p.label, p.email, p.gmailStatus, p.running, p.port, p.sentCount,
+      (state.profileMetrics || {})[p.id]]),
+  ]);
+  if (cards.dataset.sign === sign) return;
+  cards.dataset.sign = sign;
+
   cards.innerHTML = '';
   if (!state.booted) {
     for (let i = 0; i < 3; i++) cards.appendChild(h(`<div class="skeleton tile"></div>`));
@@ -1384,9 +1478,8 @@ function renderProfileCards(root) {
     wireRipples(cards);
     return;
   }
-  // Аккаунт, который движок пишет прямо сейчас - его карточку помечаем, чтобы
-  // было видно, куда уходят письма.
-  const current = sessionPlan().current;
+  // Аккаунт, который движок пишет прямо сейчас, помечен на карточке - видно,
+  // куда уходят письма.
   const filter = PROFILE_FILTERS.find((f) => f.id === state.profileFilter) || PROFILE_FILTERS[0];
   const shown = state.profiles.filter(filter.match);
 
@@ -2344,6 +2437,9 @@ function appearanceControlsHtml() {
         <span class="section-label">${esc(t('appear.motion'))}</span>
         <label class="switch" style="margin-bottom:10px"><input type="checkbox" id="apParallax" ${ap.parallax !== false ? 'checked' : ''}/>
           <span class="track"></span><span class="lbl">${esc(t('appear.parallax'))}</span></label>
+        <label class="switch" style="margin-bottom:8px"><input type="checkbox" id="apRefract" ${ap.refract ? 'checked' : ''}/>
+          <span class="track"></span><span class="lbl">${esc(t('appear.refract'))}</span></label>
+        <div class="hint">${esc(t('appear.refractHint'))}</div>
       </div>
 
       <div class="opt-group">
@@ -2441,6 +2537,7 @@ function wireAppearanceControls(root, rerender) {
     rerender();
   }));
   $('#apParallax', root).addEventListener('change', (e) => saveAppearance({ parallax: e.target.checked }));
+  $('#apRefract', root).addEventListener('change', (e) => saveAppearance({ refract: e.target.checked }));
 
   wireRipples(root);
 }
@@ -2671,11 +2768,28 @@ function wireHotkeys() {
 
 // ── обновление данных ──────────────────────────────────────────────
 async function refreshProfiles() {
-  state.profiles = await api.profiles.list();
-  state.profileStats = await api.profiles.stats();
-  state.profileMetrics = await api.profiles.metrics();
-  state.stats = await api.stats.overview(14);
-  state.dialogs = await api.dialogs.list();
+  // Пять запросов параллельно, а не по очереди: каждый читает свой файл в
+  // main-процессе и друг от друга они не зависят.
+  const [profiles, stats, metrics] = await Promise.all([
+    api.profiles.list(),
+    api.profiles.stats(),
+    api.profiles.metrics(),
+  ]);
+  state.profiles = profiles;
+  state.profileStats = stats;
+  state.profileMetrics = metrics;
+
+  // Журнал по дням и список переписок меняются медленно - тянуть их каждые
+  // четыре секунды незачем. Обновляем раз в минуту и сразу, когда открыт
+  // экран, который их показывает.
+  const slow = Date.now() - state.slowFetchedAt > 60000
+    || state.route === 'overview' || state.route === 'dialogs';
+  if (slow) {
+    const [overview, dialogs] = await Promise.all([api.stats.overview(14), api.dialogs.list()]);
+    state.stats = overview;
+    state.dialogs = dialogs;
+    state.slowFetchedAt = Date.now();
+  }
 
   // Спарклайн: прирост отправленного за тик. Первый замер только задаёт точку
   // отсчёта, иначе весь накопленный за прошлые запуски счёт нарисовался бы

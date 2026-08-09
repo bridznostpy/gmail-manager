@@ -38,48 +38,54 @@
       <feDisplacementMap in="SourceGraphic" in2="map" scale="26"
         xChannelSelector="R" yChannelSelector="G" />
     </filter>
+    <linearGradient id="gaugeGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="var(--accent)" />
+      <stop offset="1" stop-color="var(--accent-2)" />
+    </linearGradient>
   </svg>
 
   <div id="app">
-    <header class="topbar glass glass-refract" id="topbar">
-      <div class="brand">
-        <div class="logo">GM</div>
-        <div>
-          <div class="name">Gmail Manager</div>
-          <div class="tag">outreach control</div>
+    <!-- Рельс разделов. Узкий, только иконки - названия всплывают подсказкой. -->
+    <aside class="rail glass">
+      <div class="rail-logo" id="railLogo">GM</div>
+      <nav class="rail-nav" id="nav"></nav>
+      <div class="rail-foot">
+        <button class="rail-btn" id="appearanceBtn"></button>
+        <button class="rail-btn" id="themeBtn"></button>
+      </div>
+    </aside>
+
+    <!-- Рабочая панель. Плавает на фоне, как окно на обоях. -->
+    <main class="shell glass glass-refract">
+      <header class="shell-head">
+        <div class="shell-title">
+          <div class="view-title" id="pageTitle"></div>
+          <div class="view-sub" id="pageSub"></div>
         </div>
-      </div>
-
-      <nav class="nav" id="nav"><span class="nav-pill" id="navPill"></span></nav>
-
-      <div class="topbar-right">
-        <button class="btn ghost" id="appearanceBtn"></button>
-        <span class="app-ver" id="appVer">v0.1.0</span>
-        <div class="win-controls">
-          <button class="win-btn" id="winMin" title="Свернуть"></button>
-          <button class="win-btn" id="winMax" title="Развернуть"></button>
-          <button class="win-btn close" id="winClose" title="Закрыть"></button>
+        <div class="head-actions">
+          <button class="round wide" id="btnPalette"></button>
+          <span class="clock" id="clock"></span>
+          <span id="sysPill"></span>
+          <div id="pageActions" class="head-page-actions"></div>
+          <span class="head-sep"></span>
+          <div class="win-controls">
+            <button class="win-btn" id="winMin"></button>
+            <button class="win-btn" id="winMax"></button>
+            <button class="win-btn close" id="winClose"></button>
+          </div>
         </div>
-      </div>
-    </header>
-
-    <div class="pagehead">
-      <div>
-        <div class="crumbs" id="crumbs"></div>
-        <div class="view-title" id="pageTitle"></div>
-        <div class="view-sub" id="pageSub"></div>
-      </div>
-      <div class="pagehead-right">
-        <div id="pageActions" style="display:flex;gap:8px"></div>
-        <span id="sysPill"></span>
-      </div>
-    </div>
-
-    <main class="main" id="main"></main>
+      </header>
+      <div class="shell-body" id="main"></div>
+    </main>
   </div>
 
   <div class="drawer-scrim" id="drawerScrim"></div>
   <aside class="drawer glass glass-refract" id="drawer"></aside>
+
+  <!-- Командная палитра: Ctrl+K -->
+  <div class="palette-scrim" id="paletteScrim">
+    <div class="palette glass glass-refract" id="palette"></div>
+  </div>
 
   <div class="toast" id="toast"></div>
 

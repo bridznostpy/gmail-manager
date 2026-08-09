@@ -16,26 +16,132 @@ body {
 /* Фильтры-заготовки для стекла не должны занимать место. */
 .lg-defs { position: absolute; width: 0; height: 0; overflow: hidden; }
 
-/* Подложка рабочей области - отдельным слоем, а не фоном .main: у .main есть
-   маска растушёвки сверху, она бы съела и подложку, оставив светлую полосу.
-   Отсчёт от высоты шапки - её подложка не касается. */
+/* Подложка вокруг панели: успокаивает картинку, чтобы панель на ней читалась,
+   но не прячет её - в этой композиции фон работает на вид, а не мешает. */
 .content-scrim {
   position: fixed;
-  top: var(--topbar-h); left: 0; right: 0; bottom: 0;
+  inset: 0;
   z-index: 0;
   pointer-events: none;
   background: var(--content-scrim);
   transition: background var(--dur-slow) var(--ease);
 }
 
-/* minmax(0, 1fr) обязателен: без него колонка сетки растягивается по самой
-   широкой строке (шапке), и всё остальное уезжает за край окна. */
+/* Рельс и панель - два отдельных блока, плавающих на фоне. Внешний отступ
+   заодно служит зоной перетаскивания окна. */
 #app {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: auto auto 1fr;
+  display: flex;
+  gap: var(--gap);
   height: 100vh;
+  padding: var(--gap);
   overflow: hidden;
+  -webkit-app-region: drag;
+}
+
+/* ── Рельс разделов ──────────────────────────────────────── */
+.rail {
+  position: relative;
+  z-index: 10;
+  flex: 0 0 var(--rail-w);
+  display: flex; flex-direction: column; align-items: center;
+  padding: 12px 0;
+  border-radius: var(--radius-lg);
+  -webkit-app-region: no-drag;
+}
+.rail-logo {
+  width: 38px; height: 38px; border-radius: 12px;
+  display: grid; place-items: center;
+  background: var(--gradient); color: var(--on-accent);
+  font-weight: 800; font-size: 13px; letter-spacing: -0.04em;
+  box-shadow: 0 4px 16px rgba(var(--accent-rgb), 0.35);
+  flex-shrink: 0;
+}
+.rail-nav { display: flex; flex-direction: column; gap: 6px; margin-top: 22px; }
+.rail-foot { margin-top: auto; display: flex; flex-direction: column; gap: 6px; }
+
+.rail-btn {
+  position: relative;
+  width: 38px; height: 38px; border-radius: 12px;
+  display: grid; place-items: center;
+  background: transparent; border: 1px solid transparent;
+  color: var(--text-faint); cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
+}
+.rail-btn svg { width: 18px; height: 18px; }
+.rail-btn:hover { background: rgba(255, 255, 255, 0.07); color: var(--text); }
+.rail-btn:active { transform: scale(0.94); }
+.rail-btn.active {
+  background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent);
+}
+/* Подпись раздела всплывает сбоку - в рельсе для неё места нет. */
+.rail-btn::after {
+  content: attr(data-label);
+  position: absolute; left: calc(100% + 10px); top: 50%;
+  transform: translateY(-50%) translateX(-4px);
+  padding: 6px 10px; border-radius: var(--radius-xs);
+  background: var(--glass-bg-2); border: 1px solid var(--glass-border);
+  backdrop-filter: blur(12px);
+  color: var(--text); font-size: 11.5px; white-space: nowrap;
+  opacity: 0; pointer-events: none; z-index: 40;
+  transition: opacity var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
+}
+.rail-btn:hover::after { opacity: 1; transform: translateY(-50%) translateX(0); }
+
+/* ── Рабочая панель ──────────────────────────────────────── */
+.shell {
+  position: relative;
+  z-index: 10;
+  flex: 1 1 auto; min-width: 0;
+  display: flex; flex-direction: column;
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+.shell-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 20px;
+  padding: 16px 12px 16px 26px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  -webkit-app-region: drag;
+}
+.shell-head button, .shell-head .clock, .shell-head .pill { -webkit-app-region: no-drag; }
+.shell-title .view-title { font-size: 23px; font-weight: 700; letter-spacing: -0.03em; line-height: 1.15; }
+.shell-title .view-sub { color: var(--text-dim); font-size: 12px; margin-top: 2px; }
+
+.head-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.head-page-actions { display: flex; gap: 8px; }
+.head-sep { width: 1px; height: 24px; background: var(--border); margin-left: 4px; }
+.clock {
+  font-family: var(--font-mono); font-size: 11.5px; color: var(--text-dim);
+  padding: 0 4px; letter-spacing: 0.04em;
+}
+
+/* Круглые кнопки в шапке - как в референсе. */
+.round {
+  height: 34px; min-width: 34px; padding: 0 10px;
+  border-radius: 20px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  background: var(--bg-input); border: 1px solid var(--border);
+  color: var(--text-dim); cursor: pointer;
+  font-family: var(--font); font-size: 11.5px;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease);
+}
+.round svg { width: 15px; height: 15px; }
+.round:hover { color: var(--text); border-color: var(--border-strong); }
+.round kbd {
+  font-family: var(--font-mono); font-size: 9.5px;
+  background: var(--glass-bg-2); border: 1px solid var(--border);
+  border-radius: 5px; padding: 2px 5px; color: var(--text-faint);
+}
+
+.shell-body {
+  flex: 1 1 auto; min-height: 0;
+  overflow-y: auto; overflow-x: hidden;
+  padding: 20px 26px 28px;
+  scroll-behavior: smooth;
+  -webkit-app-region: no-drag;
 }
 
 /* ── Скроллбары ──────────────────────────────────────────── */
@@ -49,148 +155,21 @@ body {
 }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-faint); background-clip: content-box; }
 
-/* ── Шапка ───────────────────────────────────────────────── */
-.topbar {
-  position: relative;
-  z-index: 30;
-  display: flex;
-  align-items: center;
-  gap: 18px;
-  padding: 0 8px 0 16px;
-  height: var(--topbar-h);
-  min-width: 0;
-  overflow: hidden;
-  border-radius: 0;
-  border-width: 0 0 1px;
-  /* Своя шапка вместо рамки Windows: тащим окно за неё. */
-  -webkit-app-region: drag;
-}
-.topbar::after { border-radius: 0; }
-
-/* Всё кликабельное внутри шапки перетаскивать окно не должно. */
-.topbar button,
-.topbar .nav,
-.topbar .nav-item,
-.topbar .win-btn { -webkit-app-region: no-drag; }
-
-.brand { display: flex; align-items: center; gap: 11px; flex-shrink: 0; }
-.brand .logo {
-  width: 32px; height: 32px; border-radius: 10px;
-  background: var(--gradient);
-  display: grid; place-items: center;
-  color: var(--on-accent); font-weight: 800; font-size: 14px;
-  letter-spacing: -0.04em;
-  box-shadow: 0 4px 16px rgba(var(--accent-rgb), 0.35);
-}
-.brand .name {
-  font-weight: 700; font-size: 13px; letter-spacing: 0.02em; line-height: 1.1;
-}
-.brand .tag {
-  font-family: var(--font-mono);
-  font-size: 8.5px; color: var(--text-faint);
-  letter-spacing: var(--track-wide); text-transform: uppercase;
-}
-
-/* ── Навигация ───────────────────────────────────────────── */
-.nav {
-  position: relative;
-  display: flex; align-items: center; gap: 2px;
-  flex: 1 1 auto; min-width: 0; overflow: hidden;
-}
-.nav-pill {
-  position: absolute;
-  top: 50%; left: 0;
-  height: 34px; width: 0;
-  transform: translateY(-50%);
-  border-radius: var(--radius-sm);
-  background: var(--accent-soft);
-  border: 1px solid var(--accent-line);
-  opacity: 0;
-  transition: transform var(--dur) var(--ease), width var(--dur) var(--ease),
-    opacity var(--dur) var(--ease);
-  pointer-events: none;
-}
-.nav-item {
-  position: relative;
-  z-index: 1;
-  display: flex; align-items: center; gap: 8px;
-  padding: 8px 12px; border-radius: var(--radius-sm);
-  color: var(--text-dim); cursor: pointer; user-select: none;
-  white-space: nowrap;
-  font-size: 12.5px; font-weight: 500;
-  transition: color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
-}
-.nav-item:hover { color: var(--text); background: rgba(255, 255, 255, 0.05); }
-.nav-item.active { color: var(--accent); font-weight: 600; background: transparent; }
-.nav-item .icon { display: grid; place-items: center; flex-shrink: 0; }
-.nav-item .icon svg { width: 16px; height: 16px; }
-
-.topbar-right { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
-.topbar-sep { width: 1px; height: 22px; background: var(--border); margin: 0 4px; }
-.app-ver {
-  font-family: var(--font-mono); font-size: 10px; color: var(--text-faint);
-  letter-spacing: 0.06em;
-}
 
 /* Кнопки окна: те же пропорции, что у Windows, чтобы попадать привычно. */
-.win-controls { display: flex; align-items: center; margin-left: 6px; }
+.win-controls { display: flex; align-items: center; }
 .win-btn {
-  width: 42px; height: var(--topbar-h);
+  width: 38px; height: 34px; border-radius: 9px;
   display: grid; place-items: center;
   background: transparent; border: none; cursor: pointer;
   color: var(--text-dim);
   transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
 }
-.win-btn svg { width: 12px; height: 12px; }
+.win-btn svg { width: 11px; height: 11px; }
 .win-btn:hover { background: rgba(255, 255, 255, 0.08); color: var(--text); }
 .win-btn.close:hover { background: #e5484d; color: #fff; }
 
-/* ── Заголовок страницы ──────────────────────────────────── */
-.pagehead {
-  position: relative;
-  z-index: 20;
-  display: flex; align-items: flex-end; justify-content: space-between;
-  gap: 20px;
-  padding: 22px 32px 16px;
-}
-/* Заголовок страницы лежит прямо на фоне, без стекла. Светлая картинка съедала
-   бы его целиком, поэтому под ним всегда мягкая подложка. */
-.pagehead::before {
-  content: "";
-  position: absolute;
-  inset: 0 0 -28px 0;
-  z-index: -1;
-  pointer-events: none;
-  background: linear-gradient(to bottom, var(--head-scrim), transparent);
-}
-.crumbs {
-  font-family: var(--font-mono);
-  font-size: 9.5px; letter-spacing: var(--track-wide);
-  text-transform: uppercase; color: var(--text-faint);
-  margin-bottom: 4px;
-}
-.view-title {
-  font-size: 27px; font-weight: 700; letter-spacing: -0.03em; line-height: 1.1;
-}
-.view-sub { color: var(--text-dim); font-size: 12.5px; margin-top: 5px; }
-.pagehead-right { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
-
-/* ── Основная область ────────────────────────────────────── */
-/* Верхний край контента растворяем: он уезжает под заголовок страницы, и без
-   растушёвки карточки обрубались бы ровной линией. */
-.main {
-  /* Позиционирование обязательно: без него содержимое ушло бы ПОД
-     .content-scrim - фиксированный слой рисуется поверх непозиционированных. */
-  position: relative;
-  z-index: 10;
-  overflow-y: auto;
-  overflow-x: hidden;
-  padding: 4px 32px 40px;
-  scroll-behavior: smooth;
-  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 18px);
-  mask-image: linear-gradient(to bottom, transparent 0, #000 18px);
-}
-
+/* ── Сетки ───────────────────────────────────────────────── */
 .grid { display: grid; gap: 14px; }
 .grid.cols-2 { grid-template-columns: repeat(2, 1fr); }
 .grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
@@ -200,12 +179,8 @@ body {
 @media (max-width: 1300px) {
   .split { grid-template-columns: 1fr; }
 }
-@media (max-width: 1240px) {
-  /* Подписи в навигации уходят первыми - иконки остаются узнаваемыми. */
-  .nav-item span:not(.icon) { display: none; }
-  .nav-item { padding: 8px 10px; }
-}
 @media (max-width: 1180px) {
   .grid.cols-4 { grid-template-columns: repeat(2, 1fr); }
-  .pagehead, .main { padding-left: 20px; padding-right: 20px; }
+  .shell-body { padding-left: 18px; padding-right: 18px; }
+  .shell-head { padding-left: 18px; }
 }

@@ -21,6 +21,8 @@ const state = {
   profiles: [],
   profileStats: null,
   selectedProfile: null,
+  profileFilter: 'all',
+  profileMetrics: null, // id -> { written, dialogs, replies }
   // Выбранная группа на странице настроек - переживает уход на другой раздел.
   settingsGroup: 'interface',
   runStatus: { running: false, paused: false, uptimeSec: 0, queueSize: 0 },
@@ -295,16 +297,34 @@ async function setLanguage(lang) {
   render();
 }
 
-// ── шапка и навигация ──────────────────────────────────────────────
+// ── рельс и шапка панели ───────────────────────────────────────────
 function renderChrome() {
-  $('.brand .tag').textContent = t('app.brandTag');
-  const appearBtn = $('#appearanceBtn');
-  appearBtn.innerHTML = ICONS.palette + '<span>' + esc(t('app.appearance')) + '</span>';
+  $('#appearanceBtn').innerHTML = ICONS.palette;
+  $('#appearanceBtn').dataset.label = t('app.appearance');
+  paintThemeBtn();
+
+  $('#btnPalette').innerHTML = ICONS.search + '<kbd>Ctrl K</kbd>';
+  $('#btnPalette').title = t('palette.title');
+
   $('#winMin').innerHTML = ICONS.winMin;
   $('#winMin').title = t('win.minimize');
   $('#winClose').innerHTML = ICONS.winClose;
   $('#winClose').title = t('win.close');
   paintWindowState(false);
+  paintClock();
+}
+
+function paintThemeBtn() {
+  const dark = document.documentElement.getAttribute('data-theme') !== 'light';
+  const btn = $('#themeBtn');
+  btn.innerHTML = dark ? ICONS.sun : ICONS.moon;
+  btn.dataset.label = t(dark ? 'appear.theme.light' : 'appear.theme.dark');
+}
+
+/** Часы в шапке - как в референсе. Заодно признак того, что окно живое. */
+function paintClock() {
+  const el = $('#clock');
+  if (el) el.textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
 function paintWindowState(maximized) {
@@ -315,28 +335,13 @@ function paintWindowState(maximized) {
 
 function renderNav() {
   const nav = $('#nav');
-  $$('.nav-item', nav).forEach((el) => el.remove());
+  nav.innerHTML = '';
   for (const item of ROUTES) {
-    const el = h(`<div class="nav-item ${state.route === item.id ? 'active' : ''}" data-route="${item.id}">
-      <span class="icon">${ICONS[item.icon]}</span><span>${esc(t('navShort.' + item.id))}</span></div>`);
-    el.title = t(item.labelKey);
+    const el = h(`<button class="rail-btn ${state.route === item.id ? 'active' : ''}"
+      data-label="${esc(t('navShort.' + item.id))}">${ICONS[item.icon]}</button>`);
     el.addEventListener('click', () => go(item.id));
     nav.appendChild(el);
   }
-  moveNavPill();
-}
-
-/** Пилюля активного пункта едет по замеренным координатам, а не по CSS-классу:
-    ширина у пунктов разная, и переход между ними должен быть плавным. */
-function moveNavPill() {
-  const pill = $('#navPill');
-  const active = $('.nav-item.active');
-  if (!pill || !active) return;
-  const navBox = $('#nav').getBoundingClientRect();
-  const box = active.getBoundingClientRect();
-  pill.style.width = box.width + 'px';
-  pill.style.transform = `translate(${box.left - navBox.left}px, -50%)`;
-  pill.style.opacity = '1';
 }
 
 function go(route) {
@@ -369,7 +374,6 @@ const ACTIONS = {};
 
 function render() {
   const route = ROUTES.find((r) => r.id === state.route) || ROUTES[0];
-  $('#crumbs').textContent = t('crumbs.root') + ' / ' + t(route.labelKey).toUpperCase();
   $('#pageTitle').textContent = t(route.titleKey);
   $('#pageSub').textContent = t(route.subKey);
 
@@ -394,49 +398,48 @@ function render() {
 // ── Дашборд ────────────────────────────────────────────────────────
 VIEWS.dashboard = () => {
   const wrap = h(`<div>
-    <div class="hero glass glass-refract glass-sheen">
+    <div class="stats-strip card glass" id="dStrip">
+      <div class="stat-cell"><div class="num" id="sRunState">${dash}</div><div class="cap">${esc(t('dash.status'))}</div></div>
+      <div class="stat-cell" data-tone="ok"><div class="num" id="sSent">0</div>
+        <svg class="cell-spark" id="dSpark" viewBox="0 0 100 22" preserveAspectRatio="none">
+          <path class="area"/><path vector-effect="non-scaling-stroke"/>
+        </svg>
+        <div class="cap">${esc(t('dash.sentFoot'))}</div></div>
+      <div class="stat-cell" id="cQueue"><div class="num" id="sQueue">0</div><div class="cap">${esc(t('dash.queue'))}</div></div>
+      <div class="stat-cell" id="cReady"><div class="num" id="sReadyN">0</div><div class="cap">${esc(t('dash.ready'))}</div></div>
+      <div class="stat-cell"><div class="num" id="sUptime">0s</div><div class="cap">${esc(t('dash.uptime'))}</div></div>
+      <div class="strip-note" id="dNote"></div>
+    </div>
+
+    <div class="control glass glass-refract glass-sheen">
       <div>
         <div class="section-label">${esc(t('dash.kicker'))}</div>
-        <h1>${esc(t('dash.heroTitle'))}</h1>
-        <div class="hero-sub">${esc(t('dash.heroSub'))}</div>
-        <div class="hero-actions" id="runControls"></div>
-        <div class="hero-note" id="runNote"></div>
+        <h2>${esc(t('dash.heroTitle'))}</h2>
+        <div class="sub">${esc(t('dash.heroSub'))}</div>
+        <div class="control-actions" id="runControls"></div>
+        <div class="control-note" id="runNote"></div>
       </div>
-      <div class="hero-side glass">
-        <div class="section-label">${esc(t('dash.currentStatus'))}</div>
-        <div class="hero-state" id="hStatus">${dash}</div>
-
-        <div class="hero-progress">
-          <div class="bar"><span id="hBar"></span></div>
-          <div class="bar-foot"><span id="hProgress">0 / 0</span><span id="hPercent">0%</span></div>
-        </div>
-
-        <div class="kv"><span class="k">${esc(t('dash.currentAccount'))}</span><span class="v" id="hAccount">${dash}</span></div>
-        <div class="kv"><span class="k">${esc(t('dash.queue'))}</span><span class="v" id="hQueue">0</span></div>
-        <div class="kv"><span class="k">${esc(t('dash.ready'))}</span><span class="v" id="hReady">0</span></div>
+      <div class="gauge">
+        <svg viewBox="0 0 120 120">
+          <circle class="bg" cx="60" cy="60" r="52"/>
+          <circle class="fg" id="gaugeArc" cx="60" cy="60" r="52"
+            stroke-dasharray="326.7" stroke-dashoffset="326.7"/>
+        </svg>
+        <div class="mid"><b id="gaugePct">0%</b><span id="gaugeSub">0 / 0</span></div>
       </div>
     </div>
 
-    <div class="grid cols-4 stagger" style="margin-bottom:16px">
-      <div class="stat glass"><div class="label">${esc(t('dash.uptime'))}</div>
-        <div class="value" id="dUptime">0s</div><div class="foot">${esc(t('dash.uptimeFoot'))}</div></div>
-      <div class="stat glass" id="tQueue"><div class="label">${esc(t('dash.queue'))}</div>
-        <div class="value" id="dQueue">0</div><div class="foot">${esc(t('dash.queueFoot'))}</div></div>
-      <div class="stat glass" id="tReady"><div class="label">${esc(t('dash.ready'))}</div>
-        <div class="value" id="dReady">0</div><div class="foot">${esc(t('dash.readyFoot'))}</div></div>
-      <div class="stat glass"><div class="label">${esc(t('dash.totalSent'))}</div>
-        <div class="value" id="dSent">0</div>
-        <div class="foot">${esc(t('dash.sentFoot'))}</div>
-        <svg class="spark" id="dSpark" viewBox="0 0 100 40" preserveAspectRatio="none">
-          <path class="area"/><path vector-effect="non-scaling-stroke"/>
-        </svg></div>
-    </div>
-
-    <div class="card glass" style="margin-bottom:16px">
-      <h3 style="font-size:16px">${ICONS.target} ${esc(t('targets.title'))}</h3>
-      <div class="hint" style="margin-top:-8px;margin-bottom:14px">${esc(t('targets.sub'))}</div>
-      <div class="chips" id="dTargets"></div>
-      <div class="hint" id="dTargetsHint" style="margin-top:10px"></div>
+    <div class="grid cols-2" style="margin-bottom:14px">
+      <div class="card glass">
+        <h3 style="font-size:15px">${ICONS.profiles} ${esc(t('dash.accounts'))}</h3>
+        <div id="dAccounts"></div>
+      </div>
+      <div class="card glass">
+        <h3 style="font-size:15px">${ICONS.target} ${esc(t('targets.title'))}</h3>
+        <div class="hint" style="margin-top:-8px;margin-bottom:14px">${esc(t('targets.sub'))}</div>
+        <div class="chips" id="dTargets"></div>
+        <div class="hint" id="dTargetsHint" style="margin-top:10px"></div>
+      </div>
     </div>
 
     <div class="card glass">
@@ -585,46 +588,81 @@ function paintRun() {
   const sysPill = $('#sysPill');
   if (sysPill) sysPill.innerHTML = pillHtml(mode);
 
-  const hStatus = $('#hStatus');
-  if (hStatus) {
-    hStatus.textContent = mode === 'running' ? t('dash.running')
-      : mode === 'paused' ? t('dash.pausedState') : t('dash.stopped');
-  }
   const note = $('#runNote');
   if (note) {
     note.textContent = mode === 'running' ? t('dash.noteRunning')
       : mode === 'paused' ? t('dash.notePaused') : t('dash.noteIdle');
   }
 
-  const readyProfiles = state.profiles.filter((p) => p.gmailStatus === 'ready');
-  const ready = readyProfiles.length;
+  const ready = state.profiles.filter((p) => p.gmailStatus === 'ready').length;
   const sent = state.profiles.reduce((n, p) => n + (p.sentCount || 0), 0);
   const plan = sessionPlan();
 
-  const up = $('#dUptime'); if (up) up.textContent = fmtUptime(r.uptimeSec);
-  setNumber($('#dQueue'), r.queueSize);
-  setNumber($('#dReady'), ready);
-  setNumber($('#dSent'), sent);
-  setNumber($('#hQueue'), r.queueSize);
-  setNumber($('#hReady'), ready);
-
-  // Плитки красим по смыслу: ноль готовых аккаунтов - это проблема, а не
-  // просто число, и выглядеть оно должно иначе, чем пустая очередь.
-  setTone($('#tReady'), ready > 0 ? 'ok' : 'bad');
-  setTone($('#tQueue'), r.queueSize > 0 ? 'ok' : (mode === 'running' ? 'warn' : 'idle'));
-
-  // Прогресс сессии: сколько писем ушло из общего плана по готовым аккаунтам.
-  const bar = $('#hBar');
-  if (bar) {
-    bar.style.width = (plan.total ? clamp(plan.done / plan.total, 0, 1) * 100 : 0).toFixed(1) + '%';
-    $('#hProgress').textContent = plan.done + ' / ' + plan.total;
-    $('#hPercent').textContent = (plan.total ? Math.round(plan.done / plan.total * 100) : 0) + '%';
+  const st = $('#sRunState');
+  if (st) {
+    st.textContent = mode === 'running' ? t('dash.running')
+      : mode === 'paused' ? t('dash.pausedState') : t('dash.stopped');
+    st.style.fontSize = '19px';
+    setTone(st.parentElement, mode === 'running' ? 'ok' : mode === 'paused' ? 'warn' : '');
   }
-  const acc = $('#hAccount');
-  if (acc) acc.textContent = plan.current ? plan.current.label : dash;
+  const up = $('#sUptime'); if (up) up.textContent = fmtUptime(r.uptimeSec);
+  setNumber($('#sQueue'), r.queueSize);
+  setNumber($('#sReadyN'), ready);
+  setNumber($('#sSent'), sent);
 
+  // Цифры красим по смыслу: ноль готовых аккаунтов - это проблема, а не
+  // просто число, и выглядеть оно должно иначе, чем пустая очередь.
+  setTone($('#cReady'), ready > 0 ? 'ok' : 'bad');
+  setTone($('#cQueue'), r.queueSize > 0 ? 'accent' : (mode === 'running' ? 'warn' : ''));
+
+  // Плашка справа в полосе: одна главная причина, по которой прогон не поедет.
+  const plate = $('#dNote');
+  if (plate) {
+    if (!ready) plate.innerHTML = notePlate('bad', t('dash.plateNoReady'));
+    else if (!state.settings.texts) plate.innerHTML = notePlate('warn', t('dash.plateNoTexts'));
+    else if (mode === 'paused') plate.innerHTML = notePlate('warn', t('dash.platePaused'));
+    else plate.innerHTML = '';
+  }
+
+  // Кольцо прогресса сессии.
+  const arc = $('#gaugeArc');
+  if (arc) {
+    const c = 2 * Math.PI * 52;
+    const done = plan.total ? clamp(plan.done / plan.total, 0, 1) : 0;
+    arc.setAttribute('stroke-dasharray', c.toFixed(1));
+    arc.setAttribute('stroke-dashoffset', (c * (1 - done)).toFixed(1));
+    $('#gaugePct').textContent = Math.round(done * 100) + '%';
+    $('#gaugeSub').textContent = plan.done + ' / ' + plan.total;
+  }
+
+  paintAccountRows(plan);
   paintRunControls();
   paintSpark();
+}
+
+function notePlate(kind, text) {
+  return `<span class="note-plate ${kind === 'warn' ? 'warn' : ''}">${ICONS.alert}${esc(text)}</span>`;
+}
+
+/** Мини-строки готовых аккаунтов с прогрессом по лимиту. */
+function paintAccountRows(plan) {
+  const box = $('#dAccounts');
+  if (!box) return;
+  const limit = state.settings.system.mailsPerAccount || 0;
+  const ready = state.profiles.filter((p) => p.gmailStatus === 'ready');
+  if (!ready.length) {
+    box.innerHTML = `<div class="empty" style="padding:24px 0">${esc(t('dash.noAccounts'))}</div>`;
+    return;
+  }
+  box.innerHTML = ready.map((p) => {
+    const done = limit > 0 ? clamp((p.sentCount || 0) / limit, 0, 1) : 0;
+    const live = plan.current && plan.current.id === p.id && state.runStatus.running;
+    return `<div class="acc-row">
+      <span class="nm">${esc(p.label)}${live ? ' <span class="pc-tag live">' + esc(t('prof.writingNow')) + '</span>' : ''}</span>
+      <span class="track"><span style="width:${(done * 100).toFixed(1)}%"></span></span>
+      <span class="cnt">${p.sentCount || 0} / ${limit}</span>
+    </div>`;
+  }).join('');
 }
 
 /**
@@ -654,7 +692,7 @@ function paintSpark() {
   // в плитке дыру, и подпись съезжала ниже, чем у соседних плиток.
   const values = state.sendSeries.length >= 2 ? state.sendSeries : [0, 0];
   const [area, line] = svg.children;
-  const w = 100, hh = 40;
+  const w = 100, hh = 22;
   const max = Math.max(1, ...values);
   const step = w / (values.length - 1);
   const pts = values.map((v, i) => [i * step, hh - (v / max) * (hh - 4) - 2]);
@@ -745,48 +783,79 @@ function appendLog(entry) {
 // ── Профили ────────────────────────────────────────────────────────
 ACTIONS.profiles = () => {
   const nudge = h(`<button class="btn">${ICONS.send}<span>${esc(t('nudge.btn'))}</span></button>`);
-  nudge.addEventListener('click', async () => {
-    const email = await askText(t('nudge.ask'), { placeholder: 'seller@example.com' });
-    if (!email) return;
-    toast(t('nudge.sending'));
-    try {
-      const res = await api.contacts.nudge(email.trim());
-      if (res && res.ok) { toast(t('nudge.ok'), 'success'); await refreshProfiles(); }
-      else toast(t('nudge.fail.' + ((res && res.reason) || 'unknown')), 'error');
-    } catch (e) { toast(t('nudge.error', { error: e.message }), 'error'); }
-  });
+  nudge.addEventListener('click', () => nudgeFlow());
 
   const create = h(`<button class="btn primary">${ICONS.plus}<span>${esc(t('prof.new'))}</span></button>`);
   create.addEventListener('click', () => createProfile());
   return [nudge, create];
 };
 
+// Фильтры карточек профилей. Считаются по тем же полям, что рисует карточка.
+const PROFILE_FILTERS = [
+  { id: 'all', match: () => true },
+  { id: 'ready', match: (p) => p.gmailStatus === 'ready' },
+  { id: 'running', match: (p) => p.running },
+  { id: 'problems', match: (p) => p.gmailStatus === 'needs_login' || p.gmailStatus === 'error' },
+];
+
 VIEWS.profiles = () => {
   const s = state.profileStats || { total: 0, running: 0, gmailReady: 0, portsOpen: 0 };
   const wrap = h(`<div>
-    <div class="grid cols-4 stagger" style="margin-bottom:18px">
-      <div class="stat glass"><div class="label">${esc(t('prof.total'))}</div><div class="value" id="sTotal">0</div></div>
-      <div class="stat glass" id="tRun"><div class="label">${esc(t('prof.runningCount'))}</div><div class="value" id="sRun">0</div></div>
-      <div class="stat glass" id="tReadyP"><div class="label">${esc(t('prof.gmailReady'))}</div><div class="value" id="sReady">0</div></div>
-      <div class="stat glass"><div class="label">${esc(t('prof.portsOpen'))}</div><div class="value" id="sPorts">0</div></div>
+    <div class="stats-strip card glass">
+      <div class="stat-cell"><div class="num" id="sOnline">0/0</div><div class="cap">${esc(t('prof.runningCount'))}</div></div>
+      <div class="stat-cell" id="cWritten"><div class="num" id="sWritten">0</div><div class="cap">${esc(t('prof.written'))}</div></div>
+      <div class="stat-cell" id="cDialogs"><div class="num" id="sDialogs">0</div><div class="cap">${esc(t('prof.dialogs'))}</div></div>
+      <div class="stat-cell" id="cProblems"><div class="num" id="sProblems">0</div><div class="cap">${esc(t('prof.problems'))}</div></div>
+      <div class="strip-note" id="pNote"></div>
     </div>
+
+    <div class="filter-row">
+      <div class="seg filters" id="pFilters"></div>
+      <span class="spacer"></span>
+    </div>
+
     <div class="cards-grid" id="cards"></div>
   </div>`);
 
   setTimeout(() => {
     paintProfileStats(s);
+    renderProfileFilters(wrap);
     renderProfileCards(wrap);
   }, 0);
   return wrap;
 };
 
+function renderProfileFilters(root) {
+  const box = root.querySelector('#pFilters') || $('#pFilters');
+  if (!box) return;
+  box.innerHTML = PROFILE_FILTERS.map((f) => {
+    const n = state.profiles.filter(f.match).length;
+    return `<button data-v="${f.id}" class="${state.profileFilter === f.id ? 'active' : ''}">
+      ${esc(t('prof.filter.' + f.id))}<span class="count">${n}</span></button>`;
+  }).join('');
+  $$('button', box).forEach((b) => b.addEventListener('click', () => {
+    state.profileFilter = b.dataset.v;
+    renderProfileFilters(document);
+    renderProfileCards(document);
+  }));
+}
+
 function paintProfileStats(s) {
-  setNumber($('#sTotal'), s.total);
-  setNumber($('#sRun'), s.running);
-  setNumber($('#sReady'), s.gmailReady);
-  setNumber($('#sPorts'), s.portsOpen);
-  setTone($('#tRun'), s.running > 0 ? 'ok' : 'idle');
-  setTone($('#tReadyP'), s.gmailReady > 0 ? 'ok' : 'bad');
+  const online = $('#sOnline');
+  if (online) online.textContent = s.running + '/' + s.total;
+  const m = state.profileMetrics || {};
+  const written = Object.values(m).reduce((n, x) => n + x.written, 0);
+  const dialogs = Object.values(m).reduce((n, x) => n + x.dialogs, 0);
+  const problems = state.profiles.filter((p) => p.gmailStatus === 'needs_login' || p.gmailStatus === 'error').length;
+  setNumber($('#sWritten'), written);
+  setNumber($('#sDialogs'), dialogs);
+  setNumber($('#sProblems'), problems);
+  // Ноль не подсвечиваем: цвет должен означать "тут есть что смотреть".
+  setTone($('#cWritten'), written > 0 ? 'ok' : '');
+  setTone($('#cDialogs'), dialogs > 0 ? 'accent' : '');
+  setTone($('#cProblems'), problems > 0 ? 'bad' : '');
+  const plate = $('#pNote');
+  if (plate) plate.innerHTML = problems ? notePlate('warn', t('prof.plateProblems', { n: problems })) : '';
 }
 
 function renderProfileCards(root) {
@@ -810,26 +879,133 @@ function renderProfileCards(root) {
   // Аккаунт, который движок пишет прямо сейчас - его карточку помечаем, чтобы
   // было видно, куда уходят письма.
   const current = sessionPlan().current;
-  for (const p of state.profiles) {
+  const filter = PROFILE_FILTERS.find((f) => f.id === state.profileFilter) || PROFILE_FILTERS[0];
+  const shown = state.profiles.filter(filter.match);
+
+  if (!shown.length) {
+    cards.appendChild(h(`<div class="empty glass" style="grid-column:1/-1">${ICONS.profiles}
+      <div>${esc(t('prof.emptyFiltered'))}</div></div>`));
+    return;
+  }
+
+  for (const p of shown) {
     const done = limit > 0 ? clamp((p.sentCount || 0) / limit, 0, 1) : 0;
     const isCurrent = !!(current && current.id === p.id && state.runStatus.running);
-    const card = h(`<div class="profile-card glass glass-sheen ${state.selectedProfile === p.id ? 'selected' : ''} ${isCurrent ? 'current' : ''}">
+    const m = (state.profileMetrics || {})[p.id] || { written: 0, dialogs: 0, replies: 0 };
+    const bad = p.gmailStatus === 'error' || p.gmailStatus === 'needs_login';
+    const card = h(`<div class="profile-card glass glass-sheen ${state.selectedProfile === p.id ? 'selected' : ''} ${isCurrent ? 'current' : ''} ${bad ? 'error' : ''}">
       <div class="pc-head">
-        <div><div class="pc-name">${esc(p.label)}${isCurrent ? ' <span class="pc-live">' + esc(t('prof.writingNow')) + '</span>' : ''}</div>
-        <div class="pc-email">${esc(p.email || t('prof.notSignedIn'))}</div></div>
-        <span class="badge ${p.gmailStatus}">${esc(t('status.' + p.gmailStatus))}</span>
+        <span class="pc-avatar" style="--av:${avatarColor(p)}">${esc(avatarLetter(p))}
+          <span class="mark ${p.gmailStatus}"></span></span>
+        <span class="pc-id">
+          <span class="pc-name">${esc(p.label)}</span>
+          <div class="pc-email">${esc(p.email || t('prof.notSignedIn'))}</div>
+          <div class="pc-tags">
+            <span class="pc-tag">${esc(t('status.' + p.gmailStatus))}</span>
+            ${isCurrent ? '<span class="pc-tag live">' + esc(t('prof.writingNow')) + '</span>' : ''}
+          </div>
+        </span>
+        <span class="pc-head-actions">
+          <button class="mini go" data-act="${p.running ? 'stop' : 'launch'}"
+            title="${esc(p.running ? t('prof.stopBtnFull') : t('prof.launch'))}">${p.running ? ICONS.stop : ICONS.play}</button>
+          <button class="mini" data-act="scan" title="${esc(t('prof.scan'))}">${ICONS.reset}</button>
+        </span>
       </div>
+
+      <div class="pc-nums">
+        <span class="n"><b>${m.written}</b><span>${esc(t('prof.written'))}</span></span>
+        <span class="n" ${m.dialogs ? 'data-tone="accent"' : ''}><b>${m.dialogs}</b><span>${esc(t('prof.dialogs'))}</span></span>
+        <span class="n" ${m.replies ? 'data-tone="ok"' : ''}><b>${m.replies}</b><span>${esc(t('prof.replies'))}</span></span>
+      </div>
+
       <div class="pc-meta">
         <span><span class="dot ${p.running ? 'running' : 'new'}"></span> ${esc(p.running ? t('prof.running') : t('prof.stopped'))}</span>
         <span>${esc(t('prof.port'))}: ${p.port || dash}</span>
-        <span class="pc-sent">${esc(t('prof.sent'))}: ${p.sentCount} / ${limit}</span>
+        <span class="chip-mini">${p.sentCount} / ${limit}</span>
       </div>
+
+      <div class="pc-foot">
+        <span>${esc(fmtDate(p.createdAt))}</span>
+        <span class="acts">
+          <button class="mini" data-act="open" title="${esc(t('prof.details'))}">${ICONS.settings}</button>
+          <button class="mini" data-act="test" title="${esc(t('prof.testSend'))}">${ICONS.send}</button>
+          <button class="mini danger" data-act="del" title="${esc(t('prof.delete'))}">${ICONS.trash}</button>
+        </span>
+      </div>
+
       <div class="pc-progress"><span style="width:${(done * 100).toFixed(1)}%"></span></div>
     </div>`);
-    card.addEventListener('click', () => openProfileDrawer(p.id));
+
+    card.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-act]');
+      if (!btn) { openProfileDrawer(p.id); return; }
+      e.stopPropagation();
+      profileAction(btn.dataset.act, p);
+    });
     cards.appendChild(card);
   }
+
+  const add = h(`<div class="add-card">
+    <span class="plus">${ICONS.plus}</span>
+    <span class="cap">${esc(t('prof.new'))}</span>
+    <span class="sub">${esc(t('prof.addSub'))}</span></div>`);
+  add.addEventListener('click', () => createProfile());
+  cards.appendChild(add);
+
   wireSheen(cards);
+}
+
+/** Действия с карточки профиля. Те же, что в панели деталей. */
+async function profileAction(act, p) {
+  if (act === 'launch') return launchProfile(p.id, true);
+  if (act === 'stop') { await api.profiles.stop(p.id); return refreshProfiles(); }
+  if (act === 'open') return openProfileDrawer(p.id);
+  if (act === 'scan') {
+    toast(t('prof.scanning'));
+    try { await api.profiles.scan(p.id); await refreshProfiles(); toast(t('prof.scanDone'), 'success'); }
+    catch (e) { toast(t('prof.scanFailed', { error: e.message }), 'error'); }
+    return undefined;
+  }
+  if (act === 'test') {
+    const to = await askText(t('prof.askTestTo'), { value: p.email || '', placeholder: 'recipient@example.com' });
+    if (!to) return undefined;
+    toast(t('prof.testSending'));
+    try {
+      const res = await api.gmail.testSend(p.id, { to, subject: t('prof.testSubject'), body: t('prof.testBody') });
+      const ok = !!(res && res.ok);
+      toast(ok ? t('prof.testSent') : t('prof.testUnconfirmed'), ok ? 'success' : 'error');
+    } catch (e) { toast(t('prof.testFailed', { error: e.message }), 'error'); }
+    return undefined;
+  }
+  if (act === 'del') {
+    const ok = await askConfirm(t('prof.confirmDeleteTitle'), t('prof.confirmDeleteText', { label: p.label }),
+      { danger: true, okLabel: t('common.delete') });
+    if (!ok) return undefined;
+    await api.profiles.remove(p.id);
+    if (state.selectedProfile === p.id) { state.selectedProfile = null; setDrawerOpen(false); }
+    return refreshProfiles();
+  }
+  return undefined;
+}
+
+/** Буква и цвет аватара выводятся из почты или названия - одинаковые для
+    одного профиля между запусками, поэтому его узнаёшь по цвету. */
+function avatarLetter(p) {
+  const src = (p.email || p.label || '?').trim();
+  return src.charAt(0).toUpperCase();
+}
+
+function avatarColor(p) {
+  const src = (p.email || p.label || p.id || '');
+  let hash = 0;
+  for (let i = 0; i < src.length; i++) hash = (hash * 31 + src.charCodeAt(i)) >>> 0;
+  return `hsl(${hash % 360} 52% 42%)`;
+}
+
+function fmtDate(ts) {
+  if (!ts) return dash;
+  const d = new Date(ts);
+  return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
 async function createProfile() {
@@ -1352,6 +1528,124 @@ function wireAppearanceControls(root, rerender) {
 }
 
 
+// ── командная палитра ──────────────────────────────────────────────
+// Ctrl+K: один список из разделов, групп настроек и действий. Действия
+// собираются от текущего состояния - "Пауза" не появится на остановленном
+// прогоне, а "Продолжить" не появится на работающем.
+let paletteIndex = 0;
+let paletteRows = [];
+
+function paletteOpen() { return $('#paletteScrim').classList.contains('open'); }
+
+function paletteCommands() {
+  const rows = [];
+  for (const r of ROUTES) {
+    rows.push({ group: 'palette.g.sections', icon: r.icon, label: t(r.titleKey), hint: t('palette.go'), run: () => go(r.id) });
+  }
+  for (const g of SETTINGS_GROUPS) {
+    rows.push({ group: 'palette.g.settings', icon: g.icon, label: t('set.g.' + g.id), hint: t('palette.open'), run: () => goSettings(g.id) });
+  }
+
+  const mode = runState();
+  if (mode === 'idle') rows.push({ group: 'palette.g.actions', icon: 'play', label: t('dash.start'), run: () => runAction('start') });
+  else {
+    rows.push({ group: 'palette.g.actions', icon: 'stop', label: t('dash.stop'), run: () => runAction('stop') });
+    rows.push({ group: 'palette.g.actions', icon: mode === 'paused' ? 'play' : 'pause', label: t(mode === 'paused' ? 'dash.resume' : 'dash.pause'), run: () => runAction(mode === 'paused' ? 'resume' : 'pause') });
+  }
+  rows.push({ group: 'palette.g.actions', icon: 'plus', label: t('prof.new'), run: () => createProfile() });
+  rows.push({ group: 'palette.g.actions', icon: 'send', label: t('nudge.btn'), run: () => nudgeFlow() });
+  rows.push({ group: 'palette.g.actions', icon: 'palette', label: t('app.appearance'), run: () => openAppearanceDrawer() });
+  const dark = document.documentElement.getAttribute('data-theme') !== 'light';
+  rows.push({ group: 'palette.g.actions', icon: dark ? 'sun' : 'moon', label: t(dark ? 'appear.theme.light' : 'appear.theme.dark'), run: () => setTheme(dark ? 'light' : 'dark') });
+  return rows;
+}
+
+function togglePalette(open) {
+  const scrim = $('#paletteScrim');
+  const next = open === undefined ? !paletteOpen() : open;
+  scrim.classList.toggle('open', next);
+  if (!next) return;
+  paletteIndex = 0;
+  renderPalette('');
+  const input = $('#paletteInput');
+  input.value = '';
+  input.focus();
+}
+
+function renderPalette(query) {
+  const q = query.trim().toLowerCase();
+  paletteRows = paletteCommands().filter((r) => !q || r.label.toLowerCase().includes(q));
+  paletteIndex = clamp(paletteIndex, 0, Math.max(0, paletteRows.length - 1));
+
+  let html = '';
+  let lastGroup = null;
+  paletteRows.forEach((r, i) => {
+    if (r.group !== lastGroup) { html += `<div class="palette-group">${esc(t(r.group))}</div>`; lastGroup = r.group; }
+    html += `<div class="palette-item ${i === paletteIndex ? 'on' : ''}" data-i="${i}">
+      <span class="icon">${ICONS[r.icon] || ''}</span><span>${esc(r.label)}</span>
+      ${r.hint ? '<span class="go">' + esc(r.hint) + '</span>' : ''}</div>`;
+  });
+
+  $('#paletteList').innerHTML = paletteRows.length ? html : `<div class="palette-empty">${esc(t('palette.empty'))}</div>`;
+  $$('#paletteList .palette-item').forEach((el) => {
+    el.addEventListener('mousemove', () => { paletteIndex = +el.dataset.i; markPalette(); });
+    el.addEventListener('click', () => runPalette(+el.dataset.i));
+  });
+  markPalette();
+}
+
+function markPalette() {
+  $$('#paletteList .palette-item').forEach((el) => {
+    const on = +el.dataset.i === paletteIndex;
+    el.classList.toggle('on', on);
+    if (on) el.scrollIntoView({ block: 'nearest' });
+  });
+}
+
+function runPalette(i) {
+  const row = paletteRows[i];
+  if (!row) return;
+  togglePalette(false);
+  row.run();
+}
+
+function buildPalette() {
+  $('#palette').innerHTML = `
+    <div class="palette-search">
+      ${ICONS.search}
+      <input type="text" id="paletteInput" class="grow" placeholder="${esc(t('palette.placeholder'))}"/>
+      <kbd>esc</kbd>
+    </div>
+    <div class="palette-list" id="paletteList"></div>
+    <div class="palette-foot">
+      <span><kbd>↑↓</kbd>${esc(t('palette.nav'))}</span>
+      <span><kbd>enter</kbd>${esc(t('palette.pick'))}</span>
+    </div>`;
+
+  const input = $('#paletteInput');
+  input.addEventListener('input', () => { paletteIndex = 0; renderPalette(input.value); });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); paletteIndex = Math.min(paletteIndex + 1, paletteRows.length - 1); markPalette(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); paletteIndex = Math.max(paletteIndex - 1, 0); markPalette(); }
+    else if (e.key === 'Enter') { e.preventDefault(); runPalette(paletteIndex); }
+  });
+  $('#paletteScrim').addEventListener('mousedown', (e) => {
+    if (e.target === $('#paletteScrim')) togglePalette(false);
+  });
+}
+
+/** Подталкивание вынесено отдельно - зовётся и с кнопки, и из палитры. */
+async function nudgeFlow() {
+  const email = await askText(t('nudge.ask'), { placeholder: 'seller@example.com' });
+  if (!email) return;
+  toast(t('nudge.sending'));
+  try {
+    const res = await api.contacts.nudge(email.trim());
+    if (res && res.ok) { toast(t('nudge.ok'), 'success'); await refreshProfiles(); }
+    else toast(t('nudge.fail.' + ((res && res.reason) || 'unknown')), 'error');
+  } catch (e) { toast(t('nudge.error', { error: e.message }), 'error'); }
+}
+
 // ── горячие клавиши ────────────────────────────────────────────────
 function wireHotkeys() {
   document.addEventListener('keydown', (e) => {
@@ -1362,11 +1656,14 @@ function wireHotkeys() {
     const modalOpen = !!$('.modal-overlay');
 
     if (e.key === 'Escape') {
+      if (paletteOpen()) { togglePalette(false); return; }
       if (drawerOpen()) { setDrawerOpen(false); return; }
       if (typing) e.target.blur();
       return;
     }
     if (modalOpen) return;
+    // Палитра сама разбирает стрелки и Enter, пока открыта.
+    if (paletteOpen() && e.key !== 'k' && e.key !== 'K') return;
     if (e.ctrlKey && e.key === 'Enter') {
       e.preventDefault();
       runAction(runState() === 'idle' ? 'start' : 'stop');
@@ -1378,6 +1675,11 @@ function wireHotkeys() {
       return;
     }
     if (e.ctrlKey && (e.key === 'k' || e.key === 'K' || e.key === 'л' || e.key === 'Л')) {
+      e.preventDefault();
+      togglePalette();
+      return;
+    }
+    if (e.ctrlKey && (e.key === 'f' || e.key === 'F' || e.key === 'а' || e.key === 'А')) {
       e.preventDefault();
       if (state.route !== 'dashboard') go('dashboard');
       setTimeout(() => { const s = $('#logSearch'); if (s) s.focus(); }, 60);
@@ -1393,6 +1695,7 @@ function wireHotkeys() {
 async function refreshProfiles() {
   state.profiles = await api.profiles.list();
   state.profileStats = await api.profiles.stats();
+  state.profileMetrics = await api.profiles.metrics();
 
   // Спарклайн: прирост отправленного за тик. Первый замер только задаёт точку
   // отсчёта, иначе весь накопленный за прошлые запуски счёт нарисовался бы
@@ -1405,6 +1708,7 @@ async function refreshProfiles() {
   state.lastSentTotal = total;
 
   if (state.route === 'profiles') {
+    renderProfileFilters(document);
     renderProfileCards(document);
     paintProfileStats(state.profileStats);
   } else if (state.route === 'dashboard') {
@@ -1428,7 +1732,14 @@ async function boot() {
   applyAppearance();
   renderChrome();
 
+  buildPalette();
   $('#appearanceBtn').addEventListener('click', () => toggleAppearanceDrawer());
+  $('#themeBtn').addEventListener('click', async () => {
+    const dark = document.documentElement.getAttribute('data-theme') !== 'light';
+    await setTheme(dark ? 'light' : 'dark');
+    paintThemeBtn();
+  });
+  $('#btnPalette').addEventListener('click', () => togglePalette(true));
   $('#drawerScrim').addEventListener('click', () => setDrawerOpen(false));
   $('#winMin').addEventListener('click', () => api.win.minimize());
   $('#winMax').addEventListener('click', async () => {
@@ -1451,10 +1762,7 @@ async function boot() {
   api.logs.onEntry((entry) => appendLog(entry));
   setInterval(refreshRun, 1000);
   setInterval(refreshProfiles, 4000);
-  window.addEventListener('resize', debounce(moveNavPill, 120));
-  // Гротеск подгружается с font-display: swap - ширина пунктов навигации после
-  // подмены шрифта меняется, и пилюля без пересчёта съезжает.
-  if (document.fonts && document.fonts.ready) document.fonts.ready.then(moveNavPill);
+  setInterval(paintClock, 15000);
   wireHotkeys();
 }
 

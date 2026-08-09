@@ -86,6 +86,26 @@ function register(ctx) {
 
   ipcMain.handle('profiles:list', () => profileStore.list().map(withRunState));
   ipcMain.handle('profiles:stats', () => profileStore.stats(live));
+  /**
+   * Счётчики по каждому профилю для карточек: скольким написали, сколько
+   * переписок завязалось и сколько автоответов ушло. Считаем на лету по двум
+   * журналам - отдельного хранилища для этого заводить незачем.
+   */
+  ipcMain.handle('profiles:metrics', () => {
+    const out = {};
+    for (const p of profileStore.list()) out[p.id] = { written: 0, dialogs: 0, replies: 0 };
+    for (const c of (contactStore ? contactStore.list() : [])) {
+      const row = out[c.profileId];
+      if (row) row.written++;
+    }
+    for (const d of (ctx.dialogStore ? ctx.dialogStore.list() : [])) {
+      const row = out[d.profileId];
+      if (!row) continue;
+      row.dialogs++;
+      row.replies += d.replies || 0;
+    }
+    return out;
+  });
   ipcMain.handle('profiles:create', async (_e, { label }) => {
     const p = profileStore.create(label);
     logger.success('system', t('sys.profileCreated', { label: p.label }));

@@ -31,6 +31,7 @@ contextBridge.exposeInMainWorld('api', {
   profiles: {
     list: () => ipcRenderer.invoke('profiles:list'),
     stats: () => ipcRenderer.invoke('profiles:stats'),
+    metrics: () => ipcRenderer.invoke('profiles:metrics'),
     create: (label) => ipcRenderer.invoke('profiles:create', { label }),
     remove: (id) => ipcRenderer.invoke('profiles:remove', { id }),
     launch: (id, openGmail) => ipcRenderer.invoke('profiles:launch', { id, openGmail }),

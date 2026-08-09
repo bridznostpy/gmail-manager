@@ -96,7 +96,7 @@
   --head-scrim: rgba(6, 8, 12, 0.72);
   /* Подложка всей рабочей области. Слабее карточек, но ходит за той же ручкой
      плотности: и то и другое - про то, насколько интерфейс глушит картинку. */
-  --content-scrim: rgba(var(--glass-rgb), calc(var(--glass-alpha) * 0.52));
+  --content-scrim: rgba(var(--glass-rgb), calc(var(--glass-alpha) * 0.34));
   --glass-border: rgba(255, 255, 255, 0.11);
   --glass-hi: rgba(255, 255, 255, 0.34);
   --glass-lo: rgba(255, 255, 255, 0.04);
@@ -122,8 +122,9 @@
   --blue-soft: rgba(87, 166, 255, 0.15);
 
   /* ── Геометрия ───────────────────────────────────────────── */
-  --topbar-h: 56px;
-  --radius-lg: 22px;
+  --gap: 12px; /* отступ панелей от краёв окна и друг от друга */
+  --rail-w: 62px;
+  --radius-lg: 20px;
   --radius: 16px;
   --radius-sm: 11px;
   --radius-xs: 8px;

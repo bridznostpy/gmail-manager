@@ -489,7 +489,7 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
 .accent-dot.on { border-color: var(--text); box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.12); }
 
 .slider-row { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
-.slider-row .lbl { font-size: 11.5px; color: var(--text-dim); flex: 0 0 92px; }
+.slider-row .lbl { font-size: 11.5px; color: var(--text-dim); flex: 0 0 110px; }
 .slider-row .num { font-family: var(--font-mono); font-size: 10.5px; color: var(--text-faint); flex: 0 0 38px; text-align: right; }
 
 .keys { display: grid; gap: 6px; }

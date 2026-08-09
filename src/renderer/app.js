@@ -254,6 +254,7 @@ function applyAppearance() {
   css.setProperty('--bg-dim', String(ap.dim != null ? ap.dim : 0.58));
   css.setProperty('--bg-blur', (ap.blur || 0) + 'px');
   css.setProperty('--bg-saturate', String(ap.saturate != null ? ap.saturate : 1));
+  css.setProperty('--glass-alpha', String(ap.glassAlpha != null ? ap.glassAlpha : 0.78));
   css.setProperty('--bg-size', ap.fit === 'tile' ? 'auto' : (ap.fit || 'cover'));
   css.setProperty('--bg-repeat', ap.fit === 'tile' ? 'repeat' : 'no-repeat');
 
@@ -1167,6 +1168,10 @@ function appearanceControlsHtml() {
         <div class="slider-row"><span class="lbl">${esc(t('appear.saturate'))}</span>
           <input type="range" id="apSat" min="0" max="2" step="0.05" value="${ap.saturate}"/>
           <span class="num" id="apSatNum">${Number(ap.saturate).toFixed(2)}</span></div>
+        <div class="slider-row"><span class="lbl">${esc(t('appear.glass'))}</span>
+          <input type="range" id="apGlass" min="0.3" max="1" step="0.02" value="${ap.glassAlpha}"/>
+          <span class="num" id="apGlassNum">${Math.round(ap.glassAlpha * 100)}%</span></div>
+        <div class="hint">${esc(t('appear.glassHint'))}</div>
       </div>
 
       <div class="opt-group">
@@ -1254,6 +1259,7 @@ function wireAppearanceControls(root, rerender) {
   slider('#apDim', '#apDimNum', 'dim', (v) => Math.round(v * 100) + '%', Number);
   slider('#apBlur', '#apBlurNum', 'blur', (v) => v + 'px', Number);
   slider('#apSat', '#apSatNum', 'saturate', (v) => v.toFixed(2), Number);
+  slider('#apGlass', '#apGlassNum', 'glassAlpha', (v) => Math.round(v * 100) + '%', Number);
 
   wireRipples(root);
 }

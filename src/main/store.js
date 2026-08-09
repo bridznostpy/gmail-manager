@@ -24,6 +24,7 @@ const DEFAULTS = {
     dim: 0.58, // затемнение фона, 0..1
     blur: 0, // размытие фона, px
     saturate: 1, // насыщенность фона
+    glassAlpha: 0.78, // плотность стекла карточек, 0..1 (светлое фото требует больше)
     fit: 'cover', // 'cover' | 'contain' | 'tile'
     accent: 'green', // green | violet | blue | amber | pink
     reduceMotion: false,

@@ -21,6 +21,13 @@ const DICT = {
     'sys.profileCreated': 'Создан профиль "{label}"',
     'sys.languageChanged': 'Язык приложения переключён на {lang}',
 
+    // ── Оформление ──────────────────────────────────────────
+    'appear.dialogTitle': 'Выберите картинку для фона',
+    'appear.dialogFilter': 'Изображения',
+    'appear.picked': 'Фон обновлён',
+    'appear.cleared': 'Фон сброшен на градиент',
+    'appear.copyFailed': 'Не удалось скопировать картинку фона: {error}',
+
     // ── Ошибки ──────────────────────────────────────────────
     'err.profileNotFound': 'Профиль не найден',
     'err.profileNotRunning': 'Профиль не запущен',
@@ -154,6 +161,12 @@ const DICT = {
     'sys.textsLoaded': 'Broadcast texts loaded',
     'sys.profileCreated': 'Created profile "{label}"',
     'sys.languageChanged': 'Application language switched to {lang}',
+
+    'appear.dialogTitle': 'Pick a background image',
+    'appear.dialogFilter': 'Images',
+    'appear.picked': 'Background updated',
+    'appear.cleared': 'Background reset to gradient',
+    'appear.copyFailed': 'Could not copy the background image: {error}',
 
     'err.profileNotFound': 'Profile not found',
     'err.profileNotRunning': 'Profile is not running',

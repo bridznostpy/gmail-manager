@@ -10,6 +10,7 @@ const { t } = i18n;
 const telegram = require('./telegram/telegram');
 const { resolveChrome } = require('./cdp/chromeManager');
 const { scanAndPersist } = require('./profiles/autoScan');
+const appearance = require('./appearance');
 
 function register(ctx) {
   const { store, profileStore, contactStore, chrome, parser, sender, mainWindow } = ctx;
@@ -20,6 +21,23 @@ function register(ctx) {
 
   // Stream log entries to the renderer.
   logger.onLog((entry) => send('log:entry', entry));
+
+  // ── window (своя шапка вместо рамки Windows) ──────────────────────
+  ipcMain.handle('window:minimize', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.minimize();
+  });
+  ipcMain.handle('window:maximize', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return { maximized: false };
+    if (mainWindow.isMaximized()) mainWindow.unmaximize();
+    else mainWindow.maximize();
+    return { maximized: mainWindow.isMaximized() };
+  });
+  ipcMain.handle('window:close', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.close();
+  });
+  ipcMain.handle('window:isMaximized', () => ({
+    maximized: !!(mainWindow && !mainWindow.isDestroyed() && mainWindow.isMaximized()),
+  }));
 
   // ── settings ──────────────────────────────────────────────────────
   ipcMain.handle('settings:getAll', () => store.all());
@@ -33,6 +51,12 @@ function register(ctx) {
     }
     return saved;
   });
+  // ── appearance (фон, акцент, движение) ────────────────────────────
+  ipcMain.handle('appearance:get', () => store.get('appearance'));
+  ipcMain.handle('appearance:set', (_e, patch) => store.set('appearance', patch));
+  ipcMain.handle('appearance:pick', () => appearance.pick(store, mainWindow));
+  ipcMain.handle('appearance:clear', () => appearance.clear(store));
+
   ipcMain.handle('settings:loadTexts', (_e, json) => {
     store.set('texts', json);
     logger.success('system', t('sys.textsLoaded'));

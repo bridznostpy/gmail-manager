@@ -1,0 +1,144 @@
+/* ── Жидкое стекло ─────────────────────────────────────────────────
+   Два уровня, как договорились:
+
+   .glass          - дешёвое CSS-стекло: размытие подложки, внутренняя кромка
+                     и мягкая тень. Им покрыто почти всё.
+   .glass-refract  - плюс настоящее преломление через SVG feDisplacementMap
+                     (фильтр #lg-refract в index.html). Дорого по GPU, поэтому
+                     висит только на шапке, hero-карточке, модалках и панели
+                     оформления. Если браузер не примет url() в backdrop-filter,
+                     объявление отбросится целиком и останется .glass - вид
+                     деградирует мягко, а не ломается.
+
+   .glass-sheen    - блик, ползущий за курсором (--mx/--my пишет JS).          */
+
+.glass {
+  position: relative;
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius);
+  box-shadow: var(--glass-shadow-sm);
+  transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease),
+    transform var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+
+/* Внутренняя кромка: светлая сверху, гаснет книзу. Именно она читается как
+   "толщина" стекла - без неё карточка выглядит просто полупрозрачной. */
+.glass::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(160deg, var(--glass-hi), transparent 42%, transparent 62%, var(--glass-lo));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
+  opacity: 0.9;
+}
+
+.glass-refract {
+  backdrop-filter: url(#lg-refract) blur(var(--glass-blur)) saturate(var(--glass-sat));
+  -webkit-backdrop-filter: url(#lg-refract) blur(var(--glass-blur)) saturate(var(--glass-sat));
+  box-shadow: var(--glass-shadow);
+}
+
+/* Блик за курсором. Радиус большой и мягкий: резкое пятно читается как баг. */
+.glass-sheen::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(
+    380px circle at var(--mx, 50%) var(--my, 0%),
+    var(--sheen),
+    transparent 62%
+  );
+  opacity: 0;
+  transition: opacity var(--dur-slow) var(--ease);
+  pointer-events: none;
+}
+.glass-sheen:hover::before { opacity: 1; }
+
+/* ── Слой фона ─────────────────────────────────────────────────────
+   Картинка и вуаль живут ПОД приложением отдельными слоями: так размытие и
+   затемнение не задевают содержимое и не пересчитываются при скролле. */
+.bg-layer {
+  position: fixed;
+  inset: calc(-1 * var(--bg-blur) - 8px);
+  z-index: -2;
+  background-color: var(--bg-base);
+  background-image: var(--bg-image);
+  background-size: var(--bg-size);
+  background-position: var(--bg-position);
+  background-repeat: var(--bg-repeat);
+  filter: blur(var(--bg-blur)) saturate(var(--bg-saturate));
+  transition: filter var(--dur-slow) var(--ease), opacity var(--dur-slow) var(--ease);
+}
+
+.bg-veil {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(120% 90% at 50% 0%, transparent, rgba(0, 0, 0, 0.35)),
+    rgba(0, 0, 0, var(--bg-dim));
+  transition: background var(--dur-slow) var(--ease);
+}
+:root[data-theme="light"] .bg-veil {
+  background:
+    radial-gradient(120% 90% at 50% 0%, transparent, rgba(255, 255, 255, 0.3)),
+    rgba(255, 255, 255, var(--bg-dim));
+}
+
+/* Фон-градиент по умолчанию: медленно плывущие цветовые пятна. Картинки нет -
+   и пустой заливки тоже быть не должно. */
+.bg-layer.gradient::before,
+.bg-layer.gradient::after {
+  content: "";
+  position: absolute;
+  inset: -18%;
+  background: var(--bg-blob-a);
+  filter: blur(70px);
+  opacity: 0.85;
+  animation: blobDrift 26s var(--ease) infinite alternate;
+}
+.bg-layer.gradient::after {
+  background: var(--bg-blob-b);
+  animation-duration: 34s;
+  animation-direction: alternate-reverse;
+  opacity: 0.7;
+}
+
+@keyframes blobDrift {
+  0% { transform: translate3d(-6%, -4%, 0) scale(1); }
+  50% { transform: translate3d(5%, 6%, 0) scale(1.14); }
+  100% { transform: translate3d(8%, -6%, 0) scale(1.04); }
+}
+
+/* ── Общие анимации ────────────────────────────────────────────── */
+@keyframes riseIn {
+  from { opacity: 0; transform: translateY(14px) scale(0.985); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes slideInLeft {
+  from { opacity: 0; transform: translateX(-10px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes pulseDot {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(var(--accent-rgb), 0.55); }
+  70% { box-shadow: 0 0 0 8px rgba(var(--accent-rgb), 0); }
+}
+@keyframes shimmer {
+  from { background-position: -220% 0; }
+  to { background-position: 220% 0; }
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes ripple {
+  to { transform: scale(2.6); opacity: 0; }
+}

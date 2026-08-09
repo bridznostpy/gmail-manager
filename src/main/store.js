@@ -14,6 +14,21 @@ const DEFAULTS = {
   language: 'ru', // 'ru' | 'en' - язык интерфейса и сообщений в логах
   accent: '#7f52ff',
 
+  // ── Appearance (фон, акцент, движение) ───────────────────────────
+  // Картинка фона лежит файлом в userData/appearance, здесь только её имя:
+  // хранить сотни килобайт base64 в settings.json незачем.
+  appearance: {
+    bgType: 'gradient', // 'gradient' | 'image'
+    bgFile: '', // имя файла внутри userData/appearance
+    bgPreset: 'aurora', // пресет градиента, когда картинки нет
+    dim: 0.58, // затемнение фона, 0..1
+    blur: 0, // размытие фона, px
+    saturate: 1, // насыщенность фона
+    fit: 'cover', // 'cover' | 'contain' | 'tile'
+    accent: 'green', // green | violet | blue | amber | pink
+    reduceMotion: false,
+  },
+
   // ── System settings ──────────────────────────────────────────────
   system: {
     mailsPerAccount: 50, // limit of first-messages per Gmail account

@@ -1,11 +1,11 @@
 'use strict';
-/* Renderer app: navigation + all module views. Vanilla JS, no framework.
-   Talks to main only through window.api (see preload.js).
+/* Renderer app: навигация + все экраны. Ванильный JS, без фреймворка.
+   С main общается ТОЛЬКО через window.api (см. preload.js).
    Все пользовательские строки идут через window.I18N (см. i18n.js).
 
-   Wrapped in an IIFE: `window.api` is exposed by contextBridge as a
-   non-configurable global property, so a top-level `const api` would throw
-   "Identifier 'api' has already been declared". Function scope avoids that. */
+   Обёрнуто в IIFE: `window.api` выставлен contextBridge как неконфигурируемое
+   свойство, и объявление `const api` на верхнем уровне упало бы с
+   "Identifier 'api' has already been declared". Область функции это снимает. */
 
 (() => {
 
@@ -16,162 +16,447 @@ const t = (key, params) => I18N.t(key, params);
 
 const state = {
   route: 'dashboard',
+  booted: false,
   settings: null,
   profiles: [],
+  profileStats: null,
   selectedProfile: null,
-  runStatus: { running: false, uptimeSec: 0, queueSize: 0 },
+  runStatus: { running: false, paused: false, uptimeSec: 0, queueSize: 0 },
+  // Живые логи держим массивом, а не только в DOM: иначе их нечем фильтровать.
+  logs: [],
+  logFilter: { level: 'all', query: '' },
+  logFollow: true,
+  // Активность отправки за сессию для спарклайна: прирост "отправлено" на тик.
+  sendSeries: [],
+  lastSentTotal: null,
+  // Идёт запрос старт/стоп/пауза - второй клик в это время не нужен.
+  runBusy: false,
 };
 
-const NAV = [
-  { id: 'dashboard', labelKey: 'nav.dashboard', icon: 'dashboard' },
-  { id: 'profiles', labelKey: 'nav.profiles', icon: 'profiles' },
-  { id: 'parser', labelKey: 'nav.parser', icon: 'parser' },
-  { id: 'cdp', labelKey: 'nav.cdp', icon: 'cdp' },
-  { id: 'link', labelKey: 'nav.link', icon: 'link' },
-  { id: 'telegram', labelKey: 'nav.telegram', icon: 'telegram' },
-  { id: 'settings', labelKey: 'nav.settings', icon: 'settings' },
+const ROUTES = [
+  { id: 'dashboard', labelKey: 'nav.dashboard', icon: 'dashboard', titleKey: 'dash.title', subKey: 'dash.sub' },
+  { id: 'profiles', labelKey: 'nav.profiles', icon: 'profiles', titleKey: 'prof.title', subKey: 'prof.sub' },
+  { id: 'parser', labelKey: 'nav.parser', icon: 'parser', titleKey: 'parser.title', subKey: 'parser.sub' },
+  { id: 'cdp', labelKey: 'nav.cdp', icon: 'cdp', titleKey: 'cdp.title', subKey: 'cdp.sub' },
+  { id: 'link', labelKey: 'nav.link', icon: 'link', titleKey: 'link.title', subKey: 'link.sub' },
+  { id: 'telegram', labelKey: 'nav.telegram', icon: 'telegram', titleKey: 'tg.title', subKey: 'tg.sub' },
+  { id: 'settings', labelKey: 'nav.settings', icon: 'settings', titleKey: 'set.title', subKey: 'set.sub' },
 ];
+
+// Площадки парсера. Значения - те же ключи, что понимает platformMap клиентов
+// (src/main/parser/apis/*.js). Новых сюда не добавлять без документации API.
+const PLATFORMS = [
+  { id: 'usa', label: 'USA', code: 'us' },
+  { id: 'poshmark', label: 'Poshmark', code: 'pm' },
+];
+
+const ACCENTS = {
+  green: { c: '#3ddc84', c2: '#16b364', rgb: '61, 220, 132', on: '#04120a' },
+  violet: { c: '#a78bfa', c2: '#7c4dff', rgb: '167, 139, 250', on: '#0d0620' },
+  blue: { c: '#57a6ff', c2: '#2b6fe0', rgb: '87, 166, 255', on: '#04121f' },
+  amber: { c: '#ffb443', c2: '#f08a00', rgb: '255, 180, 67', on: '#1c1100' },
+  pink: { c: '#ff5fa2', c2: '#e02e7b', rgb: '255, 95, 162', on: '#1f0512' },
+};
+
+const BG_PRESETS = {
+  aurora: {
+    a: 'radial-gradient(42% 46% at 26% 30%, #1f7a4d 0%, transparent 70%)',
+    b: 'radial-gradient(46% 40% at 74% 66%, #14506e 0%, transparent 72%)',
+  },
+  ember: {
+    a: 'radial-gradient(44% 48% at 22% 28%, #7a2f1f 0%, transparent 70%)',
+    b: 'radial-gradient(46% 42% at 76% 70%, #6e3a14 0%, transparent 72%)',
+  },
+  abyss: {
+    a: 'radial-gradient(46% 50% at 30% 24%, #1b2a66 0%, transparent 70%)',
+    b: 'radial-gradient(44% 44% at 72% 72%, #10203f 0%, transparent 72%)',
+  },
+  orchid: {
+    a: 'radial-gradient(44% 48% at 24% 30%, #55206e 0%, transparent 70%)',
+    b: 'radial-gradient(46% 42% at 76% 68%, #1f3a72 0%, transparent 72%)',
+  },
+};
+
+const LOG_LEVELS = ['all', 'info', 'success', 'warn', 'error'];
 
 // ── helpers ────────────────────────────────────────────────────────
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
-const h = (html) => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; };
+const h = (html) => { const tpl = document.createElement('template'); tpl.innerHTML = html.trim(); return tpl.content.firstElementChild; };
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const dash = '-'; // прочерк для пустых значений
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+
+const debounce = (fn, ms = 400) => { let timer; return (...a) => { clearTimeout(timer); timer = setTimeout(() => fn(...a), ms); }; };
 
 let toastTimer = null;
 function toast(msg, kind = '') {
   const el = $('#toast');
+  el.className = 'toast ' + kind;
+  el.innerHTML = `<span></span><span class="bar"></span>`;
+  el.firstElementChild.textContent = msg;
+  // Перезапуск анимации полоски: без перерисовки она не стартует заново.
+  void el.offsetWidth;
   el.className = 'toast show ' + kind;
-  el.textContent = msg;
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => (el.className = 'toast ' + kind), 2600);
 }
 
 async function saveSection(key, patch) {
   state.settings[key] = await api.settings.setSection(key, patch);
+  return state.settings[key];
 }
 
-const debounce = (fn, ms = 400) => { let timer; return (...a) => { clearTimeout(timer); timer = setTimeout(() => fn(...a), ms); }; };
-
-// Electron does not support window.prompt() (it throws), so use an in-app modal
-// text input. Resolves to the entered string, or null if cancelled.
-function askText(title, opts = {}) {
-  return new Promise((resolve) => {
-    const overlay = h(`<div class="modal-overlay">
-      <div class="modal card">
-        <h3>${esc(title)}</h3>
-        <div class="field"><input type="text" id="askInput" value="${esc(opts.value || '')}" placeholder="${esc(opts.placeholder || '')}"/></div>
-        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
-          <button class="btn" id="askCancel">${esc(t('common.cancel'))}</button>
-          <button class="btn primary" id="askOk">${esc(t('common.ok'))}</button>
-        </div>
-      </div></div>`);
-    document.body.appendChild(overlay);
-    const input = overlay.querySelector('#askInput');
-    input.focus();
-    input.select();
-    const done = (val) => { overlay.remove(); resolve(val); };
-    overlay.querySelector('#askOk').addEventListener('click', () => done(input.value));
-    overlay.querySelector('#askCancel').addEventListener('click', () => done(null));
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') done(input.value);
-      else if (e.key === 'Escape') done(null);
-    });
-    overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) done(null); });
-  });
+/** Собрать сворачиваемую панель в одном стиле. */
+function panelHtml(open, headHtml, bodyHtml) {
+  return `<div class="panel glass ${open ? 'open' : ''}">
+    <div class="panel-head">${headHtml}<span class="chev">${ICONS.chevron}</span></div>
+    <div class="panel-wrap"><div class="panel-body"><div class="panel-inner">${bodyHtml}</div></div></div>
+  </div>`;
 }
 
-// ── theme ──────────────────────────────────────────────────────────
-function applyTheme(theme) {
-  document.documentElement.setAttribute('data-theme', theme);
-  $('#themeIcon').innerHTML = theme === 'dark' ? ICONS.sun : ICONS.moon;
-  $('#themeLabel').textContent = t('app.theme');
-}
-function toggleTheme() {
-  const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
-  applyTheme(next);
-  saveSection('theme', next);
-  state.settings.theme = next;
-}
-
-// ── language ───────────────────────────────────────────────────────
-async function setLanguage(lang) {
-  if (lang === I18N.getLanguage()) return;
-  I18N.setLanguage(lang);
-  await saveSection('language', lang);
-  applyTheme(document.documentElement.getAttribute('data-theme'));
-  renderNav();
-  render();
-}
-
-// ── nav ────────────────────────────────────────────────────────────
-function renderNav() {
-  const nav = $('#nav');
-  nav.innerHTML = '';
-  for (const item of NAV) {
-    const el = h(`<div class="nav-item ${state.route === item.id ? 'active' : ''}" data-route="${item.id}">
-      <span class="icon">${ICONS[item.icon]}</span><span>${esc(t(item.labelKey))}</span></div>`);
-    el.addEventListener('click', () => go(item.id));
-    nav.appendChild(el);
-  }
-}
-
-function go(route) {
-  state.route = route;
-  renderNav();
-  render();
-}
-
-// panel toggler
 function wirePanels(root) {
   $$('.panel-head', root).forEach((head) => {
     head.addEventListener('click', () => head.parentElement.classList.toggle('open'));
   });
 }
 
-// ── views ──────────────────────────────────────────────────────────
-function render() {
-  const main = $('#main');
-  const view = VIEWS[state.route];
-  main.innerHTML = '';
-  main.appendChild(view());
-  wirePanels(main);
+/** Волна от точки клика по кнопке - живой отклик вместо мгновенной смены цвета. */
+function wireRipples(root) {
+  $$('.btn', root).forEach((btn) => {
+    if (btn.dataset.rippled) return;
+    btn.dataset.rippled = '1';
+    btn.addEventListener('pointerdown', (e) => {
+      if (btn.disabled) return;
+      const r = btn.getBoundingClientRect();
+      const wave = document.createElement('span');
+      wave.className = 'ripple';
+      wave.style.setProperty('--rx', (e.clientX - r.left) + 'px');
+      wave.style.setProperty('--ry', (e.clientY - r.top) + 'px');
+      btn.appendChild(wave);
+      setTimeout(() => wave.remove(), 600);
+    });
+  });
 }
 
-const VIEWS = {};
+/** Блик стекла, ползущий за курсором. */
+function wireSheen(root) {
+  $$('.glass-sheen', root).forEach((el) => {
+    if (el.dataset.sheened) return;
+    el.dataset.sheened = '1';
+    let frame = null;
+    el.addEventListener('pointermove', (e) => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = null;
+        const r = el.getBoundingClientRect();
+        el.style.setProperty('--mx', ((e.clientX - r.left) / r.width * 100).toFixed(1) + '%');
+        el.style.setProperty('--my', ((e.clientY - r.top) / r.height * 100).toFixed(1) + '%');
+      });
+    });
+  });
+}
 
-// Dashboard
+/** Плавный перекат числа. Мелкие изменения не анимируем - дёргается зря. */
+function setNumber(el, value) {
+  if (!el) return;
+  const next = Number(value) || 0;
+  const prev = Number(el.dataset.val);
+  if (!Number.isFinite(prev) || Math.abs(next - prev) < 1 || document.documentElement.classList.contains('reduce-motion')) {
+    el.dataset.val = String(next);
+    el.textContent = String(next);
+    return;
+  }
+  el.dataset.val = String(next);
+  const from = prev;
+  const startedAt = performance.now();
+  const dur = 420;
+  const tick = (now) => {
+    const p = clamp((now - startedAt) / dur, 0, 1);
+    const eased = 1 - Math.pow(1 - p, 3);
+    el.textContent = String(Math.round(from + (next - from) * eased));
+    if (p < 1 && Number(el.dataset.val) === next) requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}
+
+// Electron не поддерживает window.prompt() (бросает исключение), поэтому
+// текстовый ввод и подтверждение - свои модалки в стиле приложения.
+function modal(bodyHtml, wire) {
+  return new Promise((resolve) => {
+    const overlay = h(`<div class="modal-overlay"><div class="modal glass glass-refract">${bodyHtml}</div></div>`);
+    document.body.appendChild(overlay);
+    wireRipples(overlay);
+    const done = (val) => { overlay.remove(); document.removeEventListener('keydown', onKey, true); resolve(val); };
+    const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); done(null); } };
+    document.addEventListener('keydown', onKey, true);
+    overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) done(null); });
+    wire(overlay, done);
+  });
+}
+
+function askText(title, opts = {}) {
+  return modal(
+    `<h3>${esc(title)}</h3>
+     <div class="field"><input type="text" id="askInput" value="${esc(opts.value || '')}" placeholder="${esc(opts.placeholder || '')}"/></div>
+     <div class="modal-actions">
+       <button class="btn" id="askCancel">${esc(t('common.cancel'))}</button>
+       <button class="btn primary" id="askOk">${esc(t('common.ok'))}</button>
+     </div>`,
+    (overlay, done) => {
+      const input = $('#askInput', overlay);
+      input.focus();
+      input.select();
+      $('#askOk', overlay).addEventListener('click', () => done(input.value));
+      $('#askCancel', overlay).addEventListener('click', () => done(null));
+      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') done(input.value); });
+    },
+  );
+}
+
+function askConfirm(title, text, opts = {}) {
+  return modal(
+    `<h3>${esc(title)}</h3>
+     <div class="modal-text">${esc(text)}</div>
+     <div class="modal-actions">
+       <button class="btn" id="cCancel">${esc(t('common.cancel'))}</button>
+       <button class="btn ${opts.danger ? 'stop' : 'primary'}" id="cOk">${esc(opts.okLabel || t('common.ok'))}</button>
+     </div>`,
+    (overlay, done) => {
+      const ok = $('#cOk', overlay);
+      ok.focus();
+      ok.addEventListener('click', () => done(true));
+      $('#cCancel', overlay).addEventListener('click', () => done(null));
+    },
+  ).then((v) => v === true);
+}
+
+// ── оформление ─────────────────────────────────────────────────────
+function appearance() {
+  return (state.settings && state.settings.appearance) || {};
+}
+
+function applyAppearance() {
+  const ap = appearance();
+  const root = document.documentElement;
+  const css = root.style;
+
+  const acc = ACCENTS[ap.accent] || ACCENTS.green;
+  css.setProperty('--accent', acc.c);
+  css.setProperty('--accent-2', acc.c2);
+  css.setProperty('--accent-rgb', acc.rgb);
+  css.setProperty('--on-accent', acc.on);
+
+  const preset = BG_PRESETS[ap.bgPreset] || BG_PRESETS.aurora;
+  css.setProperty('--bg-blob-a', preset.a);
+  css.setProperty('--bg-blob-b', preset.b);
+
+  css.setProperty('--bg-dim', String(ap.dim != null ? ap.dim : 0.58));
+  css.setProperty('--bg-blur', (ap.blur || 0) + 'px');
+  css.setProperty('--bg-saturate', String(ap.saturate != null ? ap.saturate : 1));
+  css.setProperty('--bg-size', ap.fit === 'tile' ? 'auto' : (ap.fit || 'cover'));
+  css.setProperty('--bg-repeat', ap.fit === 'tile' ? 'repeat' : 'no-repeat');
+
+  const layer = $('#bgLayer');
+  if (ap.bgType === 'image' && ap.bgFile) {
+    // Имя файла со меткой времени само ломает кеш при смене картинки.
+    css.setProperty('--bg-image', `url("appbg://bg/${encodeURIComponent(ap.bgFile)}")`);
+    if (layer) layer.classList.remove('gradient');
+  } else {
+    css.setProperty('--bg-image', 'none');
+    if (layer) layer.classList.add('gradient');
+  }
+
+  root.classList.toggle('reduce-motion', !!ap.reduceMotion);
+}
+
+async function saveAppearance(patch) {
+  state.settings.appearance = await api.appearance.set(patch);
+  applyAppearance();
+}
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+}
+
+async function setTheme(theme) {
+  applyTheme(theme);
+  state.settings.theme = await api.settings.setSection('theme', theme);
+}
+
+// ── язык ───────────────────────────────────────────────────────────
+async function setLanguage(lang) {
+  if (lang === I18N.getLanguage()) return;
+  I18N.setLanguage(lang);
+  await saveSection('language', lang);
+  renderChrome();
+  renderNav();
+  render();
+}
+
+// ── шапка и навигация ──────────────────────────────────────────────
+function renderChrome() {
+  $('.brand .tag').textContent = t('app.brandTag');
+  const appearBtn = $('#appearanceBtn');
+  appearBtn.innerHTML = ICONS.palette + '<span>' + esc(t('app.appearance')) + '</span>';
+  $('#winMin').innerHTML = ICONS.winMin;
+  $('#winMin').title = t('win.minimize');
+  $('#winClose').innerHTML = ICONS.winClose;
+  $('#winClose').title = t('win.close');
+  paintWindowState(false);
+}
+
+function paintWindowState(maximized) {
+  const btn = $('#winMax');
+  btn.innerHTML = maximized ? ICONS.winRestore : ICONS.winMax;
+  btn.title = maximized ? t('win.restore') : t('win.maximize');
+}
+
+function renderNav() {
+  const nav = $('#nav');
+  $$('.nav-item', nav).forEach((el) => el.remove());
+  for (const item of ROUTES) {
+    const el = h(`<div class="nav-item ${state.route === item.id ? 'active' : ''}" data-route="${item.id}">
+      <span class="icon">${ICONS[item.icon]}</span><span>${esc(t('navShort.' + item.id))}</span></div>`);
+    el.title = t(item.labelKey);
+    el.addEventListener('click', () => go(item.id));
+    nav.appendChild(el);
+  }
+  moveNavPill();
+}
+
+/** Пилюля активного пункта едет по замеренным координатам, а не по CSS-классу:
+    ширина у пунктов разная, и переход между ними должен быть плавным. */
+function moveNavPill() {
+  const pill = $('#navPill');
+  const active = $('.nav-item.active');
+  if (!pill || !active) return;
+  const navBox = $('#nav').getBoundingClientRect();
+  const box = active.getBoundingClientRect();
+  pill.style.width = box.width + 'px';
+  pill.style.transform = `translate(${box.left - navBox.left}px, -50%)`;
+  pill.style.opacity = '1';
+}
+
+function go(route) {
+  if (state.route === route) return;
+  state.route = route;
+  renderNav();
+  render();
+}
+
+// ── статус системы ─────────────────────────────────────────────────
+function runState() {
+  const r = state.runStatus;
+  if (!r.running) return 'idle';
+  return r.paused ? 'paused' : 'running';
+}
+
+function pillHtml(mode) {
+  const map = {
+    running: { cls: 'on', key: 'sys.pill.running' },
+    paused: { cls: 'paused', key: 'sys.pill.paused' },
+    idle: { cls: 'off', key: 'sys.pill.idle' },
+  };
+  const m = map[mode];
+  return `<span class="pill ${m.cls}"><span class="dot"></span>${esc(t(m.key))}</span>`;
+}
+
+// ── экраны ─────────────────────────────────────────────────────────
+const VIEWS = {};
+const ACTIONS = {};
+
+function render() {
+  const route = ROUTES.find((r) => r.id === state.route) || ROUTES[0];
+  $('#crumbs').textContent = t('crumbs.root') + ' / ' + t(route.labelKey).toUpperCase();
+  $('#pageTitle').textContent = t(route.titleKey);
+  $('#pageSub').textContent = t(route.subKey);
+
+  const actions = $('#pageActions');
+  actions.innerHTML = '';
+  if (ACTIONS[route.id]) ACTIONS[route.id]().forEach((el) => actions.appendChild(el));
+
+  const main = $('#main');
+  main.innerHTML = '';
+  const view = VIEWS[route.id]();
+  view.classList.add('view-enter');
+  main.appendChild(view);
+  main.scrollTop = 0;
+
+  wirePanels(main);
+  wireRipples(main);
+  wireRipples(actions);
+  wireSheen(main);
+  paintRun();
+}
+
+// ── Дашборд ────────────────────────────────────────────────────────
 VIEWS.dashboard = () => {
   const wrap = h(`<div>
-    <div class="view-header">
-      <div><div class="view-title">${esc(t('dash.title'))}</div><div class="view-sub">${esc(t('dash.sub'))}</div></div>
-      <div id="runControls" style="display:flex;gap:8px"></div>
+    <div class="hero glass glass-refract glass-sheen">
+      <div>
+        <div class="section-label">${esc(t('dash.kicker'))}</div>
+        <h1>${esc(t('dash.heroTitle'))}</h1>
+        <div class="hero-sub">${esc(t('dash.heroSub'))}</div>
+        <div class="hero-actions" id="runControls"></div>
+        <div class="hero-note" id="runNote"></div>
+      </div>
+      <div class="hero-side">
+        <div class="hero-status glass">
+          <div class="section-label">${esc(t('dash.currentStatus'))}</div>
+          <div class="value" id="hStatus">${dash}</div>
+        </div>
+        <div class="hero-facts glass">
+          <div class="kv"><span class="k">${esc(t('dash.totalSent'))}</span><span class="v" id="hSent">0</span></div>
+          <div class="kv"><span class="k">${esc(t('dash.queue'))}</span><span class="v" id="hQueue">0</span></div>
+          <div class="kv"><span class="k">${esc(t('dash.ready'))}</span><span class="v" id="hReady">0</span></div>
+        </div>
+      </div>
     </div>
-    <div class="grid cols-4" style="margin-bottom:16px">
-      <div class="stat"><div class="label">${esc(t('dash.status'))}</div><div class="value" id="dStatus"></div></div>
-      <div class="stat"><div class="label">${esc(t('dash.uptime'))}</div><div class="value" id="dUptime">0s</div></div>
-      <div class="stat"><div class="label">${esc(t('dash.queue'))}</div><div class="value accent" id="dQueue">0</div></div>
-      <div class="stat"><div class="label">${esc(t('dash.ready'))}</div><div class="value green" id="dReady">0</div></div>
+
+    <div class="grid cols-4 stagger" style="margin-bottom:16px">
+      <div class="stat glass"><div class="label">${esc(t('dash.uptime'))}</div>
+        <div class="value" id="dUptime">0s</div><div class="foot">${esc(t('dash.uptimeFoot'))}</div></div>
+      <div class="stat glass"><div class="label">${esc(t('dash.queue'))}</div>
+        <div class="value accent" id="dQueue">0</div><div class="foot">${esc(t('dash.queueFoot'))}</div></div>
+      <div class="stat glass"><div class="label">${esc(t('dash.ready'))}</div>
+        <div class="value green" id="dReady">0</div><div class="foot">${esc(t('dash.readyFoot'))}</div></div>
+      <div class="stat glass"><div class="label">${esc(t('dash.totalSent'))}</div>
+        <div class="value" id="dSent">0</div>
+        <svg class="spark" id="dSpark" viewBox="0 0 100 26" preserveAspectRatio="none">
+          <path class="area"/><path vector-effect="non-scaling-stroke"/>
+        </svg>
+        <div class="foot">${esc(t('dash.sentFoot'))}</div></div>
     </div>
-    <div class="card"><h3>${esc(t('dash.logs'))}</h3><div class="logs" id="logs"></div></div>
+
+    <div class="card glass" style="margin-bottom:16px">
+      <div class="section-label">${esc(t('targets.title'))}</div>
+      <h3 style="margin:8px 0 6px;font-size:16px">${ICONS.target} ${esc(t('targets.sub'))}</h3>
+      <div class="chips" id="dTargets"></div>
+      <div class="hint" id="dTargetsHint" style="margin-top:10px"></div>
+    </div>
+
+    <div class="card glass">
+      <div class="logs-head">
+        <h3 style="margin:0">${esc(t('dash.logs'))}</h3>
+        <div class="seg" id="logLevels">
+          ${LOG_LEVELS.map((lv) => `<button data-v="${lv}" class="${state.logFilter.level === lv ? 'active' : ''}">${esc(lv === 'all' ? t('logs.all') : lv)}</button>`).join('')}
+        </div>
+        <div class="grow"><input type="text" id="logSearch" placeholder="${esc(t('logs.searchPh'))}" value="${esc(state.logFilter.query)}"/></div>
+        <button class="btn ghost" id="logFollow"></button>
+        <button class="btn ghost" id="logClear">${esc(t('logs.clear'))}</button>
+        <span class="logs-count" id="logCount"></span>
+      </div>
+      <div class="logs" id="logs"></div>
+    </div>
   </div>`);
 
   const controls = wrap.querySelector('#runControls');
-  const startBtn = h(`<button class="btn primary big">${ICONS.play}<span>${esc(t('dash.start'))}</span></button>`);
-  const stopBtn = h(`<button class="btn big">${ICONS.stop}<span>${esc(t('dash.stop'))}</span></button>`);
-  startBtn.addEventListener('click', async () => {
-    const res = await api.run.start();
-    if (!res.ok) {
-      const reason = res.reason ? t('reason.' + res.reason) : t('dash.startFailedUnknown');
-      toast(t('dash.startFailed', { reason }), 'error');
-    }
-    else toast(t('dash.started'), 'success');
-    refreshRun();
-  });
-  stopBtn.addEventListener('click', async () => { await api.run.stop(); toast(t('dash.stoppedToast')); refreshRun(); });
-  // Тестовый лид: письмо на свой адрес обычным путём рассылки, чтобы проверить
-  // автоответ целиком - ответить с этого адреса и посмотреть, что придёт.
+  const primary = h(`<button class="btn primary big" data-action="start"></button>`);
+  const secondary = h(`<button class="btn big" data-action="pause"></button>`);
+  primary.addEventListener('click', () => runAction(primary.dataset.action));
+  secondary.addEventListener('click', () => runAction(secondary.dataset.action));
+
   const leadBtn = h(`<button class="btn big">${ICONS.send}<span>${esc(t('dash.testLead'))}</span></button>`);
   leadBtn.addEventListener('click', async () => {
     const email = await askText(t('dash.testLeadAsk'), { placeholder: 'me@gmail.com' });
@@ -181,27 +466,159 @@ VIEWS.dashboard = () => {
     else toast(t('dash.testLeadFail'), 'error');
     refreshRun();
   });
-  controls.append(startBtn, stopBtn, leadBtn);
+  controls.append(primary, secondary, leadBtn);
 
-  setTimeout(async () => {
-    paintRun();
-    const recent = await api.logs.recent(200);
-    recent.forEach(appendLog);
-  }, 0);
+  renderTargets(wrap);
+
+  // Логи
+  $$('#logLevels button', wrap).forEach((b) => b.addEventListener('click', () => {
+    state.logFilter.level = b.dataset.v;
+    $$('#logLevels button', wrap).forEach((x) => x.classList.toggle('active', x === b));
+    renderLogs();
+  }));
+  wrap.querySelector('#logSearch').addEventListener('input', debounce((e) => {
+    state.logFilter.query = e.target.value;
+    renderLogs();
+  }, 220));
+  wrap.querySelector('#logFollow').addEventListener('click', () => {
+    state.logFollow = !state.logFollow;
+    if (state.logFollow) scrollLogsToEnd();
+    paintLogFollow();
+  });
+  wrap.querySelector('#logClear').addEventListener('click', () => {
+    state.logs = [];
+    renderLogs();
+    toast(t('logs.cleared'));
+  });
+  const box = wrap.querySelector('#logs');
+  // Пользователь отскроллил вверх - перестаём тащить его вниз каждой записью.
+  box.addEventListener('scroll', () => {
+    const atEnd = box.scrollHeight - box.scrollTop - box.clientHeight < 26;
+    if (atEnd !== state.logFollow) { state.logFollow = atEnd; paintLogFollow(); }
+  });
+
+  setTimeout(() => { renderLogs(); paintRun(); }, 0);
   return wrap;
 };
 
+function renderTargets(root) {
+  const box = root.querySelector('#dTargets');
+  const hint = root.querySelector('#dTargetsHint');
+  if (!box) return;
+  const selected = (state.settings.parser.platforms || []);
+  box.innerHTML = PLATFORMS.map((p) => `<div class="chip ${selected.includes(p.id) ? 'on' : ''}" data-v="${p.id}">
+    <span class="code">${esc(p.code)}</span>${esc(p.label)}</div>`).join('');
+  hint.textContent = selected.length ? '' : t('targets.empty');
+  $$('.chip', box).forEach((c) => c.addEventListener('click', async () => {
+    c.classList.toggle('on');
+    const sel = $$('.chip.on', box).map((x) => x.dataset.v);
+    await saveSection('parser', { platforms: sel });
+    hint.textContent = sel.length ? '' : t('targets.empty');
+    toast(t('targets.saved'), 'success');
+  }));
+}
+
+/** Одна точка входа для старт/стоп/пауза - и одна защита от двойного клика. */
+async function runAction(kind) {
+  if (state.runBusy || !kind) return;
+  state.runBusy = true;
+  paintRunControls();
+  try {
+    if (kind === 'start') {
+      const res = await api.run.start();
+      if (res && res.ok) toast(t('dash.started'), 'success');
+      else {
+        const reason = res && res.reason ? t('reason.' + res.reason) : t('dash.startFailedUnknown');
+        toast(t('dash.startFailed', { reason }), 'error');
+      }
+    } else if (kind === 'stop') {
+      await api.run.stop();
+      toast(t('dash.stoppedToast'));
+    } else if (kind === 'pause') {
+      const res = await api.run.pause();
+      if (res && res.ok) toast(t('dash.pausedToast'));
+    } else if (kind === 'resume') {
+      const res = await api.run.resume();
+      if (res && res.ok) toast(t('dash.resumedToast'), 'success');
+    }
+  } catch (e) {
+    toast(e.message, 'error');
+  } finally {
+    state.runBusy = false;
+    await refreshRun();
+  }
+}
+
+/** Кнопки НЕ пересобираем - меняем содержимое тех же узлов, иначе рвётся
+    анимация и теряется фокус клавиатуры. */
+function paintRunControls() {
+  const controls = $('#runControls');
+  if (!controls) return;
+  const [primary, secondary] = controls.children;
+  const mode = runState();
+
+  const primaryStart = mode === 'idle';
+  primary.dataset.action = primaryStart ? 'start' : 'stop';
+  primary.className = 'btn big ' + (primaryStart ? 'primary' : 'stop');
+  primary.innerHTML = state.runBusy
+    ? `<span class="spinner"></span><span>${esc(t(primaryStart ? 'dash.start' : 'dash.stop'))}</span>`
+    : (primaryStart ? ICONS.play : ICONS.stop) + `<span>${esc(t(primaryStart ? 'dash.start' : 'dash.stop'))}</span>`;
+  primary.disabled = state.runBusy;
+
+  const canPause = mode !== 'idle';
+  const resuming = mode === 'paused';
+  secondary.dataset.action = resuming ? 'resume' : 'pause';
+  secondary.innerHTML = (resuming ? ICONS.play : ICONS.pause) +
+    `<span>${esc(t(resuming ? 'dash.resume' : 'dash.pause'))}</span>`;
+  secondary.disabled = !canPause || state.runBusy;
+}
+
 function paintRun() {
   const r = state.runStatus;
-  const st = $('#dStatus');
-  if (st) {
-    st.innerHTML = r.running
-      ? `<span class="pill on">● ${esc(t('dash.running'))}</span>`
-      : `<span class="pill off">● ${esc(t('dash.stopped'))}</span>`;
+  const mode = runState();
+
+  const sysPill = $('#sysPill');
+  if (sysPill) sysPill.innerHTML = pillHtml(mode);
+
+  const hStatus = $('#hStatus');
+  if (hStatus) {
+    hStatus.textContent = mode === 'running' ? t('dash.running')
+      : mode === 'paused' ? t('dash.pausedState') : t('dash.stopped');
   }
+  const note = $('#runNote');
+  if (note) {
+    note.textContent = mode === 'running' ? t('dash.noteRunning')
+      : mode === 'paused' ? t('dash.notePaused') : t('dash.noteIdle');
+  }
+
+  const ready = state.profiles.filter((p) => p.gmailStatus === 'ready').length;
+  const sent = state.profiles.reduce((n, p) => n + (p.sentCount || 0), 0);
+
   const up = $('#dUptime'); if (up) up.textContent = fmtUptime(r.uptimeSec);
-  const q = $('#dQueue'); if (q) q.textContent = r.queueSize;
-  const ready = $('#dReady'); if (ready) ready.textContent = state.profiles.filter((p) => p.gmailStatus === 'ready').length;
+  setNumber($('#dQueue'), r.queueSize);
+  setNumber($('#dReady'), ready);
+  setNumber($('#dSent'), sent);
+  setNumber($('#hSent'), sent);
+  setNumber($('#hQueue'), r.queueSize);
+  setNumber($('#hReady'), ready);
+
+  paintRunControls();
+  paintSpark();
+}
+
+function paintSpark() {
+  const svg = $('#dSpark');
+  if (!svg) return;
+  const values = state.sendSeries;
+  const [area, line] = svg.children;
+  if (values.length < 2) { area.removeAttribute('d'); line.removeAttribute('d'); return; }
+  const w = 100, hh = 26;
+  const max = Math.max(1, ...values);
+  const step = w / (values.length - 1);
+  const pts = values.map((v, i) => [i * step, hh - (v / max) * (hh - 3) - 1.5]);
+  const d = 'M' + pts.map((p) => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' L');
+  line.setAttribute('d', d);
+  area.setAttribute('d', d + ` L${w},${hh} L0,${hh} Z`);
 }
 
 function fmtUptime(sec) {
@@ -210,40 +627,83 @@ function fmtUptime(sec) {
   return (hrs ? hrs + 'h ' : '') + (min ? min + 'm ' : '') + s + 's';
 }
 
-function appendLog(entry) {
-  const box = $('#logs');
-  if (!box) return;
-  const time = new Date(entry.ts).toLocaleTimeString();
-  const line = h(`<div class="log-line ${entry.level}"><span class="t">${time}</span><span class="s">[${entry.scope}]</span><span class="m">${esc(entry.message)}</span></div>`);
-  box.appendChild(line);
-  box.scrollTop = box.scrollHeight;
-  while (box.children.length > 400) box.removeChild(box.firstChild);
+// ── живые логи ─────────────────────────────────────────────────────
+function logPasses(entry) {
+  const f = state.logFilter;
+  if (f.level !== 'all' && entry.level !== f.level) return false;
+  const q = f.query.trim().toLowerCase();
+  if (!q) return true;
+  return (entry.message + ' ' + entry.scope).toLowerCase().includes(q);
 }
 
-// Profiles
-VIEWS.profiles = () => {
-  const s = state.profileStats || { total: 0, running: 0, gmailReady: 0, portsOpen: 0 };
-  const wrap = h(`<div>
-    <div class="view-header">
-      <div><div class="view-title">${esc(t('prof.title'))}</div><div class="view-sub">${esc(t('prof.sub'))}</div></div>
-      <div style="display:flex;gap:8px">
-        <button class="btn" id="nudgeBtn">${ICONS.send}<span>${esc(t('nudge.btn'))}</span></button>
-        <button class="btn primary" id="newProfile">${ICONS.plus}<span>${esc(t('prof.new'))}</span></button>
-      </div>
-    </div>
-    <div class="grid cols-4" style="margin-bottom:18px">
-      <div class="stat"><div class="label">${esc(t('prof.total'))}</div><div class="value" id="sTotal">${s.total}</div></div>
-      <div class="stat"><div class="label">${esc(t('prof.runningCount'))}</div><div class="value accent" id="sRun">${s.running}</div></div>
-      <div class="stat"><div class="label">${esc(t('prof.gmailReady'))}</div><div class="value green" id="sReady">${s.gmailReady}</div></div>
-      <div class="stat"><div class="label">${esc(t('prof.portsOpen'))}</div><div class="value" id="sPorts">${s.portsOpen}</div></div>
-    </div>
-    <div class="split">
-      <div class="grid cols-2" id="cards"></div>
-      <div id="detail"></div>
-    </div>
-  </div>`);
+/** Подсветка совпадений. Экранируем СНАЧАЛА, потом вставляем разметку - иначе
+    текст письма с угловыми скобками уехал бы в HTML. */
+function highlight(text, query) {
+  const safe = esc(text);
+  const q = query.trim();
+  if (!q) return safe;
+  const needle = esc(q).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return safe.replace(new RegExp(needle, 'gi'), (m) => `<mark>${m}</mark>`);
+}
 
-  wrap.querySelector('#nudgeBtn').addEventListener('click', async () => {
+function logLineEl(entry) {
+  const time = new Date(entry.ts).toLocaleTimeString();
+  return h(`<div class="log-line ${entry.level}"><span class="t">${esc(time)}</span><span class="s">[${esc(entry.scope)}]</span><span class="m">${highlight(entry.message, state.logFilter.query)}</span></div>`);
+}
+
+function renderLogs() {
+  const box = $('#logs');
+  if (!box) return;
+  const shown = state.logs.filter(logPasses);
+  box.innerHTML = '';
+  if (!shown.length) {
+    box.appendChild(h(`<div class="empty">${esc(state.logs.length ? t('logs.emptyFiltered') : t('dash.logs'))}</div>`));
+  } else {
+    const frag = document.createDocumentFragment();
+    shown.forEach((e) => frag.appendChild(logLineEl(e)));
+    box.appendChild(frag);
+  }
+  paintLogCount(shown.length);
+  paintLogFollow();
+  if (state.logFollow) scrollLogsToEnd();
+}
+
+function paintLogCount(shown) {
+  const el = $('#logCount');
+  if (el) el.textContent = t('logs.shown', { shown, total: state.logs.length });
+}
+
+function paintLogFollow() {
+  const btn = $('#logFollow');
+  if (!btn) return;
+  btn.innerHTML = ICONS.chevron + '<span>' + esc(state.logFollow ? t('logs.follow') : t('logs.paused')) + '</span>';
+  btn.style.color = state.logFollow ? 'var(--accent)' : '';
+  btn.querySelector('svg').style.transform = 'rotate(90deg)';
+}
+
+function scrollLogsToEnd() {
+  const box = $('#logs');
+  if (box) box.scrollTop = box.scrollHeight;
+}
+
+function appendLog(entry) {
+  state.logs.push(entry);
+  while (state.logs.length > 500) state.logs.shift();
+  const box = $('#logs');
+  if (!box) return;
+  if (!logPasses(entry)) { paintLogCount($$('.log-line', box).length); return; }
+  const empty = box.querySelector('.empty');
+  if (empty) empty.remove();
+  box.appendChild(logLineEl(entry));
+  while (box.children.length > 500) box.removeChild(box.firstChild);
+  paintLogCount($$('.log-line', box).length);
+  if (state.logFollow) scrollLogsToEnd();
+}
+
+// ── Профили ────────────────────────────────────────────────────────
+ACTIONS.profiles = () => {
+  const nudge = h(`<button class="btn">${ICONS.send}<span>${esc(t('nudge.btn'))}</span></button>`);
+  nudge.addEventListener('click', async () => {
     const email = await askText(t('nudge.ask'), { placeholder: 'seller@example.com' });
     if (!email) return;
     toast(t('nudge.sending'));
@@ -254,38 +714,81 @@ VIEWS.profiles = () => {
     } catch (e) { toast(t('nudge.error', { error: e.message }), 'error'); }
   });
 
-  wrap.querySelector('#newProfile').addEventListener('click', async () => {
+  const create = h(`<button class="btn primary">${ICONS.plus}<span>${esc(t('prof.new'))}</span></button>`);
+  create.addEventListener('click', async () => {
     const label = await askText(t('prof.askName'), { value: t('prof.defaultName', { n: state.profiles.length + 1 }) });
     if (label === null) return;
     const p = await api.profiles.create(label);
     toast(t('prof.created'), 'success');
     await refreshProfiles();
     state.selectedProfile = p.id;
-    // auto-launch with gmail for manual authorization
+    // Сразу открываем профиль с Gmail - вход пользователь делает руками.
     launchProfile(p.id, true);
   });
+  return [nudge, create];
+};
 
-  setTimeout(() => { renderProfileCards(wrap); renderProfileDetail(wrap); }, 0);
+VIEWS.profiles = () => {
+  const s = state.profileStats || { total: 0, running: 0, gmailReady: 0, portsOpen: 0 };
+  const wrap = h(`<div>
+    <div class="grid cols-4 stagger" style="margin-bottom:18px">
+      <div class="stat glass"><div class="label">${esc(t('prof.total'))}</div><div class="value" id="sTotal">0</div></div>
+      <div class="stat glass"><div class="label">${esc(t('prof.runningCount'))}</div><div class="value accent" id="sRun">0</div></div>
+      <div class="stat glass"><div class="label">${esc(t('prof.gmailReady'))}</div><div class="value green" id="sReady">0</div></div>
+      <div class="stat glass"><div class="label">${esc(t('prof.portsOpen'))}</div><div class="value" id="sPorts">0</div></div>
+    </div>
+    <div class="split">
+      <div class="grid cols-2" id="cards"></div>
+      <div id="detail"></div>
+    </div>
+  </div>`);
+
+  setTimeout(() => {
+    setNumber(wrap.querySelector('#sTotal'), s.total);
+    setNumber(wrap.querySelector('#sRun'), s.running);
+    setNumber(wrap.querySelector('#sReady'), s.gmailReady);
+    setNumber(wrap.querySelector('#sPorts'), s.portsOpen);
+    renderProfileCards(wrap);
+    renderProfileDetail(wrap);
+  }, 0);
   return wrap;
 };
+
+/** Кольцо "сколько из лимита уже отправлено". */
+function ringHtml(sent, limit) {
+  const r = 15;
+  const c = 2 * Math.PI * r;
+  const done = limit > 0 ? clamp(sent / limit, 0, 1) : 0;
+  return `<span class="ring-wrap" title="${esc(t('prof.limit'))}: ${sent} / ${limit}">
+    <svg class="ring" viewBox="0 0 34 34">
+      <circle class="bg" cx="17" cy="17" r="${r}"/>
+      <circle class="fg" cx="17" cy="17" r="${r}" stroke-dasharray="${c.toFixed(1)}" stroke-dashoffset="${(c * (1 - done)).toFixed(1)}"/>
+    </svg><span class="ring-txt">${Math.round(done * 100)}</span></span>`;
+}
 
 function renderProfileCards(root) {
   const cards = root.querySelector('#cards') || $('#cards');
   if (!cards) return;
+  const limit = state.settings.system.mailsPerAccount;
   cards.innerHTML = '';
+  if (!state.booted) {
+    for (let i = 0; i < 2; i++) cards.appendChild(h(`<div class="skeleton tile"></div>`));
+    return;
+  }
   if (!state.profiles.length) {
-    cards.appendChild(h(`<div class="empty">${esc(t('prof.empty'))}</div>`));
+    cards.appendChild(h(`<div class="empty glass" style="grid-column:1/-1">${ICONS.profiles}<div>${esc(t('prof.empty'))}</div></div>`));
     return;
   }
   for (const p of state.profiles) {
-    const card = h(`<div class="profile-card ${state.selectedProfile === p.id ? 'selected' : ''}">
+    const card = h(`<div class="profile-card glass glass-sheen ${state.selectedProfile === p.id ? 'selected' : ''}">
       <div class="pc-head">
         <div><div class="pc-name"><span class="dot ${p.gmailStatus}"></span> ${esc(p.label)}</div>
         <div class="pc-email">${esc(p.email || t('prof.notSignedIn'))}</div></div>
         <span class="badge ${p.gmailStatus}">${esc(t('status.' + p.gmailStatus))}</span>
       </div>
       <div class="pc-meta">
-        <span>${p.running ? '🟢 ' + esc(t('prof.running')) : '⚪ ' + esc(t('prof.stopped'))}</span>
+        ${ringHtml(p.sentCount || 0, limit)}
+        <span><span class="dot ${p.running ? 'running' : 'new'}"></span> ${esc(p.running ? t('prof.running') : t('prof.stopped'))}</span>
         <span>${esc(t('prof.port'))}: ${p.port || dash}</span>
         <span>${esc(t('prof.sent'))}: ${p.sentCount}</span>
       </div>
@@ -293,57 +796,68 @@ function renderProfileCards(root) {
     card.addEventListener('click', () => { state.selectedProfile = p.id; render(); });
     cards.appendChild(card);
   }
+  wireSheen(cards);
 }
 
 function renderProfileDetail(root) {
   const box = root.querySelector('#detail') || $('#detail');
   if (!box) return;
   const p = state.profiles.find((x) => x.id === state.selectedProfile);
-  if (!p) { box.innerHTML = `<div class="card"><div class="empty">${esc(t('prof.selectHint'))}</div></div>`; return; }
+  if (!p) {
+    box.innerHTML = `<div class="card glass"><div class="empty">${ICONS.scan}<div>${esc(t('prof.selectHint'))}</div></div></div>`;
+    return;
+  }
   const fp = p.fingerprint;
   box.innerHTML = '';
-  const card = h(`<div class="card">
+  const card = h(`<div class="card glass">
     <h3><span class="dot ${p.gmailStatus}"></span> ${esc(p.label)}</h3>
     <div class="kv"><span class="k">${esc(t('prof.status'))}</span><span class="v"><span class="badge ${p.gmailStatus}">${esc(t('status.' + p.gmailStatus))}</span></span></div>
     <div class="kv"><span class="k">${esc(t('prof.email'))}</span><span class="v">${esc(p.email || dash)}</span></div>
     <div class="kv"><span class="k">${esc(t('prof.isRunning'))}</span><span class="v">${p.running ? esc(t('common.yes')) : esc(t('common.no'))}</span></div>
     <div class="kv"><span class="k">${esc(t('prof.port'))}</span><span class="v">${p.port || dash}</span></div>
-    <div class="kv"><span class="k">${esc(t('prof.sentCount'))}</span><span class="v">${p.sentCount}</span></div>
+    <div class="kv"><span class="k">${esc(t('prof.sentCount'))}</span><span class="v">${p.sentCount} / ${state.settings.system.mailsPerAccount}</span></div>
     <div class="kv"><span class="k">${esc(t('prof.ua'))}</span><span class="v" style="max-width:210px">${esc(fp.userAgent)}</span></div>
     <div class="kv"><span class="k">${esc(t('prof.platform'))}</span><span class="v">${esc(fp.platform)}</span></div>
-    <div class="kv"><span class="k">${esc(t('prof.screen'))}</span><span class="v">${fp.screen.width}×${fp.screen.height}</span></div>
+    <div class="kv"><span class="k">${esc(t('prof.screen'))}</span><span class="v">${fp.screen.width}x${fp.screen.height}</span></div>
     <div class="kv"><span class="k">${esc(t('prof.timezone'))}</span><span class="v">${esc(fp.timezone)}</span></div>
     <div class="kv"><span class="k">${esc(t('prof.gpu'))}</span><span class="v" style="max-width:210px">${esc(fp.webgl.renderer)}</span></div>
     <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap">
-      <button class="btn primary" id="dLaunch">${p.running ? esc(t('prof.reopen')) : ICONS.play + '<span>' + esc(t('prof.launch')) + '</span>'}</button>
+      ${p.running
+        ? '<button class="btn stop" id="dStop">' + ICONS.stop + '<span>' + esc(t('prof.stopBtnFull')) + '</span></button>'
+        : '<button class="btn primary" id="dLaunch">' + ICONS.play + '<span>' + esc(t('prof.launch')) + '</span></button>'}
       <button class="btn" id="dScan">${ICONS.scan}<span>${esc(t('prof.scan'))}</span></button>
       ${p.running ? '<button class="btn" id="dTest">' + ICONS.send + '<span>' + esc(t('prof.testSend')) + '</span></button>' : ''}
-      ${p.running ? '<button class="btn" id="dDry">' + ICONS.scan + '<span>' + esc(t('prof.dryRun')) + '</span></button>' : ''}
-      ${p.running ? '<button class="btn" id="dStop">' + ICONS.stop + '<span>' + esc(t('prof.stopBtn')) + '</span></button>' : ''}
+      ${p.running ? '<button class="btn" id="dDry">' + ICONS.inbox + '<span>' + esc(t('prof.dryRun')) + '</span></button>' : ''}
+      ${p.running ? '<button class="btn" id="dReopen">' + ICONS.reset + '<span>' + esc(t('prof.reopen')) + '</span></button>' : ''}
       <button class="btn danger" id="dDel">${ICONS.trash}<span>${esc(t('prof.delete'))}</span></button>
     </div>
   </div>`);
-  card.querySelector('#dLaunch').addEventListener('click', () => launchProfile(p.id, true));
+
+  const launch = card.querySelector('#dLaunch');
+  if (launch) launch.addEventListener('click', () => launchProfile(p.id, true));
+  const reopen = card.querySelector('#dReopen');
+  if (reopen) reopen.addEventListener('click', () => launchProfile(p.id, true));
+  const stop = card.querySelector('#dStop');
+  if (stop) stop.addEventListener('click', async () => { await api.profiles.stop(p.id); await refreshProfiles(); });
+
   card.querySelector('#dScan').addEventListener('click', async () => {
     toast(t('prof.scanning'));
     try { await api.profiles.scan(p.id); await refreshProfiles(); toast(t('prof.scanDone'), 'success'); }
     catch (e) { toast(t('prof.scanFailed', { error: e.message }), 'error'); }
   });
+
   const testBtn = card.querySelector('#dTest');
   if (testBtn) testBtn.addEventListener('click', async () => {
     const to = await askText(t('prof.askTestTo'), { value: p.email || '', placeholder: 'recipient@example.com' });
     if (!to) return;
     toast(t('prof.testSending'));
     try {
-      const res = await api.gmail.testSend(p.id, {
-        to,
-        subject: t('prof.testSubject'),
-        body: t('prof.testBody'),
-      });
+      const res = await api.gmail.testSend(p.id, { to, subject: t('prof.testSubject'), body: t('prof.testBody') });
       const ok = !!(res && res.ok);
       toast(ok ? t('prof.testSent') : t('prof.testUnconfirmed'), ok ? 'success' : 'error');
     } catch (e) { toast(t('prof.testFailed', { error: e.message }), 'error'); }
   });
+
   // Сухой прогон автоответа: показывает, кого видит сканер, ничего не отправляя.
   const dryBtn = card.querySelector('#dDry');
   if (dryBtn) dryBtn.addEventListener('click', async () => {
@@ -354,13 +868,22 @@ function renderProfileDetail(root) {
       else toast(t('prof.dryFail.' + ((res && res.reason) || 'unknown')), 'error');
     } catch (e) { toast(t('prof.dryError', { error: e.message }), 'error'); }
   });
-  const stopBtn = card.querySelector('#dStop');
-  if (stopBtn) stopBtn.addEventListener('click', async () => { await api.profiles.stop(p.id); await refreshProfiles(); });
+
   card.querySelector('#dDel').addEventListener('click', async () => {
-    if (!confirm(t('prof.confirmDelete'))) return;
-    await api.profiles.remove(p.id); state.selectedProfile = null; await refreshProfiles();
+    const ok = await askConfirm(
+      t('prof.confirmDeleteTitle'),
+      t('prof.confirmDeleteText', { label: p.label }),
+      { danger: true, okLabel: t('common.delete') },
+    );
+    if (!ok) return;
+    await api.profiles.remove(p.id);
+    state.selectedProfile = null;
+    await refreshProfiles();
   });
+
   box.appendChild(card);
+  wireRipples(box);
+  wireSheen(box);
 }
 
 async function launchProfile(id, openGmail) {
@@ -369,46 +892,34 @@ async function launchProfile(id, openGmail) {
   catch (e) { toast(t('prof.launchFailed', { error: e.message }), 'error'); }
 }
 
-// Parser
+// ── Парсер ─────────────────────────────────────────────────────────
 VIEWS.parser = () => {
   const p = state.settings.parser;
-  const PLATFORMS = [{ id: 'usa', label: 'USA' }, { id: 'poshmark', label: 'Poshmark' }];
   const wrap = h(`<div>
-    <div class="view-header"><div><div class="view-title">${esc(t('parser.title'))}</div><div class="view-sub">${esc(t('parser.sub'))}</div></div></div>
-    <div class="panel open"><div class="panel-head"><h3>${ICONS.parser} ${esc(t('parser.apiSource'))}</h3><span class="chev">${ICONS.chevron}</span></div>
-      <div class="panel-body">
-        <div class="row">
-          <div class="field"><label>${esc(t('parser.apiKey'))}</label><input type="password" id="pKey" value="${esc(p.apiKey)}" placeholder="${esc(t('parser.apiKeyPh'))}"/></div>
-          <div class="field" style="flex:0 0 190px"><label>${esc(t('parser.type'))}</label>
-            <div class="seg" id="pType">
-              <button data-v="xproject" class="${p.apiType === 'xproject' ? 'active' : ''}">xproject</button>
-              <button data-v="vvs" class="${p.apiType === 'vvs' ? 'active' : ''}">vvs</button>
-            </div>
+    ${panelHtml(true, `<h3>${ICONS.parser} ${esc(t('parser.apiSource'))}</h3>`, `
+      <div class="row">
+        <div class="field"><label>${esc(t('parser.apiKey'))}</label><input type="password" id="pKey" value="${esc(p.apiKey)}" placeholder="${esc(t('parser.apiKeyPh'))}"/></div>
+        <div class="field" style="flex:0 0 190px"><label>${esc(t('parser.type'))}</label>
+          <div class="seg" id="pType">
+            <button data-v="xproject" class="${p.apiType === 'xproject' ? 'active' : ''}">xproject</button>
+            <button data-v="vvs" class="${p.apiType === 'vvs' ? 'active' : ''}">vvs</button>
           </div>
         </div>
-        <div class="field"><label>${esc(t('parser.platforms'))}</label><div class="chips" id="pPlat">
-          ${PLATFORMS.map((x) => `<div class="chip ${p.platforms.includes(x.id) ? 'on' : ''}" data-v="${x.id}">${x.label}</div>`).join('')}
-        </div></div>
       </div>
-    </div>
-    <div class="panel open"><div class="panel-head"><h3>${esc(t('parser.behaviour'))}</h3><span class="chev">${ICONS.chevron}</span></div>
-      <div class="panel-body">
-        <div class="field"><label class="switch"><input type="checkbox" id="pEnabled" ${p.enabled ? 'checked' : ''}/><span class="track"></span><span class="lbl">${esc(t('parser.enabled'))}</span></label></div>
-        <div class="field"><label class="switch"><input type="checkbox" id="pAi" ${p.aiTemplateSwap ? 'checked' : ''}/><span class="track"></span><span class="lbl">${esc(t('parser.aiSwap'))}</span></label></div>
-        <div class="field" style="max-width:340px"><label>${esc(t('parser.swapN'))}</label><input type="number" id="pSwapN" min="0" value="${p.swapKeyEveryN}"/></div>
-      </div>
-    </div>
+      <div class="field" style="margin-bottom:0"><label>${esc(t('parser.platforms'))}</label>
+        <div class="hint">${esc(t('parser.targetsMoved'))}</div>
+      </div>`)}
+    ${panelHtml(true, `<h3>${esc(t('parser.behaviour'))}</h3>`, `
+      <div class="field"><label class="switch"><input type="checkbox" id="pEnabled" ${p.enabled ? 'checked' : ''}/><span class="track"></span><span class="lbl">${esc(t('parser.enabled'))}</span></label></div>
+      <div class="field"><label class="switch"><input type="checkbox" id="pAi" ${p.aiTemplateSwap ? 'checked' : ''}/><span class="track"></span><span class="lbl">${esc(t('parser.aiSwap'))}</span></label></div>
+      <div class="field" style="max-width:340px;margin-bottom:0"><label>${esc(t('parser.swapN'))}</label><input type="number" id="pSwapN" min="0" value="${p.swapKeyEveryN}"/></div>`)}
   </div>`);
 
   wrap.querySelector('#pKey').addEventListener('input', debounce((e) => saveSection('parser', { apiKey: e.target.value })));
   $$('#pType button', wrap).forEach((b) => b.addEventListener('click', () => {
-    $$('#pType button', wrap).forEach((x) => x.classList.remove('active')); b.classList.add('active');
+    $$('#pType button', wrap).forEach((x) => x.classList.remove('active'));
+    b.classList.add('active');
     saveSection('parser', { apiType: b.dataset.v });
-  }));
-  $$('#pPlat .chip', wrap).forEach((c) => c.addEventListener('click', () => {
-    c.classList.toggle('on');
-    const sel = $$('#pPlat .chip.on', wrap).map((x) => x.dataset.v);
-    saveSection('parser', { platforms: sel });
   }));
   wrap.querySelector('#pEnabled').addEventListener('change', (e) => saveSection('parser', { enabled: e.target.checked }));
   wrap.querySelector('#pAi').addEventListener('change', (e) => saveSection('parser', { aiTemplateSwap: e.target.checked }));
@@ -416,22 +927,18 @@ VIEWS.parser = () => {
   return wrap;
 };
 
-// Chrome CDP
+// ── Chrome CDP ─────────────────────────────────────────────────────
 VIEWS.cdp = () => {
   const c = state.settings.cdp;
   const wrap = h(`<div>
-    <div class="view-header"><div><div class="view-title">${esc(t('cdp.title'))}</div><div class="view-sub">${esc(t('cdp.sub'))}</div></div></div>
-    <div class="panel open"><div class="panel-head"><h3>${ICONS.cdp} ${esc(t('cdp.portRange'))}</h3><span class="chev">${ICONS.chevron}</span></div>
-      <div class="panel-body">
-        <div class="row">
-          <div class="field"><label>${esc(t('cdp.portStart'))}</label><input type="number" id="cStart" value="${c.portStart}"/></div>
-          <div class="field"><label>${esc(t('cdp.portEnd'))}</label><input type="number" id="cEnd" value="${c.portEnd}"/></div>
-        </div>
-        <div class="field"><label>${esc(t('cdp.path'))}</label><input type="text" id="cPath" value="${esc(c.chromePath)}" placeholder="${esc(t('cdp.pathPh'))}"/></div>
-        <button class="btn" id="cDetect">${esc(t('cdp.detect'))}</button>
-        <div class="hint" id="cDetected" style="margin:10px 0 0"></div>
+    ${panelHtml(true, `<h3>${ICONS.cdp} ${esc(t('cdp.portRange'))}</h3>`, `
+      <div class="row">
+        <div class="field"><label>${esc(t('cdp.portStart'))}</label><input type="number" id="cStart" value="${c.portStart}"/></div>
+        <div class="field"><label>${esc(t('cdp.portEnd'))}</label><input type="number" id="cEnd" value="${c.portEnd}"/></div>
       </div>
-    </div>
+      <div class="field"><label>${esc(t('cdp.path'))}</label><input type="text" id="cPath" value="${esc(c.chromePath)}" placeholder="${esc(t('cdp.pathPh'))}"/></div>
+      <button class="btn" id="cDetect">${ICONS.search}<span>${esc(t('cdp.detect'))}</span></button>
+      <div class="hint" id="cDetected" style="margin-top:10px"></div>`)}
   </div>`);
   wrap.querySelector('#cStart').addEventListener('input', debounce((e) => saveSection('cdp', { portStart: +e.target.value || 9222 })));
   wrap.querySelector('#cEnd').addEventListener('input', debounce((e) => saveSection('cdp', { portEnd: +e.target.value || 9322 })));
@@ -443,29 +950,25 @@ VIEWS.cdp = () => {
   return wrap;
 };
 
-// Link generator
+// ── Генератор ссылок ───────────────────────────────────────────────
 VIEWS.link = () => {
   const l = state.settings.link;
   const wrap = h(`<div>
-    <div class="view-header"><div><div class="view-title">${esc(t('link.title'))}</div><div class="view-sub">${esc(t('link.sub'))}</div></div></div>
-    <div class="panel open"><div class="panel-head"><h3>${ICONS.link} Haron Rent</h3><span class="chev">${ICONS.chevron}</span></div>
-      <div class="panel-body">
-        <div class="row">
-          <div class="field"><label>${esc(t('link.apiKey'))}</label><input type="password" id="lKey" value="${esc(l.apiKey)}"/></div>
-          <div class="field" style="flex:0 0 210px"><label>${esc(t('link.team'))}</label>
-            <select id="lTeam"><option value="haron_rent" ${l.team === 'haron_rent' ? 'selected' : ''}>Haron Rent</option></select>
-          </div>
+    ${panelHtml(true, `<h3>${ICONS.link} Haron Rent</h3>`, `
+      <div class="row">
+        <div class="field"><label>${esc(t('link.apiKey'))}</label><input type="password" id="lKey" value="${esc(l.apiKey)}"/></div>
+        <div class="field" style="flex:0 0 210px"><label>${esc(t('link.team'))}</label>
+          <select id="lTeam"><option value="haron_rent" ${l.team === 'haron_rent' ? 'selected' : ''}>Haron Rent</option></select>
         </div>
-        <div class="row">
-          <div class="field"><label>${esc(t('link.mode'))}</label><input type="text" id="lMode" value="${esc(l.mode)}" placeholder="${esc(t('link.modePh'))}"/></div>
-          <div class="field"><label>${esc(t('link.profileId'))}</label><input type="text" id="lPid" value="${esc(l.profileId)}"/></div>
-          <div class="field" style="flex:0 0 140px"><label>${esc(t('link.country'))}</label>
-            <select id="lCountry"><option value="US" ${l.country === 'US' ? 'selected' : ''}>US</option></select>
-          </div>
-        </div>
-        <div class="hint" style="margin:0">${esc(t('link.hint'))}</div>
       </div>
-    </div>
+      <div class="row">
+        <div class="field"><label>${esc(t('link.mode'))}</label><input type="text" id="lMode" value="${esc(l.mode)}" placeholder="${esc(t('link.modePh'))}"/></div>
+        <div class="field"><label>${esc(t('link.profileId'))}</label><input type="text" id="lPid" value="${esc(l.profileId)}"/></div>
+        <div class="field" style="flex:0 0 140px"><label>${esc(t('link.country'))}</label>
+          <select id="lCountry"><option value="US" ${l.country === 'US' ? 'selected' : ''}>US</option></select>
+        </div>
+      </div>
+      <div class="hint">${esc(t('link.hint'))}</div>`)}
   </div>`);
   wrap.querySelector('#lKey').addEventListener('input', debounce((e) => saveSection('link', { apiKey: e.target.value })));
   wrap.querySelector('#lTeam').addEventListener('change', (e) => saveSection('link', { team: e.target.value }));
@@ -475,19 +978,15 @@ VIEWS.link = () => {
   return wrap;
 };
 
-// Telegram
+// ── Telegram ───────────────────────────────────────────────────────
 VIEWS.telegram = () => {
   const tg = state.settings.telegram;
   const wrap = h(`<div>
-    <div class="view-header"><div><div class="view-title">${esc(t('tg.title'))}</div><div class="view-sub">${esc(t('tg.sub'))}</div></div></div>
-    <div class="panel open"><div class="panel-head"><h3>${ICONS.telegram} ${esc(t('tg.bot'))}</h3><span class="chev">${ICONS.chevron}</span></div>
-      <div class="panel-body">
-        <div class="field"><label>${esc(t('tg.token'))}</label><input type="password" id="tToken" value="${esc(tg.botToken)}"/></div>
-        <div class="field"><label>${esc(t('tg.chatId'))}</label><input type="text" id="tId" value="${esc(tg.botId)}"/></div>
-        <button class="btn" id="tTest">${esc(t('tg.test'))}</button>
-        <div class="hint" id="tResult" style="margin:10px 0 0"></div>
-      </div>
-    </div>
+    ${panelHtml(true, `<h3>${ICONS.telegram} ${esc(t('tg.bot'))}</h3>`, `
+      <div class="field"><label>${esc(t('tg.token'))}</label><input type="password" id="tToken" value="${esc(tg.botToken)}"/></div>
+      <div class="field"><label>${esc(t('tg.chatId'))}</label><input type="text" id="tId" value="${esc(tg.botId)}"/></div>
+      <button class="btn" id="tTest">${ICONS.send}<span>${esc(t('tg.test'))}</span></button>
+      <div class="hint" id="tResult" style="margin-top:10px"></div>`)}
   </div>`);
   wrap.querySelector('#tToken').addEventListener('input', debounce((e) => saveSection('telegram', { botToken: e.target.value })));
   wrap.querySelector('#tId').addEventListener('input', debounce((e) => saveSection('telegram', { botId: e.target.value })));
@@ -500,42 +999,32 @@ VIEWS.telegram = () => {
   return wrap;
 };
 
-// System settings
+// ── Системные настройки ────────────────────────────────────────────
 VIEWS.settings = () => {
   const s = state.settings.system;
   const lang = I18N.getLanguage();
   const wrap = h(`<div>
-    <div class="view-header"><div><div class="view-title">${esc(t('set.title'))}</div><div class="view-sub">${esc(t('set.sub'))}</div></div></div>
-    <div class="panel open"><div class="panel-head"><h3>${ICONS.settings} ${esc(t('set.interface'))}</h3><span class="chev">${ICONS.chevron}</span></div>
-      <div class="panel-body">
-        <div class="field"><label>${esc(t('set.language'))}</label>
-          <div class="seg" id="mLang">
-            ${I18N.LANGUAGES.map((x) => `<button data-v="${x.id}" class="${lang === x.id ? 'active' : ''}">${esc(x.label)}</button>`).join('')}
-          </div>
-        </div>
-        <div class="hint" style="margin:0">${esc(t('set.langHint'))}</div>
-      </div>
-    </div>
-    <div class="panel open"><div class="panel-head"><h3>${esc(t('set.limits'))}</h3><span class="chev">${ICONS.chevron}</span></div>
-      <div class="panel-body">
-        <div class="row">
-          <div class="field"><label>${esc(t('set.mails'))}</label><input type="number" id="mMails" min="1" value="${s.mailsPerAccount}"/></div>
-          <div class="field"><label>${esc(t('set.replies'))}</label><input type="number" id="mReplies" min="0" value="${s.maxRepliesPerDialog}"/></div>
-        </div>
-        <div class="row">
-          <div class="field"><label>${esc(t('set.checkInterval'))}</label><input type="number" id="mCheck" min="3" value="${s.checkIntervalSec}"/></div>
-          <div class="field"><label>${esc(t('set.batch'))}</label><input type="number" id="mBatch" min="1" value="${s.parserBatchSize}"/></div>
-          <div class="field"><label>${esc(t('set.threshold'))}</label><input type="number" id="mThresh" min="0" value="${s.queueRefillThreshold}"/></div>
+    ${panelHtml(true, `<h3>${ICONS.settings} ${esc(t('set.interface'))}</h3>`, `
+      <div class="field"><label>${esc(t('set.language'))}</label>
+        <div class="seg" id="mLang">
+          ${I18N.LANGUAGES.map((x) => `<button data-v="${x.id}" class="${lang === x.id ? 'active' : ''}">${esc(x.label)}</button>`).join('')}
         </div>
       </div>
-    </div>
-    <div class="panel open"><div class="panel-head"><h3>${esc(t('set.texts'))}</h3><span class="chev">${ICONS.chevron}</span></div>
-      <div class="panel-body">
-        <div class="field"><label>${esc(t('set.textsLabel'))}</label><textarea id="mTexts" placeholder='{ "subjects": [...], "bodies": [...] }'>${state.settings.texts ? esc(JSON.stringify(state.settings.texts, null, 2)) : ''}</textarea></div>
-        <button class="btn primary" id="mLoadTexts">${esc(t('set.loadTexts'))}</button>
-        <div class="hint" id="mTextsResult" style="margin:10px 0 0"></div>
+      <div class="hint">${esc(t('set.langHint'))}</div>`)}
+    ${panelHtml(true, `<h3>${esc(t('set.limits'))}</h3>`, `
+      <div class="row">
+        <div class="field"><label>${esc(t('set.mails'))}</label><input type="number" id="mMails" min="1" value="${s.mailsPerAccount}"/></div>
+        <div class="field"><label>${esc(t('set.replies'))}</label><input type="number" id="mReplies" min="0" value="${s.maxRepliesPerDialog}"/></div>
       </div>
-    </div>
+      <div class="row">
+        <div class="field"><label>${esc(t('set.checkInterval'))}</label><input type="number" id="mCheck" min="3" value="${s.checkIntervalSec}"/></div>
+        <div class="field"><label>${esc(t('set.batch'))}</label><input type="number" id="mBatch" min="1" value="${s.parserBatchSize}"/></div>
+        <div class="field" style="margin-bottom:0"><label>${esc(t('set.threshold'))}</label><input type="number" id="mThresh" min="0" value="${s.queueRefillThreshold}"/></div>
+      </div>`)}
+    ${panelHtml(true, `<h3>${esc(t('set.texts'))}</h3>`, `
+      <div class="field"><label>${esc(t('set.textsLabel'))}</label><textarea id="mTexts" placeholder='{ "subjects": [...], "bodies": [...] }'>${state.settings.texts ? esc(JSON.stringify(state.settings.texts, null, 2)) : ''}</textarea></div>
+      <button class="btn primary" id="mLoadTexts">${esc(t('set.loadTexts'))}</button>
+      <div class="hint" id="mTextsResult" style="margin-top:10px"></div>`)}
   </div>`);
 
   $$('#mLang button', wrap).forEach((b) => b.addEventListener('click', () => setLanguage(b.dataset.v)));
@@ -553,34 +1042,248 @@ VIEWS.settings = () => {
   return wrap;
 };
 
-// ── data refresh ───────────────────────────────────────────────────
+// ── Панель "Оформление" ────────────────────────────────────────────
+function drawerOpen() { return $('#drawer').classList.contains('open'); }
+
+function toggleDrawer(open) {
+  const drawer = $('#drawer');
+  const scrim = $('#drawerScrim');
+  const next = open === undefined ? !drawerOpen() : open;
+  if (next) renderDrawer();
+  drawer.classList.toggle('open', next);
+  scrim.classList.toggle('open', next);
+}
+
+function renderDrawer() {
+  const ap = appearance();
+  const theme = document.documentElement.getAttribute('data-theme');
+  const drawer = $('#drawer');
+  drawer.innerHTML = `
+    <div class="drawer-head">
+      <h3>${esc(t('appear.title'))}</h3>
+      <button class="btn ghost icon-only" id="drawerClose">${ICONS.x}</button>
+    </div>
+    <div class="drawer-body">
+      <div class="drawer-group">
+        <span class="section-label">${esc(t('appear.background'))}</span>
+        <div class="bg-preview ${ap.bgType === 'image' && ap.bgFile ? '' : 'gradient'}"></div>
+        <div style="display:flex;gap:8px">
+          <button class="btn" id="bgPick">${ICONS.image}<span>${esc(t('appear.pick'))}</span></button>
+          <button class="btn ghost" id="bgReset">${ICONS.reset}<span>${esc(t('appear.reset'))}</span></button>
+        </div>
+      </div>
+
+      <div class="drawer-group">
+        <span class="section-label">${esc(t('appear.presets'))}</span>
+        <div class="preset-grid" id="bgPresets">
+          ${Object.keys(BG_PRESETS).map((id) => `<div class="preset ${ap.bgPreset === id ? 'on' : ''}" data-v="${id}"
+            title="${esc(t('preset.' + id))}"
+            style="background-image:${BG_PRESETS[id].a},${BG_PRESETS[id].b};background-color:var(--bg-base)"></div>`).join('')}
+        </div>
+      </div>
+
+      <div class="drawer-group">
+        <span class="section-label">${esc(t('appear.fit'))}</span>
+        <div class="seg" id="bgFit">
+          ${['cover', 'contain', 'tile'].map((f) => `<button data-v="${f}" class="${ap.fit === f ? 'active' : ''}">${esc(t('appear.fit.' + f))}</button>`).join('')}
+        </div>
+        <div style="height:14px"></div>
+        <div class="slider-row"><span class="lbl">${esc(t('appear.dim'))}</span>
+          <input type="range" id="apDim" min="0" max="0.92" step="0.02" value="${ap.dim}"/>
+          <span class="num" id="apDimNum">${Math.round(ap.dim * 100)}%</span></div>
+        <div class="slider-row"><span class="lbl">${esc(t('appear.blur'))}</span>
+          <input type="range" id="apBlur" min="0" max="26" step="1" value="${ap.blur}"/>
+          <span class="num" id="apBlurNum">${ap.blur}px</span></div>
+        <div class="slider-row"><span class="lbl">${esc(t('appear.saturate'))}</span>
+          <input type="range" id="apSat" min="0" max="2" step="0.05" value="${ap.saturate}"/>
+          <span class="num" id="apSatNum">${Number(ap.saturate).toFixed(2)}</span></div>
+      </div>
+
+      <div class="drawer-group">
+        <span class="section-label">${esc(t('appear.accent'))}</span>
+        <div class="accent-grid" id="apAccents">
+          ${Object.keys(ACCENTS).map((id) => `<div class="accent-dot ${ap.accent === id ? 'on' : ''}" data-v="${id}"
+            title="${esc(t('accent.' + id))}"
+            style="background:linear-gradient(135deg, ${ACCENTS[id].c}, ${ACCENTS[id].c2})"></div>`).join('')}
+        </div>
+      </div>
+
+      <div class="drawer-group">
+        <span class="section-label">${esc(t('appear.theme'))}</span>
+        <div class="seg" id="apTheme">
+          <button data-v="dark" class="${theme === 'dark' ? 'active' : ''}">${esc(t('appear.theme.dark'))}</button>
+          <button data-v="light" class="${theme === 'light' ? 'active' : ''}">${esc(t('appear.theme.light'))}</button>
+        </div>
+      </div>
+
+      <div class="drawer-group">
+        <span class="section-label">${esc(t('appear.motion'))}</span>
+        <label class="switch"><input type="checkbox" id="apMotion" ${ap.reduceMotion ? 'checked' : ''}/>
+          <span class="track"></span><span class="lbl">${esc(t('appear.reduceMotion'))}</span></label>
+      </div>
+
+      <div class="drawer-group">
+        <span class="section-label">${esc(t('appear.keys'))}</span>
+        <div class="keys">
+          <div class="k-row"><span>${esc(t('appear.keys.nav'))}</span><span><kbd>1</kbd> - <kbd>7</kbd></span></div>
+          <div class="k-row"><span>${esc(t('appear.keys.run'))}</span><kbd>Ctrl + Enter</kbd></div>
+          <div class="k-row"><span>${esc(t('appear.keys.pause'))}</span><kbd>Ctrl + P</kbd></div>
+          <div class="k-row"><span>${esc(t('appear.keys.search'))}</span><kbd>Ctrl + K</kbd></div>
+          <div class="k-row"><span>${esc(t('appear.keys.esc'))}</span><kbd>Esc</kbd></div>
+        </div>
+      </div>
+    </div>`;
+
+  $('#drawerClose', drawer).addEventListener('click', () => toggleDrawer(false));
+
+  $('#bgPick', drawer).addEventListener('click', async () => {
+    const res = await api.appearance.pick();
+    if (res && res.ok) { state.settings.appearance = res.appearance; applyAppearance(); renderDrawer(); }
+    else if (res && res.reason !== 'cancelled') toast(t('appear.pickFail'), 'error');
+  });
+  $('#bgReset', drawer).addEventListener('click', async () => {
+    const res = await api.appearance.clear();
+    if (res && res.ok) { state.settings.appearance = res.appearance; applyAppearance(); renderDrawer(); }
+  });
+
+  $$('#bgPresets .preset', drawer).forEach((el) => el.addEventListener('click', async () => {
+    $$('#bgPresets .preset', drawer).forEach((x) => x.classList.toggle('on', x === el));
+    await saveAppearance({ bgPreset: el.dataset.v });
+  }));
+  $$('#bgFit button', drawer).forEach((b) => b.addEventListener('click', async () => {
+    $$('#bgFit button', drawer).forEach((x) => x.classList.toggle('active', x === b));
+    await saveAppearance({ fit: b.dataset.v });
+  }));
+  $$('#apAccents .accent-dot', drawer).forEach((el) => el.addEventListener('click', async () => {
+    $$('#apAccents .accent-dot', drawer).forEach((x) => x.classList.toggle('on', x === el));
+    await saveAppearance({ accent: el.dataset.v });
+  }));
+  $$('#apTheme button', drawer).forEach((b) => b.addEventListener('click', () => {
+    $$('#apTheme button', drawer).forEach((x) => x.classList.toggle('active', x === b));
+    setTheme(b.dataset.v);
+  }));
+  $('#apMotion', drawer).addEventListener('change', (e) => saveAppearance({ reduceMotion: e.target.checked }));
+
+  // Ползунки применяем сразу, а в файл настроек пишем с задержкой: иначе на
+  // каждое движение мыши уходил бы отдельный сброс на диск.
+  const slider = (id, numId, key, fmt, parse) => {
+    const input = $(id, drawer);
+    const num = $(numId, drawer);
+    const save = debounce((v) => saveAppearance({ [key]: v }), 260);
+    input.addEventListener('input', () => {
+      const v = parse(input.value);
+      num.textContent = fmt(v);
+      state.settings.appearance[key] = v;
+      applyAppearance();
+      save(v);
+    });
+  };
+  slider('#apDim', '#apDimNum', 'dim', (v) => Math.round(v * 100) + '%', Number);
+  slider('#apBlur', '#apBlurNum', 'blur', (v) => v + 'px', Number);
+  slider('#apSat', '#apSatNum', 'saturate', (v) => v.toFixed(2), Number);
+
+  wireRipples(drawer);
+}
+
+// ── горячие клавиши ────────────────────────────────────────────────
+function wireHotkeys() {
+  document.addEventListener('keydown', (e) => {
+    const tag = (e.target.tagName || '').toLowerCase();
+    const typing = tag === 'input' || tag === 'textarea' || tag === 'select';
+
+    if (e.key === 'Escape') {
+      if (drawerOpen()) { toggleDrawer(false); return; }
+      if (typing) e.target.blur();
+      return;
+    }
+    if (e.ctrlKey && e.key === 'Enter') {
+      e.preventDefault();
+      runAction(runState() === 'idle' ? 'start' : 'stop');
+      return;
+    }
+    if (e.ctrlKey && (e.key === 'p' || e.key === 'P' || e.key === 'з' || e.key === 'З')) {
+      e.preventDefault();
+      if (runState() !== 'idle') runAction(runState() === 'paused' ? 'resume' : 'pause');
+      return;
+    }
+    if (e.ctrlKey && (e.key === 'k' || e.key === 'K' || e.key === 'л' || e.key === 'Л')) {
+      e.preventDefault();
+      if (state.route !== 'dashboard') go('dashboard');
+      setTimeout(() => { const s = $('#logSearch'); if (s) s.focus(); }, 60);
+      return;
+    }
+    if (typing || e.ctrlKey || e.altKey || e.metaKey) return;
+    const n = Number(e.key);
+    if (n >= 1 && n <= ROUTES.length) go(ROUTES[n - 1].id);
+  });
+}
+
+// ── обновление данных ──────────────────────────────────────────────
 async function refreshProfiles() {
   state.profiles = await api.profiles.list();
   state.profileStats = await api.profiles.stats();
-  if (state.route === 'profiles') render();
-  else if (state.route === 'dashboard') paintRun();
-}
-async function refreshRun() {
-  state.runStatus = await api.run.status();
-  if (state.route === 'dashboard') paintRun();
+
+  // Спарклайн: прирост отправленного за тик. Первый замер только задаёт точку
+  // отсчёта, иначе весь накопленный за прошлые запуски счёт нарисовался бы
+  // одним всплеском.
+  const total = state.profiles.reduce((n, p) => n + (p.sentCount || 0), 0);
+  if (state.lastSentTotal !== null) {
+    state.sendSeries.push(Math.max(0, total - state.lastSentTotal));
+    while (state.sendSeries.length > 40) state.sendSeries.shift();
+  }
+  state.lastSentTotal = total;
+
+  if (state.route === 'profiles') {
+    renderProfileCards(document);
+    renderProfileDetail(document);
+    const s = state.profileStats;
+    setNumber($('#sTotal'), s.total);
+    setNumber($('#sRun'), s.running);
+    setNumber($('#sReady'), s.gmailReady);
+    setNumber($('#sPorts'), s.portsOpen);
+  } else if (state.route === 'dashboard') {
+    paintRun();
+  }
 }
 
-// ── boot ───────────────────────────────────────────────────────────
+async function refreshRun() {
+  state.runStatus = await api.run.status();
+  paintRun();
+}
+
+// ── запуск ─────────────────────────────────────────────────────────
 async function boot() {
   state.settings = await api.settings.getAll();
   I18N.setLanguage(state.settings.language || 'ru');
   applyTheme(state.settings.theme || 'dark');
-  $('#themeToggle').addEventListener('click', toggleTheme);
+  applyAppearance();
+  renderChrome();
 
+  $('#appearanceBtn').addEventListener('click', () => toggleDrawer());
+  $('#drawerScrim').addEventListener('click', () => toggleDrawer(false));
+  $('#winMin').addEventListener('click', () => api.win.minimize());
+  $('#winMax').addEventListener('click', async () => {
+    const res = await api.win.maximize();
+    paintWindowState(!!(res && res.maximized));
+  });
+  $('#winClose').addEventListener('click', () => api.win.close());
+  api.win.onState((s) => paintWindowState(!!s.maximized));
+  api.win.isMaximized().then((s) => paintWindowState(!!(s && s.maximized)));
+
+  renderNav();
+  render();
+
+  state.logs = await api.logs.recent(200);
   await refreshProfiles();
   await refreshRun();
+  state.booted = true;
+  render();
 
   api.logs.onEntry((entry) => appendLog(entry));
   setInterval(refreshRun, 1000);
   setInterval(refreshProfiles, 4000);
-
-  renderNav();
-  render();
+  window.addEventListener('resize', debounce(moveNavPill, 120));
+  wireHotkeys();
 }
 
 boot();

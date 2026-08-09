@@ -2,32 +2,82 @@
 <html lang="ru" data-theme="dark">
 <head>
   <meta charset="UTF-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self';" />
+  <!-- appbg: - своя схема для пользовательской картинки фона (см. main/appearance.js).
+       data: нужен превью-градиентам в панели оформления. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self'; img-src 'self' data: appbg:;" />
   <title>Gmail Manager</title>
   <link rel="stylesheet" href="styles/theme.css" />
+  <link rel="stylesheet" href="styles/glass.css" />
   <link rel="stylesheet" href="styles/layout.css" />
   <link rel="stylesheet" href="styles/components.css" />
 </head>
 <body>
+  <!-- Фон и вуаль отдельными слоями под всем приложением. -->
+  <div class="bg-layer gradient" id="bgLayer"></div>
+  <div class="bg-veil"></div>
+
+  <!--
+    Карта смещения для жидкого стекла.
+
+    R задаёт сдвиг по X, G - по Y. В середине оба канала равны 128, то есть
+    смещения нет; к краям каналы уходят в 0 и 255, и подложка растягивается
+    наружу - это и читается как преломление на кромке. Плоские участки
+    0.32..0.68 держат центр карточки честным, иначе "линза" размазала бы весь
+    текст под стеклом.
+
+    preserveAspectRatio="none" растягивает карту на любой размер элемента,
+    поэтому фильтр один на все .glass-refract.
+  -->
+  <svg class="lg-defs" aria-hidden="true" focusable="false">
+    <filter id="lg-refract" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB">
+      <feImage preserveAspectRatio="none" result="map"
+        href="data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cdefs%3E%3ClinearGradient id='x' x1='0' y1='0' x2='1' y2='0'%3E%3Cstop offset='0' stop-color='%23000000'/%3E%3Cstop offset='0.32' stop-color='%23800000'/%3E%3Cstop offset='0.68' stop-color='%23800000'/%3E%3Cstop offset='1' stop-color='%23ff0000'/%3E%3C/linearGradient%3E%3ClinearGradient id='y' x1='0' y1='0' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='%23000000'/%3E%3Cstop offset='0.32' stop-color='%23008000'/%3E%3Cstop offset='0.68' stop-color='%23008000'/%3E%3Cstop offset='1' stop-color='%2300ff00'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='240' height='240' fill='url(%23x)'/%3E%3Crect width='240' height='240' fill='url(%23y)' style='mix-blend-mode:screen'/%3E%3C/svg%3E" />
+      <feDisplacementMap in="SourceGraphic" in2="map" scale="26"
+        xChannelSelector="R" yChannelSelector="G" />
+    </filter>
+  </svg>
+
   <div id="app">
-    <aside class="sidebar">
+    <header class="topbar glass glass-refract" id="topbar">
       <div class="brand">
-        <div class="logo">G</div>
+        <div class="logo">GM</div>
         <div>
           <div class="name">Gmail Manager</div>
-          <div class="ver">v0.1.0</div>
+          <div class="tag">outreach control</div>
         </div>
       </div>
-      <nav id="nav"></nav>
-      <div class="sidebar-footer">
-        <div class="theme-toggle" id="themeToggle">
-          <span class="lbl" id="themeLabel"></span>
-          <span class="icon" id="themeIcon"></span>
+
+      <nav class="nav" id="nav"><span class="nav-pill" id="navPill"></span></nav>
+
+      <div class="topbar-right">
+        <button class="btn ghost" id="appearanceBtn"></button>
+        <span class="app-ver" id="appVer">v0.1.0</span>
+        <div class="win-controls">
+          <button class="win-btn" id="winMin" title="Свернуть"></button>
+          <button class="win-btn" id="winMax" title="Развернуть"></button>
+          <button class="win-btn close" id="winClose" title="Закрыть"></button>
         </div>
       </div>
-    </aside>
+    </header>
+
+    <div class="pagehead">
+      <div>
+        <div class="crumbs" id="crumbs"></div>
+        <div class="view-title" id="pageTitle"></div>
+        <div class="view-sub" id="pageSub"></div>
+      </div>
+      <div class="pagehead-right">
+        <div id="pageActions" style="display:flex;gap:8px"></div>
+        <span id="sysPill"></span>
+      </div>
+    </div>
+
     <main class="main" id="main"></main>
   </div>
+
+  <div class="drawer-scrim" id="drawerScrim"></div>
+  <aside class="drawer glass glass-refract" id="drawer"></aside>
+
   <div class="toast" id="toast"></div>
 
   <script src="icons.js"></script>

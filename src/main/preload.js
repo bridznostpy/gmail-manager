@@ -6,10 +6,27 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('api', {
+  win: {
+    minimize: () => ipcRenderer.invoke('window:minimize'),
+    maximize: () => ipcRenderer.invoke('window:maximize'),
+    close: () => ipcRenderer.invoke('window:close'),
+    isMaximized: () => ipcRenderer.invoke('window:isMaximized'),
+    onState: (cb) => {
+      const handler = (_e, state) => cb(state);
+      ipcRenderer.on('window:state', handler);
+      return () => ipcRenderer.removeListener('window:state', handler);
+    },
+  },
   settings: {
     getAll: () => ipcRenderer.invoke('settings:getAll'),
     setSection: (key, value) => ipcRenderer.invoke('settings:setSection', { key, value }),
     loadTexts: (json) => ipcRenderer.invoke('settings:loadTexts', json),
+  },
+  appearance: {
+    get: () => ipcRenderer.invoke('appearance:get'),
+    set: (patch) => ipcRenderer.invoke('appearance:set', patch),
+    pick: () => ipcRenderer.invoke('appearance:pick'),
+    clear: () => ipcRenderer.invoke('appearance:clear'),
   },
   profiles: {
     list: () => ipcRenderer.invoke('profiles:list'),

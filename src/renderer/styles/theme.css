@@ -1,5 +1,27 @@
-/* JetBrains Mono - локально, без CDN (CSP разрешает только 'self').
-   Лицензия SIL OFL 1.1, текст в fonts/OFL.txt. */
+/* Шрифты - локально, без CDN (CSP разрешает только 'self').
+
+   Inter Variable - для заголовков, кнопок и подписей. Два сабсета: латиница и
+   кириллица, интерфейс двуязычный. Лицензия SIL OFL 1.1.
+   JetBrains Mono - для данных: логи, счётчики, порты, User-Agent. Там важно
+   выравнивание по колонкам, а не красота. Лицензия SIL OFL 1.1, fonts/OFL.txt. */
+@font-face {
+  font-family: "Inter Variable";
+  src: url("../fonts/inter-cyrillic-wght-normal.woff2") format("woff2-variations");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+@font-face {
+  font-family: "Inter Variable";
+  src: url("../fonts/inter-latin-wght-normal.woff2") format("woff2-variations");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+2000-206F,
+    U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
 @font-face {
   font-family: "JetBrains Mono";
   src: url("../fonts/JetBrainsMono-Regular.woff2") format("woff2");
@@ -29,82 +51,143 @@
   font-display: block;
 }
 
-/* Токены темы. Тёмная - по умолчанию, [data-theme="light"] переопределяет. */
+/* Токены темы. Тёмная - по умолчанию, [data-theme="light"] переопределяет.
+   Акцент и всё, что связано с фоном, дописывает JS из настроек appearance
+   (см. applyAppearance в app.js) - здесь только значения по умолчанию. */
 :root {
-  /* ── Акценты ─────────────────────────────────────────────── */
-  --accent: #7f52ff;
-  --accent-2: #ff318c;
-  --accent-soft: rgba(127, 82, 255, 0.16);
-  --accent-line: rgba(127, 82, 255, 0.45);
-  --gradient: linear-gradient(135deg, #7f52ff, #ff318c);
+  /* ── Акцент (перекрывается из настроек) ──────────────────── */
+  --accent: #3ddc84;
+  --accent-2: #16b364;
+  --accent-rgb: 61, 220, 132;
+  --accent-soft: rgba(var(--accent-rgb), 0.15);
+  --accent-line: rgba(var(--accent-rgb), 0.45);
+  --gradient: linear-gradient(135deg, var(--accent), var(--accent-2));
+  --on-accent: #05130b;
+
+  /* ── Фон приложения (перекрывается из настроек) ──────────── */
+  --bg-image: none;
+  --bg-dim: 0.58;
+  --bg-blur: 0px;
+  --bg-saturate: 1;
+  --bg-size: cover;
+  --bg-position: 50% 50%;
+  --bg-repeat: no-repeat;
+  --bg-base: #0b0d11;
+  /* Пятна фона-градиента по умолчанию (пресет "aurora"). */
+  --bg-blob-a: radial-gradient(42% 46% at 26% 30%, #1f7a4d 0%, transparent 70%);
+  --bg-blob-b: radial-gradient(46% 40% at 74% 66%, #14506e 0%, transparent 72%);
 
   /* ── Поверхности ─────────────────────────────────────────── */
-  --bg: #16181d;
-  --bg-elev: #1e2128;
-  --bg-elev-2: #262a33;
-  --bg-input: #1a1d23;
-  --bg-code: #101216;
-  --border: #2c313b;
-  --border-strong: #3a4150;
-  --hairline: rgba(255, 255, 255, 0.04);
+  --bg: #0b0d11;
+  --bg-code: rgba(6, 8, 12, 0.55);
+  --bg-input: rgba(255, 255, 255, 0.05);
+  --border: rgba(255, 255, 255, 0.09);
+  --border-strong: rgba(255, 255, 255, 0.16);
+
+  /* ── Стекло ──────────────────────────────────────────────── */
+  --glass-bg: rgba(18, 22, 30, 0.52);
+  --glass-bg-2: rgba(30, 36, 47, 0.6);
+  --glass-border: rgba(255, 255, 255, 0.11);
+  --glass-hi: rgba(255, 255, 255, 0.34);
+  --glass-lo: rgba(255, 255, 255, 0.04);
+  --glass-blur: 18px;
+  --glass-sat: 1.6;
+  --glass-shadow: 0 18px 44px rgba(0, 0, 0, 0.45);
+  --glass-shadow-sm: 0 8px 22px rgba(0, 0, 0, 0.32);
+  --sheen: rgba(255, 255, 255, 0.1);
 
   /* ── Текст ───────────────────────────────────────────────── */
-  --text: #e4e6eb;
-  --text-dim: #9ba3b4;
-  --text-faint: #6c7484;
-  --on-accent: #ffffff;
+  --text: #eef1f6;
+  --text-dim: #a3adbe;
+  --text-faint: #6d7889;
 
   /* ── Статусы ─────────────────────────────────────────────── */
   --green: #3ddc84;
-  --amber: #ffb000;
-  --red: #ff5261;
-  --blue: #4c9aff;
-  --green-soft: rgba(61, 220, 132, 0.14);
-  --amber-soft: rgba(255, 176, 0, 0.14);
-  --red-soft: rgba(255, 82, 97, 0.14);
-  --blue-soft: rgba(76, 154, 255, 0.14);
+  --amber: #ffb443;
+  --red: #ff5f6d;
+  --blue: #57a6ff;
+  --green-soft: rgba(61, 220, 132, 0.15);
+  --amber-soft: rgba(255, 180, 67, 0.15);
+  --red-soft: rgba(255, 95, 109, 0.15);
+  --blue-soft: rgba(87, 166, 255, 0.15);
 
-  /* ── Геометрия и глубина ─────────────────────────────────── */
-  --radius: 14px;
-  --radius-sm: 9px;
-  --radius-xs: 6px;
-  --shadow: 0 10px 34px rgba(0, 0, 0, 0.42);
-  --shadow-lift: 0 6px 20px rgba(0, 0, 0, 0.32);
-  --focus-ring: 0 0 0 3px rgba(127, 82, 255, 0.28);
+  /* ── Геометрия ───────────────────────────────────────────── */
+  --radius-lg: 22px;
+  --radius: 16px;
+  --radius-sm: 11px;
+  --radius-xs: 8px;
+  --focus-ring: 0 0 0 3px rgba(var(--accent-rgb), 0.32);
 
   /* ── Типографика ─────────────────────────────────────────── */
-  --font: "JetBrains Mono", "Cascadia Code", Consolas, "Courier New", monospace;
-  --mono: var(--font);
-  --track-tight: -0.01em;
-  --track-wide: 0.08em;
+  --font-display: "Inter Variable", "Segoe UI Variable Display", "Segoe UI",
+    system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Code", Consolas, "Courier New", monospace;
+  --font: var(--font-display);
+  --track-tight: -0.011em;
+  --track-wide: 0.09em;
+
+  /* ── Движение ────────────────────────────────────────────── */
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --ease-back: cubic-bezier(0.34, 1.36, 0.64, 1);
+  --dur-fast: 0.14s;
+  --dur: 0.26s;
+  --dur-slow: 0.48s;
 }
 
 :root[data-theme="light"] {
-  --accent-soft: rgba(127, 82, 255, 0.1);
-  --accent-line: rgba(127, 82, 255, 0.35);
+  --on-accent: #ffffff;
 
-  --bg: #f4f4f7;
-  --bg-elev: #ffffff;
-  --bg-elev-2: #eceef3;
-  --bg-input: #ffffff;
-  --bg-code: #14171d;
-  --border: #e0e2ea;
-  --border-strong: #cdd1dc;
-  --hairline: rgba(22, 24, 29, 0.05);
+  --bg-base: #e9ecf2;
+  --bg: #e9ecf2;
+  --bg-dim: 0.34;
+  --bg-code: rgba(255, 255, 255, 0.62);
+  --bg-input: rgba(255, 255, 255, 0.66);
+  --border: rgba(16, 21, 31, 0.1);
+  --border-strong: rgba(16, 21, 31, 0.2);
 
-  --text: #1b1e26;
-  --text-dim: #575e6e;
-  --text-faint: #868d9d;
+  /* Светлое стекло: подложка светлеет, внутренняя кромка становится тенью,
+     иначе белый блик по белому просто исчезает. */
+  --glass-bg: rgba(255, 255, 255, 0.62);
+  --glass-bg-2: rgba(255, 255, 255, 0.78);
+  --glass-border: rgba(16, 21, 31, 0.12);
+  --glass-hi: rgba(255, 255, 255, 0.9);
+  --glass-lo: rgba(16, 21, 31, 0.06);
+  --glass-sat: 1.35;
+  --glass-shadow: 0 18px 40px rgba(23, 30, 45, 0.16);
+  --glass-shadow-sm: 0 8px 20px rgba(23, 30, 45, 0.1);
+  --sheen: rgba(255, 255, 255, 0.75);
 
-  --green: #17a866;
-  --amber: #b57800;
-  --red: #d93a4a;
-  --blue: #2b6fd6;
-  --green-soft: rgba(23, 168, 102, 0.12);
-  --amber-soft: rgba(181, 120, 0, 0.12);
-  --red-soft: rgba(217, 58, 74, 0.12);
-  --blue-soft: rgba(43, 111, 214, 0.12);
+  --text: #141922;
+  --text-dim: #4e586a;
+  --text-faint: #7b8598;
 
-  --shadow: 0 10px 30px rgba(24, 26, 40, 0.1);
-  --shadow-lift: 0 6px 18px rgba(24, 26, 40, 0.08);
+  --green: #12915a;
+  --amber: #a86a00;
+  --red: #cf2f40;
+  --blue: #1f66cc;
+  --green-soft: rgba(18, 145, 90, 0.14);
+  --amber-soft: rgba(168, 106, 0, 0.14);
+  --red-soft: rgba(207, 47, 64, 0.14);
+  --blue-soft: rgba(31, 102, 204, 0.14);
+}
+
+/* Пользователь попросил меньше движения - гасим все переходы разом,
+   не вычищая анимации из каждого правила. */
+:root.reduce-motion,
+:root.reduce-motion * {
+  --dur-fast: 0.001s;
+  --dur: 0.001s;
+  --dur-slow: 0.001s;
+  animation-duration: 0.001s !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001s !important;
+  scroll-behavior: auto !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root, :root * {
+    animation-duration: 0.001s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001s !important;
+  }
 }

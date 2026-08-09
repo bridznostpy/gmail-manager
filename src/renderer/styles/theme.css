@@ -94,9 +94,13 @@
   --glass-bg: rgba(var(--glass-rgb), var(--glass-alpha));
   --glass-bg-2: rgba(var(--glass-rgb-2), calc(var(--glass-alpha) + 0.06));
   --head-scrim: rgba(6, 8, 12, 0.72);
-  /* Подложка всей рабочей области. Слабее карточек, но ходит за той же ручкой
-     плотности: и то и другое - про то, насколько интерфейс глушит картинку. */
-  --content-scrim: rgba(var(--glass-rgb), calc(var(--glass-alpha) * 0.34));
+  /* Подложка рабочей области - своей ручкой, отдельно от плотности карточек:
+     карточки можно держать читаемыми, а вокруг них показывать фото. */
+  --scrim-alpha: 0.3;
+  --content-scrim: rgba(var(--glass-rgb), var(--scrim-alpha));
+  /* Сдвиг фона от курсора (параллакс, пишет JS). */
+  --px: 0px;
+  --py: 0px;
   --glass-border: rgba(255, 255, 255, 0.11);
   --glass-hi: rgba(255, 255, 255, 0.34);
   --glass-lo: rgba(255, 255, 255, 0.04);

@@ -69,6 +69,14 @@ const ACCENTS = {
   pink: { c: '#ff5fa2', c2: '#e02e7b', rgb: '255, 95, 162', on: '#1f0512' },
 };
 
+// Готовые сочетания плотности: подобрать три ползунка на глаз тяжело, а
+// разница между "видно фото" и "читается текст" - именно в их сочетании.
+const DENSITY_PRESETS = [
+  { id: 'photo', glass: 0.44, scrim: 0.1, dim: 0.34 },
+  { id: 'balanced', glass: 0.72, scrim: 0.3, dim: 0.5 },
+  { id: 'solid', glass: 0.9, scrim: 0.55, dim: 0.62 },
+];
+
 const BG_PRESETS = {
   aurora: {
     a: 'radial-gradient(42% 46% at 26% 30%, #1f7a4d 0%, transparent 70%)',
@@ -271,6 +279,20 @@ function appearance() {
   return (state.settings && state.settings.appearance) || {};
 }
 
+/**
+ * Значение настройки оформления с запасным вариантом.
+ *
+ * Нужен, потому что поля добавляются со временем: пока нового поля нет в
+ * сохранённом файле, в разметку уходило `value="undefined"`, браузер молча
+ * приводил ползунок к минимуму, и первое же движение соседнего ползунка
+ * записывало этот минимум в настройки. Так у фона обнулялись насыщенность и
+ * затемнение разом.
+ */
+function apVal(key, fallback) {
+  const v = appearance()[key];
+  return Number.isFinite(Number(v)) ? Number(v) : fallback;
+}
+
 function applyAppearance() {
   const ap = appearance();
   const root = document.documentElement;
@@ -286,10 +308,11 @@ function applyAppearance() {
   css.setProperty('--bg-blob-a', preset.a);
   css.setProperty('--bg-blob-b', preset.b);
 
-  css.setProperty('--bg-dim', String(ap.dim != null ? ap.dim : 0.58));
-  css.setProperty('--bg-blur', (ap.blur || 0) + 'px');
-  css.setProperty('--bg-saturate', String(ap.saturate != null ? ap.saturate : 1));
-  css.setProperty('--glass-alpha', String(ap.glassAlpha != null ? ap.glassAlpha : 0.78));
+  css.setProperty('--bg-dim', String(apVal('dim', 0.5)));
+  css.setProperty('--bg-blur', apVal('blur', 0) + 'px');
+  css.setProperty('--bg-saturate', String(apVal('saturate', 1)));
+  css.setProperty('--glass-alpha', String(apVal('glassAlpha', 0.72)));
+  css.setProperty('--scrim-alpha', String(apVal('scrimAlpha', 0.3)));
   css.setProperty('--bg-size', ap.fit === 'tile' ? 'auto' : (ap.fit || 'cover'));
   css.setProperty('--bg-repeat', ap.fit === 'tile' ? 'repeat' : 'no-repeat');
 
@@ -304,6 +327,50 @@ function applyAppearance() {
   }
 
   root.classList.toggle('reduce-motion', !!ap.reduceMotion);
+  if (ap.parallax === false || ap.reduceMotion) {
+    css.setProperty('--px', '0px');
+    css.setProperty('--py', '0px');
+  }
+}
+
+/**
+ * Параллакс фона. Слой едет за курсором на несколько пикселей - этого хватает,
+ * чтобы картинка перестала быть плоской заливкой, и мало, чтобы отвлекать.
+ * Считаем в requestAnimationFrame: mousemove сыплется чаще, чем кадры.
+ */
+function wireParallax() {
+  let frame = null;
+  document.addEventListener('mousemove', (e) => {
+    const ap = appearance();
+    if (ap.parallax === false || ap.reduceMotion) return;
+    if (frame) return;
+    frame = requestAnimationFrame(() => {
+      frame = null;
+      const dx = (e.clientX / window.innerWidth - 0.5) * -26;
+      const dy = (e.clientY / window.innerHeight - 0.5) * -18;
+      const css = document.documentElement.style;
+      css.setProperty('--px', dx.toFixed(1) + 'px');
+      css.setProperty('--py', dy.toFixed(1) + 'px');
+    });
+  });
+}
+
+/** Подсмотреть фон: панели уходят в прозрачность, пока держат Alt. */
+function setPeek(on) {
+  document.documentElement.classList.toggle('peek', on);
+  const btn = $('#btnPeek');
+  if (btn) btn.classList.toggle('on', on);
+}
+
+function wirePeek() {
+  const btn = $('#btnPeek');
+  btn.innerHTML = ICONS.eye;
+  btn.title = t('appear.peek');
+  btn.addEventListener('click', () => setPeek(!document.documentElement.classList.contains('peek')));
+  // Alt удобнее кнопки: посмотрел и отпустил, не теряя место в интерфейсе.
+  window.addEventListener('keydown', (e) => { if (e.key === 'Alt') { e.preventDefault(); setPeek(true); } });
+  window.addEventListener('keyup', (e) => { if (e.key === 'Alt') setPeek(false); });
+  window.addEventListener('blur', () => setPeek(false));
 }
 
 async function saveAppearance(patch) {
@@ -430,7 +497,24 @@ function render() {
   wirePanels(main);
   wireRipples(main);
   wireSheen(main);
+  wireCascade(main);
   paintRun();
+}
+
+/**
+ * Каскад появления: нумеруем детей, CSS считает задержку от --i.
+ *
+ * Класс снимаем, как только каскад отыграл. Списки перерисовываются по таймеру
+ * раз в несколько секунд, и без этого карточки мигали бы въездом заново на
+ * каждом обновлении данных.
+ */
+function wireCascade(root) {
+  $$('.cascade', root).forEach((box) => {
+    const kids = [...box.children];
+    kids.forEach((el, i) => el.style.setProperty('--i', String(i)));
+    const total = kids.length * 55 + 460;
+    setTimeout(() => box.classList.remove('cascade'), total);
+  });
 }
 
 // ── Главная: витрина ───────────────────────────────────────────────
@@ -503,7 +587,7 @@ VIEWS.home = () => {
       <div class="home-facts" id="homeFacts"></div>
     </section>
 
-    <section class="home-tiles" id="homeTiles"></section>
+    <section class="home-tiles cascade" id="homeTiles"></section>
 
     <section class="card glass home-ready" id="homeReady"></section>
   </div>`);
@@ -579,6 +663,7 @@ function paintHomeTiles() {
   </button>`).join('');
   $$('.home-tile', box).forEach((el) => el.addEventListener('click', () => go(el.dataset.route)));
   wireSheen(box);
+  wireCascade(box.parentElement || document);
 }
 
 function paintHomeReady() {
@@ -926,6 +1011,8 @@ function paintRun() {
 
   const sysPill = $('#sysPill');
   if (sysPill) sysPill.innerHTML = pillHtml(mode);
+  // Пока прогон идёт, по полосам прогресса бежит блик - видно, что не замерло.
+  document.documentElement.classList.toggle('running', mode === 'running');
 
   const note = $('#runNote');
   if (note) {
@@ -1234,7 +1321,7 @@ VIEWS.profiles = () => {
       <span id="viewActions" style="display:flex;gap:8px"></span>
     </div>
 
-    <div class="cards-grid" id="cards"></div>
+    <div class="cards-grid cascade" id="cards"></div>
   </div>`);
 
   setTimeout(() => {
@@ -1370,6 +1457,7 @@ function renderProfileCards(root) {
   cards.appendChild(add);
 
   wireSheen(cards);
+  wireCascade(cards.parentElement || document);
 }
 
 /**
@@ -1859,18 +1947,30 @@ function appearanceControlsHtml() {
         </div>
         <div style="height:14px"></div>
         <div class="slider-row"><span class="lbl">${esc(t('appear.dim'))}</span>
-          <input type="range" id="apDim" min="0" max="0.92" step="0.02" value="${ap.dim}"/>
-          <span class="num" id="apDimNum">${Math.round(ap.dim * 100)}%</span></div>
+          <input type="range" id="apDim" min="0" max="0.92" step="0.02" value="${apVal('dim', 0.5)}"/>
+          <span class="num" id="apDimNum">${Math.round(apVal('dim', 0.5) * 100)}%</span></div>
         <div class="slider-row"><span class="lbl">${esc(t('appear.blur'))}</span>
-          <input type="range" id="apBlur" min="0" max="26" step="1" value="${ap.blur}"/>
-          <span class="num" id="apBlurNum">${ap.blur}px</span></div>
+          <input type="range" id="apBlur" min="0" max="26" step="1" value="${apVal('blur', 0)}"/>
+          <span class="num" id="apBlurNum">${apVal('blur', 0)}px</span></div>
         <div class="slider-row"><span class="lbl">${esc(t('appear.saturate'))}</span>
-          <input type="range" id="apSat" min="0" max="2" step="0.05" value="${ap.saturate}"/>
-          <span class="num" id="apSatNum">${Number(ap.saturate).toFixed(2)}</span></div>
+          <input type="range" id="apSat" min="0" max="2" step="0.05" value="${apVal('saturate', 1)}"/>
+          <span class="num" id="apSatNum">${apVal('saturate', 1).toFixed(2)}</span></div>
         <div class="slider-row"><span class="lbl">${esc(t('appear.glass'))}</span>
-          <input type="range" id="apGlass" min="0.3" max="1" step="0.02" value="${ap.glassAlpha}"/>
-          <span class="num" id="apGlassNum">${Math.round(ap.glassAlpha * 100)}%</span></div>
-        <div class="hint">${esc(t('appear.glassHint'))}</div>
+          <input type="range" id="apGlass" min="0.2" max="1" step="0.02" value="${apVal('glassAlpha', 0.72)}"/>
+          <span class="num" id="apGlassNum">${Math.round(apVal('glassAlpha', 0.72) * 100)}%</span></div>
+        <div class="slider-row"><span class="lbl">${esc(t('appear.scrim'))}</span>
+          <input type="range" id="apScrim" min="0" max="0.85" step="0.02" value="${apVal('scrimAlpha', 0.3)}"/>
+          <span class="num" id="apScrimNum">${Math.round(apVal('scrimAlpha', 0.3) * 100)}%</span></div>
+        <div class="seg" id="apDensity" style="margin-top:6px">
+          ${DENSITY_PRESETS.map((d) => `<button data-v="${d.id}">${esc(t('appear.density.' + d.id))}</button>`).join('')}
+        </div>
+        <div class="hint" style="margin-top:8px">${esc(t('appear.glassHint'))}</div>
+      </div>
+
+      <div class="opt-group">
+        <span class="section-label">${esc(t('appear.motion'))}</span>
+        <label class="switch" style="margin-bottom:10px"><input type="checkbox" id="apParallax" ${ap.parallax !== false ? 'checked' : ''}/>
+          <span class="track"></span><span class="lbl">${esc(t('appear.parallax'))}</span></label>
       </div>
 
       <div class="opt-group">
@@ -1949,6 +2049,7 @@ function wireAppearanceControls(root, rerender) {
     const save = debounce((v) => saveAppearance({ [key]: v }), 260);
     input.addEventListener('input', () => {
       const v = parse(input.value);
+      if (!Number.isFinite(v)) return;
       num.textContent = fmt(v);
       state.settings.appearance[key] = v;
       applyAppearance();
@@ -1959,6 +2060,14 @@ function wireAppearanceControls(root, rerender) {
   slider('#apBlur', '#apBlurNum', 'blur', (v) => v + 'px', Number);
   slider('#apSat', '#apSatNum', 'saturate', (v) => v.toFixed(2), Number);
   slider('#apGlass', '#apGlassNum', 'glassAlpha', (v) => Math.round(v * 100) + '%', Number);
+  slider('#apScrim', '#apScrimNum', 'scrimAlpha', (v) => Math.round(v * 100) + '%', Number);
+
+  $$('#apDensity button', root).forEach((b) => b.addEventListener('click', async () => {
+    const preset = DENSITY_PRESETS.find((d) => d.id === b.dataset.v);
+    await saveAppearance({ glassAlpha: preset.glass, scrimAlpha: preset.scrim, dim: preset.dim });
+    rerender();
+  }));
+  $('#apParallax', root).addEventListener('change', (e) => saveAppearance({ parallax: e.target.checked }));
 
   wireRipples(root);
 }
@@ -2278,6 +2387,8 @@ async function boot() {
   setInterval(refreshProfiles, 4000);
   setInterval(paintClock, 15000);
   wireHotkeys();
+  wireParallax();
+  wirePeek();
 }
 
 boot();

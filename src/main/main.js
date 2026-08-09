@@ -9,6 +9,7 @@ const path = require('path');
 const { Store } = require('./store');
 const { ProfileStore } = require('./profiles/profileStore');
 const { ContactStore } = require('./contacts/contactStore');
+const { DialogStore } = require('./dialogs/dialogStore');
 const { PlaywrightManager } = require('./cdp/chromeManager');
 const { ParserEngine } = require('./parser/parserEngine');
 const { SenderEngine } = require('./sender/senderEngine');
@@ -25,10 +26,11 @@ function buildContext() {
   const store = new Store(path.join(userData, 'settings.json'));
   const profileStore = new ProfileStore(path.join(userData, 'profiles.json'));
   const contactStore = new ContactStore(path.join(userData, 'contacts.json'));
+  const dialogStore = new DialogStore(path.join(userData, 'dialogs.json'));
   const chrome = new PlaywrightManager(store, userData);
   const parser = new ParserEngine(store);
-  const sender = new SenderEngine({ store, profileStore, chrome, parser, contactStore });
-  return { store, profileStore, contactStore, chrome, parser, sender, userData };
+  const sender = new SenderEngine({ store, profileStore, chrome, parser, contactStore, dialogStore });
+  return { store, profileStore, contactStore, dialogStore, chrome, parser, sender, userData };
 }
 
 function createWindow() {

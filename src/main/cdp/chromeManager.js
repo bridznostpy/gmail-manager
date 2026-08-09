@@ -316,9 +316,15 @@ function gmailRowsFn(arg) {
     var tid = r.getAttribute('data-legacy-thread-id')
       || (holder ? holder.getAttribute('data-legacy-thread-id') : '') || '';
     var rid = r.getAttribute('id') || '';
+    // Идентификатор ПОСЛЕДНЕГО письма треда. На нём держится весь учёт
+    // автоответчика: изменился - значит в переписке появилось новое письмо.
+    var mh = r.querySelector('[data-legacy-last-message-id]');
+    var mid = r.getAttribute('data-legacy-last-message-id')
+      || (mh ? mh.getAttribute('data-legacy-last-message-id') : '') || '';
     var s = r.querySelector('.bog, .y6 span');
     out.push({
-      threadId: tid || rid, legacyId: tid, rowId: rid,
+      threadId: tid || rid, legacyId: tid, rowId: rid, lastMessageId: mid,
+      unread: r.classList.contains('zE'),
       from: pickEmail(r), subject: s ? s.textContent : '',
     });
   }
@@ -969,11 +975,15 @@ class PlaywrightManager {
   }
 
   /**
-   * Read unread conversations from the profile's inbox tab. Returns a shallow
-   * list of { threadId, from, subject } for the auto-responder to act on.
+   * Строки списка писем для автоответчика.
+   *
+   * По умолчанию берём ВСЕ строки, а не только непрочитанные: решение "надо ли
+   * отвечать" принимается по своему учёту диалогов (dialogStore) и по
+   * lastMessageId строки, а не по прочитанности - она чужое состояние и
+   * подводила уже дважды.
    */
-  async gmailListUnread(profileId, max = 25) {
-    return this._serial(profileId, () => this._listRows(profileId, { unreadOnly: true, max }));
+  async gmailListThreads(profileId, { unreadOnly = false, max = 25 } = {}) {
+    return this._serial(profileId, () => this._listRows(profileId, { unreadOnly, max }));
   }
 
   /** Прочитать строки списка писем на вкладке почты профиля. */
@@ -1183,7 +1193,12 @@ class PlaywrightManager {
       }, String(cid), T_MED);
       if (sent) logger.success('gmail', t('gmail.replySent', { tid }));
       else logger.warn('gmail', t('gmail.replyUnconfirmed', { tid }));
-      return { ok: !!sent };
+      // Своё письмо стало последним в треде. Отдаём его идентификатор наверх,
+      // чтобы учёт диалогов не принял наш же ответ за новое письмо продавца.
+      const lastMessageId = sent
+        ? await this._waitRowMessageChanged(page, item, item.lastMessageId || '', T_MED)
+        : '';
+      return { ok: !!sent, lastMessageId };
     } finally {
       // Неудачную попытку за собой убираем, иначе копятся черновики.
       if (!sent) await this._clickOrdered(page, SEL_ORDERED.discard, T_SHORT);
@@ -1191,20 +1206,25 @@ class PlaywrightManager {
   }
 
   /**
-   * Прочитанной переписка становится сама, когда мы в неё отвечаем. Если вдруг
-   * нет - строка так и останется непрочитанной, и следующий проход посчитает её
-   * новым письмом. Тогда открываем переписку и возвращаемся: открытие Gmail
-   * прочитанность проставляет гарантированно.
+   * Идентификатор последнего письма треда в строке списка. После нашего ответа
+   * он меняется на наш ответ - по нему автоответчик и понимает, что изменение
+   * принесли мы сами, а не продавец. Ждём смены: строка обновляется не сразу.
    */
-  async _ensureThreadRead(page, item) {
-    const row = await this._rowLocator(page, item);
-    if (!row) return;
-    const unread = await row.evaluate((n) => n.classList.contains('zE')).catch(() => false);
-    if (!unread) return;
-    logger.debug('gmail', t('gmail.markReadFallback'));
-    if (await this._openThread(page, item)) {
-      await this._ensureInbox(page).catch(() => {});
+  async _waitRowMessageChanged(page, item, was, timeout = T_MED) {
+    const until = Date.now() + timeout;
+    while (Date.now() < until) {
+      const row = await this._rowLocator(page, item).catch(() => null);
+      if (row) {
+        const id = await row.evaluate((n) => {
+          var h = n.querySelector('[data-legacy-last-message-id]');
+          return n.getAttribute('data-legacy-last-message-id')
+            || (h ? h.getAttribute('data-legacy-last-message-id') : '') || '';
+        }).catch(() => '');
+        if (id && id !== was) return id;
+      }
+      await page.waitForTimeout(400);
     }
+    return '';
   }
 
   async _gmailReply(profileId, thread, text) {
@@ -1216,10 +1236,7 @@ class PlaywrightManager {
     // Основной путь - ответить прямо из списка, не заходя в переписку.
     await this._ensureInbox(page);
     const viaWidget = await this._replyViaWidget(page, inst, item, tid, text);
-    if (viaWidget) {
-      await this._ensureThreadRead(page, item).catch(() => {});
-      return viaWidget;
-    }
+    if (viaWidget) return viaWidget;
     logger.debug('gmail', t('gmail.replyWidgetFallback'));
 
     const opened = await this._openThread(page, item);

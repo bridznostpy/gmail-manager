@@ -27,17 +27,19 @@ const telegram = require('../telegram/telegram');
 const texts = require('../texts');
 
 class SenderEngine {
-  constructor({ store, profileStore, chrome, parser, contactStore }) {
+  constructor({ store, profileStore, chrome, parser, contactStore, dialogStore }) {
     this.store = store;
     this.profileStore = profileStore;
     this.chrome = chrome;
     this.parser = parser;
     this.contactStore = contactStore;
+    // Учёт переписок автоответчика: сколько раз отвечали и какие письма уже
+    // разобрали. Своё состояние вместо прочитанности Gmail, см. _pollReplies.
+    this.dialogStore = dialogStore;
     this.running = false;
     this.startedAt = null;
     this._sendTimer = null;
     this._replyTimer = null;
-    this.dialogs = new Map(); // dialogId -> { replies: n }
     this._notifiedAllLimits = false;
     // Идёт проход автоответа - новые письма в это время не шлём, см. _sendLoop.
     this._replying = false;
@@ -59,16 +61,6 @@ class SenderEngine {
   /** Ready accounts whose Chrome instance is actually up (for reply-scanning). */
   _runningReady() {
     return this._readyProfiles().filter((p) => this.chrome.isRunning(p.id));
-  }
-
-  /**
-   * Сколько не отвечать повторно в ту же переписку. Два круга опроса: за это
-   * время список писем точно успевает догнать действительность. Нижняя граница
-   * в минуту - на случай очень частого опроса.
-   */
-  _replyCooldownMs() {
-    const sec = Number(this.store.get('system').checkIntervalSec) || 20;
-    return Math.max(60000, sec * 2 * 1000);
   }
 
   _allLimitsReached() {
@@ -185,6 +177,15 @@ class SenderEngine {
     this._replyTimer = setTimeout(() => this._replyLoop(), intervalMs);
   }
 
+  /**
+   * Проход автоответчика.
+   *
+   * Сценарий: продавец ответил - отвечаем ему. Написал после нашего ответа
+   * снова - отвечаем снова, и так по кругу, пока не упрёмся в лимит ответов на
+   * диалог. Прочитанность письма в этом решении не участвует: это состояние
+   * Gmail, оно отстаёт и зависит от того, открывали ли переписку. Учёт свой,
+   * в dialogStore, и он переживает перезапуск приложения.
+   */
   async _pollReplies() {
     const maxReplies = this.store.get('system').maxRepliesPerDialog;
     const loaded = this.store.get('texts');
@@ -198,32 +199,39 @@ class SenderEngine {
     const accounts = this._runningReady();
     logger.debug('sender', t('reply.poll', { count: accounts.length, cap: maxReplies }));
     for (const account of accounts) {
-      let unread = [];
+      let rows = [];
       try {
-        unread = await this.chrome.gmailListUnread(account.id);
+        // Берём весь список, а не только непрочитанное: что новое, а что нет,
+        // решаем сами по идентификатору последнего письма треда.
+        rows = await this.chrome.gmailListThreads(account.id, { max: 25 });
       } catch (e) {
         logger.warn('sender', t('reply.unreadFailed', { label: account.label, error: e.message }));
         continue;
       }
-      for (const thread of unread) {
+      for (const thread of rows) {
         // Отвечаем ТОЛЬКО тем, кому сами писали в этой рассылке. Иначе PASTE со
-        // ссылкой ушёл бы на любое непрочитанное письмо в инбоксе (промо,
-        // служебные письма Gmail), а не на реальный ответ покупателя.
+        // ссылкой ушёл бы на любое письмо в инбоксе (промо, служебные письма
+        // Gmail), а не на реальный ответ покупателя.
         const contact = this.contactStore ? this.contactStore.get(thread.from) : null;
         if (!contact) {
           logger.debug('sender', t('reply.skipUnknown', { from: thread.from || '?' }));
           continue;
         }
-        const key = account.id + ':' + thread.threadId;
-        const dialog = this.dialogs.get(key) || { replies: 0, lastAt: 0 };
-        if (dialog.replies >= maxReplies) continue;
-        // Одному входящему письму - один ответ. Признак "ответить надо" у нас
-        // один: письмо непрочитано. Но список писем умеет отставать, и уже
-        // отвеченная переписка приходит непрочитанной ещё раз - тогда автоответ
-        // уходил в неё повторно. Пауза это гасит и при этом не блокирует
-        // навсегда: на настоящее следующее письмо ответ уйдёт.
-        if (dialog.lastAt && Date.now() - dialog.lastAt < this._replyCooldownMs()) {
-          logger.debug('sender', t('reply.cooldown', { tid: thread.threadId }));
+        const verdict = this.dialogStore.decide(
+          account.id, thread.threadId, thread.lastMessageId, maxReplies,
+        );
+        if (verdict === 'same') continue;
+        if (verdict === 'limit') {
+          // Запоминаем письмо, чтобы не разбирать эту переписку каждый проход.
+          this.dialogStore.noteSeen(account.id, thread.threadId, thread.lastMessageId);
+          logger.debug('sender', t('reply.capReached', { tid: thread.threadId, cap: maxReplies }));
+          continue;
+        }
+        if (verdict === 'own') {
+          // Последнее письмо треда - наш же прошлый ответ, а не новое от
+          // продавца. Просто запоминаем его.
+          this.dialogStore.noteSeen(account.id, thread.threadId, thread.lastMessageId);
+          logger.debug('sender', t('reply.ownMessage', { tid: thread.threadId }));
           continue;
         }
         try {
@@ -231,11 +239,17 @@ class SenderEngine {
           // переписки названия товара и цены нет.
           const url = await this._linkFor(thread.from, thread);
           const text = texts.autoReply(loaded, lang, url, contact);
-          await this.chrome.gmailReply(account.id, thread, text);
-          dialog.replies += 1;
-          dialog.lastAt = Date.now();
-          this.dialogs.set(key, dialog);
-          logger.info('sender', t('reply.sent', { label: account.label, n: dialog.replies, cap: maxReplies }));
+          const res = await this.chrome.gmailReply(account.id, thread, text);
+          if (!res || !res.ok) {
+            logger.warn('sender', t('reply.failed', { tid: thread.threadId, error: t('reply.notConfirmed') }));
+            continue;
+          }
+          const rec = this.dialogStore.recordReply(account.id, thread.threadId, {
+            email: thread.from,
+            seenMessageId: thread.lastMessageId,
+            ownMessageId: res.lastMessageId,
+          });
+          logger.info('sender', t('reply.sent', { label: account.label, n: rec.replies, cap: maxReplies }));
         } catch (e) {
           logger.warn('sender', t('reply.failed', { tid: thread.threadId, error: e.message }));
         }
@@ -256,32 +270,49 @@ class SenderEngine {
       logger.warn('sender', t('dry.profileStopped', { label: account.label }));
       return { ok: false, reason: 'profile_stopped', rows: [] };
     }
-    let unread = [];
+    let found = [];
     try {
-      unread = await this.chrome.gmailListUnread(account.id);
+      found = await this.chrome.gmailListThreads(account.id, { max: 25 });
     } catch (e) {
       logger.warn('sender', t('reply.unreadFailed', { label: account.label, error: e.message }));
       return { ok: false, reason: 'scan_failed', rows: [] };
     }
-    logger.info('sender', t('dry.title', { label: account.label, count: unread.length }));
-    if (!unread.length) logger.info('sender', t('dry.empty'));
-    const rows = unread.map((thread) => {
+    const maxReplies = this.store.get('system').maxRepliesPerDialog;
+    logger.info('sender', t('dry.title', { label: account.label, count: found.length }));
+    if (!found.length) logger.info('sender', t('dry.empty'));
+    const rows = found.map((thread) => {
       const contact = this.contactStore ? this.contactStore.get(thread.from) : null;
+      const rec = this.dialogStore.get(account.id, thread.threadId);
+      // Тот же вердикт, что и в настоящем проходе - видно, что уйдёт, а что нет.
+      const verdict = contact
+        ? this.dialogStore.decide(account.id, thread.threadId, thread.lastMessageId, maxReplies)
+        : 'unknown';
       const row = {
         threadId: thread.threadId,
         from: thread.from || '',
         subject: thread.subject || '',
         known: !!contact,
         title: contact ? contact.title : '',
+        replies: rec ? rec.replies : 0,
+        verdict,
       };
       logger.info('sender', t('dry.row', {
         subject: row.subject || '?',
         from: row.from || '?',
         contact: t(row.known ? 'dry.known' : 'dry.unknown'),
       }));
+      if (row.known) {
+        logger.info('sender', t('dry.verdict', {
+          verdict: t('verdict.' + verdict), n: row.replies, cap: maxReplies,
+        }));
+      }
       return row;
     });
-    return { ok: true, rows, known: rows.filter((r) => r.known).length };
+    return {
+      ok: true, rows,
+      known: rows.filter((r) => r.known).length,
+      willReply: rows.filter((r) => r.verdict === 'new' || r.verdict === 'reply').length,
+    };
   }
 
   /** Ссылка Haron по контакту (данные товара) или по переданному лиду. */

@@ -1028,17 +1028,35 @@ class PlaywrightManager {
     return false;
   }
 
-  /** Тело письма - contenteditable, перевод строки нужен настоящий. */
-  async _fillBody(widget, text) {
+  /**
+   * Тело письма - contenteditable, перевод строки нужен настоящий.
+   *
+   * TODO(gmail-dom): в режиме HTML вставляем разметку через
+   * execCommand('insertHTML') - тем же способом, каким её вставляет сам Gmail
+   * при вставке из буфера. Проверять на живом аккаунте: если Gmail разметку не
+   * примет, запасной путь - письмо обычным текстом.
+   */
+  async _fillBody(widget, text, { html = '' } = {}) {
     const el = this._visibleIn(widget, SEL.body);
     if (!(await this._waitLocator(el, this._t(T_MED)))) return false;
     return el.evaluate((node, put) => {
       node.focus();
-      try { document.execCommand('insertText', false, put); }
-      catch (e) { node.textContent = put; }
+      var cmd = put.html ? 'insertHTML' : 'insertText';
+      var value = put.html || put.text;
+      try { document.execCommand(cmd, false, value); }
+      catch (e) { node.textContent = put.text; }
+      // Разметка могла не вставиться, а исключения при этом нет: execCommand
+      // отдаёт false. Тогда письмо уходит обычным текстом, а не пустым.
+      if (!node.innerHTML || !node.innerHTML.trim()) {
+        try { document.execCommand('insertText', false, put.text); }
+        catch (e2) { node.textContent = put.text; }
+      }
       node.dispatchEvent(new InputEvent('input', { bubbles: true }));
       return true;
-    }, String(text == null ? '' : text)).catch(() => false);
+    }, {
+      html: String(html == null ? '' : html),
+      text: String(text == null ? '' : text),
+    }).catch(() => false);
   }
 
   /**
@@ -1186,11 +1204,15 @@ class PlaywrightManager {
   }
 
   /**
-   * Open a thread on the inbox tab and send `text` as a reply. Used by the
-   * auto-responder. Best-effort DOM automation - see TODO(gmail-dom) above.
+   * Ответить в переписку. Используется автоответчиком.
+   *
+   * `payload` - строка (обычный текст) либо { text, html }: в режиме HTML в
+   * письмо уходит разметка, а text остаётся запасным путём и текстовой
+   * проекцией для журнала.
    */
-  async gmailReply(profileId, thread, text) {
-    return this._serial(profileId, () => this._gmailReply(profileId, thread, text));
+  async gmailReply(profileId, thread, payload) {
+    const body = typeof payload === 'string' ? { text: payload, html: '' } : (payload || {});
+    return this._serial(profileId, () => this._gmailReply(profileId, thread, body));
   }
 
   /** Строка списка писем как локатор: по своему id, при промахе - по отправителю. */
@@ -1327,14 +1349,14 @@ class PlaywrightManager {
    * Ответить окном письма, открытым прямо из списка. Получатель и тема в нём уже
    * стоят от Gmail, наше дело - текст и "Отправить".
    */
-  async _replyViaWidget(page, inst, item, tid, text) {
+  async _replyViaWidget(page, inst, item, tid, body) {
     const cid = await this._openReplyWidget(page, item);
     if (!cid) return null;
     const widget = this._widget(page, cid);
 
     let sent = false;
     try {
-      if (!(await this._fillBody(widget, text))) return null;
+      if (!(await this._fillBody(widget, body.text, { html: body.html }))) return null;
 
       let clicked = false;
       try {
@@ -1382,7 +1404,7 @@ class PlaywrightManager {
     return typeof id === 'string' ? id : '';
   }
 
-  async _gmailReply(profileId, thread, text) {
+  async _gmailReply(profileId, thread, body) {
     const { inst, page } = await this._mailPage(profileId);
     const item = typeof thread === 'string' ? { threadId: thread } : (thread || {});
     const tid = item.threadId;
@@ -1390,7 +1412,7 @@ class PlaywrightManager {
 
     // Основной путь - ответить прямо из списка, не заходя в переписку.
     await this._ensureInbox(page);
-    const viaWidget = await this._replyViaWidget(page, inst, item, tid, text);
+    const viaWidget = await this._replyViaWidget(page, inst, item, tid, body);
     if (viaWidget) return viaWidget;
     logger.debug('gmail', t('gmail.replyWidgetFallback'));
 
@@ -1419,10 +1441,18 @@ class PlaywrightManager {
       const box = this._visible(page, SEL.replyBox);
       await box.evaluate((node, put) => {
         node.focus();
-        try { document.execCommand('insertText', false, put); }
-        catch (e) { node.textContent = put; }
+        var cmd = put.html ? 'insertHTML' : 'insertText';
+        try { document.execCommand(cmd, false, put.html || put.text); }
+        catch (e) { node.textContent = put.text; }
+        if (!node.innerHTML || !node.innerHTML.trim()) {
+          try { document.execCommand('insertText', false, put.text); }
+          catch (e2) { node.textContent = put.text; }
+        }
         node.dispatchEvent(new InputEvent('input', { bubbles: true }));
-      }, String(text == null ? '' : text)).catch(() => {});
+      }, {
+        html: String((body && body.html) || ''),
+        text: String((body && body.text) || ''),
+      }).catch(() => {});
 
       // Сначала настоящая кнопка "Отправить" - она в форме ответа есть
       // (div[role=button].aoO). Горячая клавиша остаётся запасным путём, с

@@ -1711,6 +1711,18 @@ function renderChatFeed() {
     day = key || day;
     return head + chatBubbleHtml(m, chat, !newDay && sameSpeaker(rows[i - 1], m));
   }).join(''));
+  wirePhotos(feed);
+  // Просмотр HTML-письма целиком. Обработчик на всю ленту: писем в ней много, а
+  // кнопка есть только у части.
+  if (!feed.dataset.wiredHtml) {
+    feed.dataset.wiredHtml = '1';
+    feed.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-view]');
+      if (!btn) return;
+      const msg = (state.chatMessages || []).find((x) => x.id === btn.dataset.view);
+      if (msg && msg.html) openHtmlPreview(msg.html);
+    });
+  }
   // К последнему письму - в кадре, чтобы не считать раскладку сразу после
   // вставки всей ленты.
   requestAnimationFrame(() => { feed.scrollTop = feed.scrollHeight; });
@@ -1746,18 +1758,44 @@ function chatBubbleHtml(m, c, same) {
   // пузыре рисовался бы пустой строкой. Внутренние абзацы сохраняем: они
   // осмысленные, ими текст и разбит.
   const body = String(m.body || '').trim();
+  // Письмо уходило HTML-шаблоном. В пузырь ставим картинки и текстовую
+  // проекцию, а не саму разметку: письмо со своими стилями сломало бы ленту, а
+  // сырой HTML в переписке читать невозможно. Целиком письмо открывается
+  // кнопкой, тем же превью, что и в настройках.
+  const shots = m.html ? htmlImages(m.html) : [];
   return `<div class="bubble ${out ? 'out' : 'in'} ${same ? 'same' : ''}">
     <div class="bb-meta">
       ${same ? '' : `<span class="bb-who">${esc(chatAuthor(m, c))}</span>
       <span class="bb-kind">${esc(t('chat.kind.' + (m.kind || 'first')))}</span>`}
+      ${m.html ? `<span class="bb-kind">HTML</span>` : ''}
       ${m.partial ? `<span class="bb-partial" title="${esc(t('chat.partialHint'))}">${esc(t('chat.partial'))}</span>` : ''}
       <span class="bb-time">${esc(fmtClock(m.ts))}</span>
     </div>
     <div class="bb-body">
       ${m.subject && m.kind === 'first' ? `<div class="bb-subj">${esc(m.subject)}</div>` : ''}
+      ${shots.length ? `<div class="bb-shots">${shots.map((u) => photoHtml(u, 'bb-photo')).join('')}</div>` : ''}
       <div class="bb-text">${esc(body)}</div>
+      ${m.html ? `<button class="mini bb-view" data-view="${esc(m.id)}">${ICONS.image}<span>${esc(t('chat.viewHtml'))}</span></button>` : ''}
     </div>
   </div>`;
+}
+
+/**
+ * Адреса картинок из разметки письма. Тот же разбор, что в main
+ * (htmlTemplate.images), но лента чата собирается в рендере, и гонять письмо
+ * туда-обратно через IPC ради одного списка незачем.
+ */
+function htmlImages(html) {
+  const out = [];
+  const re = /<img\b[^>]*\bsrc\s*=\s*("([^"]*)"|'([^']*)')/gi;
+  let m = re.exec(String(html || ''));
+  while (m) {
+    const src = String(m[2] != null ? m[2] : (m[3] || ''))
+      .replace(/&quot;/gi, '"').replace(/&amp;/gi, '&');
+    if (src && out.indexOf(src) < 0) out.push(src);
+    m = re.exec(String(html || ''));
+  }
+  return out;
 }
 
 /**
@@ -2274,6 +2312,10 @@ const SETTINGS_GROUPS = [
     terms: ['set.mails', 'set.replies', 'set.sendDelay', 'set.checkInterval', 'set.waitScale'],
   },
   {
+    id: 'autoreply', section: 'run', icon: 'chat', reset: 'autoReply', build: buildSetAutoReply,
+    terms: ['ar.modeText', 'ar.modeHtml', 'set.b.template', 'ar.slots'],
+  },
+  {
     id: 'texts', section: 'run', icon: 'inbox', build: buildSetTexts,
     terms: ['txt.outreachLang', 'txt.editJson', 'txt.d.first', 'txt.d.reply', 'txt.d.nudge'],
   },
@@ -2703,6 +2745,176 @@ function buildSetTelegram() {
       : t('tg.fail');
   });
   return el;
+}
+
+// ── Авто-ответ: обычный текст или HTML ─────────────────────────────
+// Текстом отвечает вариант из PASTE_DICT (см. раздел текстов), HTML - один
+// шаблон отсюда. Шаблон верстается руками, поэтому набора вариантов у него нет.
+
+// Плейсхолдеры шаблона. Порядок не случайный: картинка и ссылка нужны почти
+// всегда, остальное по вкусу.
+const HTML_SLOTS = ['{image_url}', '{link}', '{title}', '{price}', '{seller_username}', '{ad_url}', '{date}'];
+
+function buildSetAutoReply() {
+  const ar = state.settings.autoReply || { mode: 'text', html: '' };
+  const html = ar.mode === 'html';
+  const el = h(setCard('autoreply', `
+    ${setBlock('set.b.mode', 'set.arModeHint', `
+      <div class="field" style="max-width:320px">
+        <label>${esc(t('ar.mode'))}</label>
+        <div class="seg" id="arMode">
+          <button data-v="text" class="${html ? '' : 'active'}">${esc(t('ar.modeText'))}</button>
+          <button data-v="html" class="${html ? 'active' : ''}">${esc(t('ar.modeHtml'))}</button>
+        </div>
+      </div>`)}
+    ${html ? setBlock('set.b.template', 'set.arTplHint', `
+      <div class="ar-acts">
+        <button class="btn ghost" id="arSample">${ICONS.reset}<span>${esc(t('ar.sample'))}</span></button>
+        <button class="btn ghost" id="arBig">${ICONS.image}<span>${esc(t('ar.big'))}</span></button>
+      </div>
+      <div class="ar-slots tl-slots">
+        ${HTML_SLOTS.map((s) => `<button class="slot-btn" data-slot="${esc(s)}">${esc(s)}</button>`).join('')}
+      </div>
+      <div class="ar-edit">
+        <textarea id="arHtml" class="ar-area" spellcheck="false"
+          aria-label="${esc(t('set.b.template'))}">${esc(ar.html || '')}</textarea>
+        <div class="ar-preview">
+          <div class="ar-prev-head">
+            <div class="section-label">${esc(t('ar.preview'))}</div>
+            <div class="hint" id="arSource"></div>
+          </div>
+          <iframe id="arFrame" class="ar-frame" title="${esc(t('ar.preview'))}"></iframe>
+        </div>
+      </div>
+      <div class="txt-issues" id="arIssues"></div>`) : ''}`));
+
+  // Смена вида перерисовывает карточку: редактор нужен только в режиме HTML.
+  // Перерисовываем ПОСЛЕ сохранения, иначе карточка соберётся по старому
+  // значению - настройка уходит в main через IPC и возвращается не сразу.
+  $$('#arMode button', el).forEach((b) => b.addEventListener('click', async () => {
+    $$('#arMode button', el).forEach((x) => x.classList.toggle('active', x === b));
+    await saveSection('autoReply', { mode: b.dataset.v });
+    renderSettingsGroup($('.settings'));
+  }));
+  if (html) wireAutoReplyEditor(el);
+  return el;
+}
+
+/** Редактор шаблона: сохранение с задержкой и превью тем же собирателем. */
+function wireAutoReplyEditor(el) {
+  const area = $('#arHtml', el);
+  const frame = $('#arFrame', el);
+
+  const repaint = async () => {
+    const res = await api.autoReply.preview(area.value);
+    paintHtmlPreview(frame, res && res.html);
+    const src = $('#arSource', el);
+    if (src) {
+      src.textContent = res && res.source === 'contact'
+        ? t('ar.previewContact', { title: shorten(res.title || dash, 40) })
+        : t('ar.previewDemo');
+    }
+    paintAutoReplyIssues($('#arIssues', el), area.value);
+  };
+
+  area.addEventListener('input', debounce(async () => {
+    await saveSection('autoReply', { html: area.value });
+    markSaved(area);
+    repaint();
+  }, 260));
+
+  // Плейсхолдер вставляем в место курсора - дописывать его в конец шаблона
+  // почти всегда не то, что нужно.
+  $$('.slot-btn', el).forEach((b) => b.addEventListener('click', () => {
+    const slot = b.dataset.slot;
+    const at = area.selectionStart;
+    area.value = area.value.slice(0, at) + slot + area.value.slice(area.selectionEnd);
+    area.focus();
+    area.setSelectionRange(at + slot.length, at + slot.length);
+    area.dispatchEvent(new Event('input', { bubbles: true }));
+  }));
+
+  $('#arSample', el).addEventListener('click', async () => {
+    const sample = await api.autoReply.defaultHtml();
+    area.value = sample;
+    await saveSection('autoReply', { html: sample });
+    markSaved(area);
+    toast(t('ar.sampleDone'), 'success');
+    repaint();
+  });
+
+  $('#arBig', el).addEventListener('click', async () => {
+    const res = await api.autoReply.preview(area.value);
+    openHtmlPreview(res && res.html);
+  });
+
+  // Пустой шаблон означает "взять образец" (см. htmlTemplate.js). Оставить при
+  // этом пустой редактор рядом с непустым превью нельзя - непонятно, что уйдёт
+  // продавцу. Поэтому образец сразу подставляем и в поле, и в настройки.
+  if (!area.value.trim()) {
+    api.autoReply.defaultHtml().then(async (sample) => {
+      area.value = sample;
+      await saveSection('autoReply', { html: sample });
+      repaint();
+    });
+    return;
+  }
+  repaint();
+}
+
+/**
+ * Письмо в превью.
+ *
+ * Пишем в iframe без адреса (about:blank): такой документ наследует политику
+ * безопасности приложения, поэтому скрипт внутри шаблона всё равно не запустится
+ * (script-src 'self'), а картинки по https загрузятся. Стили письма при этом
+ * остаются внутри рамки и на интерфейс не влияют.
+ */
+function paintHtmlPreview(frame, html) {
+  if (!frame) return;
+  const doc = frame.contentDocument;
+  if (!doc) return;
+  doc.open();
+  doc.write('<!doctype html><html><head><meta charset="utf-8">'
+    + '<style>html,body{margin:0}body{padding:16px;background:#ffffff;'
+    + 'font-family:Arial,Helvetica,sans-serif;color:#202124}img{max-width:100%}</style>'
+    + '</head><body>' + String(html == null ? '' : html) + '</body></html>');
+  doc.close();
+}
+
+/** Письмо крупно, в модалке - в колонке редактора вёрстку на 600 px не видно. */
+function openHtmlPreview(html) {
+  return modal(
+    `<h3>${esc(t('ar.preview'))}</h3>
+     <iframe class="ar-frame big" id="arBigFrame" title="${esc(t('ar.preview'))}"></iframe>
+     <div class="modal-actions">
+       <button class="btn" id="arBigClose">${esc(t('common.close'))}</button>
+     </div>`,
+    (overlay, done) => {
+      paintHtmlPreview($('#arBigFrame', overlay), html);
+      $('#arBigClose', overlay).addEventListener('click', () => done(null));
+    },
+  );
+}
+
+/**
+ * Замечания по шаблону. Не правим его молча: это ручная вёрстка, и хозяин
+ * шаблона должен сам решить, что с ней делать. Скрипты и обработчики Gmail всё
+ * равно вырежет.
+ */
+function paintAutoReplyIssues(box, tpl) {
+  if (!box) return;
+  const s = String(tpl || '');
+  const rows = [];
+  if (/<script/i.test(s)) rows.push(['bad', t('ar.warnScript')]);
+  if (/\son[a-z]+\s*=/i.test(s)) rows.push(['warn', t('ar.warnHandlers')]);
+  if (!/\{link\}/.test(s)) rows.push(['warn', t('ar.warnNoLink')]);
+  if (!/\{image_url\}/.test(s)) rows.push(['info', t('ar.warnNoImage')]);
+  if (!rows.length) rows.push(['ok', t('ar.allGood')]);
+  box.innerHTML = rows.map(([kind, text]) => {
+    const icon = kind === 'ok' ? ICONS.check : (kind === 'info' ? ICONS.link : ICONS.alert);
+    return `<div class="issue ${kind}">${icon}<span>${esc(text)}</span></div>`;
+  }).join('');
 }
 
 // ── Тексты рассылки ────────────────────────────────────────────────

@@ -55,6 +55,15 @@ const DEFAULTS = {
     queueRefillThreshold: 20, // refill the queue when it drops below this
   },
 
+  // ── Авто-ответ ───────────────────────────────────────────────────
+  // Чем отвечаем продавцу: обычным текстом из PASTE_DICT (texts.json) или одним
+  // HTML-шаблоном. Пустой html означает "взять встроенный образец", см.
+  // htmlTemplate.js.
+  autoReply: {
+    mode: 'text', // 'text' | 'html'
+    html: '',
+  },
+
   // ── Parser ───────────────────────────────────────────────────────
   parser: {
     apiKey: '',

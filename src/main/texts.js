@@ -40,24 +40,43 @@ function outreachLang(store) {
 }
 
 /**
+ * Значения плейсхолдеров по контакту и ссылке. Одно место правды и для обычного
+ * текста, и для HTML-шаблона автоответа (см. htmlTemplate.js): набор полей
+ * должен совпадать, иначе плейсхолдер, работающий в тексте, молча не сработает
+ * в письме.
+ */
+function placeholderValues(contact, url) {
+  const c = contact || {};
+  const raw = parseFloat(String(c.price == null ? '' : c.price).replace(/[^0-9.]/g, ''));
+  const price = Number.isFinite(raw) && raw > 0 ? '$' + raw.toFixed(2) : '';
+  return {
+    seller_username: c.name || '',
+    title: c.title || '',
+    price,
+    image_url: c.imageUrl || '',
+    date: c.datePublication || '',
+    ad_url: c.listingUrl || '',
+    link: String(url == null ? '' : url),
+  };
+}
+
+/**
  * Подставить в текст данные товара из сохранённого контакта. Набор
  * плейсхолдеров перенесён из расширения: {seller_username} {title} {price}
  * {image_url} {date} {ad_url} {link}. Нет контакта или поля - плейсхолдер
  * становится пустой строкой, письмо всё равно уходит.
+ *
+ * `escape` нужен HTML-шаблону: там значение попадает в разметку, и кавычка в
+ * названии товара сломала бы атрибут.
  */
-function fillPlaceholders(text, contact, url) {
+function fillPlaceholders(text, contact, url, { escape } = {}) {
   const s = String(text == null ? '' : text);
-  const c = contact || {};
-  const raw = parseFloat(String(c.price == null ? '' : c.price).replace(/[^0-9.]/g, ''));
-  const price = Number.isFinite(raw) && raw > 0 ? '$' + raw.toFixed(2) : '';
-  return s
-    .replace(/\{seller_username\}/g, c.name || '')
-    .replace(/\{title\}/g, c.title || '')
-    .replace(/\{price\}/g, price)
-    .replace(/\{image_url\}/g, c.imageUrl || '')
-    .replace(/\{date\}/g, c.datePublication || '')
-    .replace(/\{ad_url\}/g, c.listingUrl || '')
-    .replace(/\{link\}/g, String(url == null ? '' : url));
+  const values = placeholderValues(contact, url);
+  const put = (v) => (escape ? escape(v) : v);
+  return Object.keys(values).reduce(
+    (acc, key) => acc.split('{' + key + '}').join(put(values[key])),
+    s,
+  );
 }
 
 /** Случайное первое письмо. Тема приходит отдельно (название товара). */
@@ -102,4 +121,6 @@ function withLink(text, url) {
   return s.trimEnd() + '\n\n' + link;
 }
 
-module.exports = { firstMessage, autoReply, nudge, withLink, fillPlaceholders, outreachLang };
+module.exports = {
+  firstMessage, autoReply, nudge, withLink, fillPlaceholders, placeholderValues, outreachLang,
+};

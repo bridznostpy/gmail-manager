@@ -716,6 +716,39 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
 .saved-mark svg { width: 11px; height: 11px; }
 .saved-mark.show { opacity: 1; transform: none; }
 
+/* ── Авто-ответ: редактор HTML и превью ──────────────────── */
+.ar-acts { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.ar-slots { margin-bottom: 10px; }
+/* Код слева, письмо справа. Ниже 1180 px колонка настроек и так одна, поэтому
+   превью уезжает под редактор, а не сжимается до нечитаемого. */
+.ar-edit { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; }
+.ar-area {
+  min-height: 340px; resize: vertical;
+  font-family: var(--font-mono); font-size: 11.5px; line-height: 1.6;
+  white-space: pre; overflow-wrap: normal; overflow-x: auto;
+}
+.ar-preview { display: flex; flex-direction: column; min-width: 0; }
+/* Подпись о данных превью идёт ПОД заголовком, а не рядом: название товара
+   бывает длинным, и в одну строку они налезали друг на друга. */
+.ar-prev-head { margin-bottom: 6px; }
+.ar-prev-head .section-label { display: block; margin-bottom: 3px; }
+.ar-prev-head .hint {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* Письмо рисуется на белом, как в почте: судить о вёрстке на тёмном фоне
+   приложения нельзя, у получателя её видно иначе. */
+.ar-frame {
+  width: 100%; min-height: 340px; flex: 1 1 auto;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: #ffffff;
+}
+.ar-frame.big { min-height: min(62vh, 560px); margin-top: 14px; }
+#arIssues { margin-top: 14px; }
+
+@media (max-width: 1180px) {
+  .ar-edit { grid-template-columns: 1fr; }
+}
+
 /* В настройках контролы оформления идут в две колонки: места больше, чем в
    выезжающей панели, и вертикальная простыня там ни к чему. */
 .opt-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 28px; }
@@ -1334,6 +1367,16 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
    пустые строки: отступы разметки между заголовком и текстом считались бы
    содержимым. */
 .bb-text { min-height: 1em; white-space: pre-wrap; }
+/* Картинки HTML-письма - миниатюрами над текстом. Само письмо со своими стилями
+   в ленту не вставляем: оно сломало бы вёрстку переписки. */
+.bb-shots { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.bb-photo { width: 84px; height: 84px; border-radius: 8px; }
+.bb-photo.empty-photo svg { width: 18px; height: 18px; }
+.bb-view {
+  display: inline-flex; align-items: center; gap: 5px; width: auto;
+  margin-top: 8px; padding: 3px 8px; font-size: 10.5px;
+}
+.bb-view svg { width: 12px; height: 12px; }
 .bb-partial {
   flex-shrink: 0; padding: 1px 6px; border-radius: 20px;
   font-family: var(--font-mono); font-size: 9px;

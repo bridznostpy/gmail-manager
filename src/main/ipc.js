@@ -10,9 +10,22 @@ const i18n = require('./i18n');
 const { t } = i18n;
 const telegram = require('./telegram/telegram');
 const { DEFAULTS } = require('./store');
+const htmlTemplate = require('./htmlTemplate');
 const { resolveChrome } = require('./cdp/chromeManager');
 const { scanAndPersist } = require('./profiles/autoScan');
 const appearance = require('./appearance');
+
+// Данные для превью HTML-шаблона, когда контактов рассылки ещё нет. Ссылка
+// заведомо нерабочая: настоящую выдаёт API только под реальный заказ.
+const DEMO_CONTACT = {
+  name: 'seller',
+  title: 'Casio AE-1000W Digital Watch',
+  price: '20',
+  imageUrl: '',
+  datePublication: '',
+  listingUrl: '',
+};
+const DEMO_LINK = 'https://example.com/confirm/demo';
 
 function register(ctx) {
   const { store, profileStore, contactStore, chrome, parser, sender, mainWindow } = ctx;
@@ -94,6 +107,28 @@ function register(ctx) {
       logger.warn('system', t('texts.writeFailed', { error: e.message }));
       return { ok: false, reason: 'write_failed', error: e.message };
     }
+  });
+
+  // ── авто-ответ: HTML-шаблон ────────────────────────────────────────
+  // Собирает письмо тот же модуль, что и при настоящей отправке: превью,
+  // собранное в рендере по своим правилам, отличалось бы от того, что уходит.
+  ipcMain.handle('autoreply:defaultHtml', () => htmlTemplate.DEFAULT_HTML);
+  ipcMain.handle('autoreply:preview', (_e, { html } = {}) => {
+    // Данные для превью берём у настоящего контакта - сразу видно, подставилось
+    // ли название товара и грузится ли фото. Контактов нет - демо-набор.
+    const list = contactStore ? contactStore.list() : [];
+    const real = list
+      .filter((c) => c && c.imageUrl)
+      .sort((a, b) => (b.lastSentAt || 0) - (a.lastSentAt || 0))[0]
+      || list.sort((a, b) => (b.lastSentAt || 0) - (a.lastSentAt || 0))[0]
+      || null;
+    const contact = real || DEMO_CONTACT;
+    const built = htmlTemplate.render({
+      template: String(html == null ? '' : html) || htmlTemplate.DEFAULT_HTML,
+      contact,
+      url: DEMO_LINK,
+    });
+    return { ...built, source: real ? 'contact' : 'demo', title: contact.title || '' };
   });
 
   ipcMain.handle('settings:loadTexts', (_e, json) => {

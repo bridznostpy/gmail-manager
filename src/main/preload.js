@@ -66,6 +66,10 @@ contextBridge.exposeInMainWorld('api', {
     openFile: () => ipcRenderer.invoke('texts:openFile'),
     saveFile: (content) => ipcRenderer.invoke('texts:saveFile', content),
   },
+  autoReply: {
+    defaultHtml: () => ipcRenderer.invoke('autoreply:defaultHtml'),
+    preview: (html) => ipcRenderer.invoke('autoreply:preview', { html }),
+  },
   stats: {
     overview: (days) => ipcRenderer.invoke('stats:overview', days),
   },

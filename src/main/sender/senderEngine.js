@@ -25,6 +25,7 @@ const { t } = require('../i18n');
 const haron = require('../link/haronRent');
 const telegram = require('../telegram/telegram');
 const texts = require('../texts');
+const htmlTemplate = require('../htmlTemplate');
 
 class SenderEngine {
   constructor({ store, profileStore, chrome, parser, contactStore, dialogStore, statsStore, messageStore }) {
@@ -285,8 +286,8 @@ class SenderEngine {
           // Ссылку строим по сохранённым данным товара этого адресата - у самой
           // переписки названия товара и цены нет.
           const url = await this._linkFor(thread.from, thread);
-          const text = texts.autoReply(loaded, lang, url, contact);
-          const res = await this.chrome.gmailReply(account.id, thread, text);
+          const body = this._autoReplyBody(loaded, lang, url, contact);
+          const res = await this.chrome.gmailReply(account.id, thread, body);
           if (!res || !res.ok) {
             logger.warn('sender', t('reply.failed', { tid: thread.threadId, error: t('reply.notConfirmed') }));
             continue;
@@ -295,7 +296,10 @@ class SenderEngine {
           if (this.messageStore) {
             this.messageStore.add({
               profileId: account.id, email: thread.from, threadId: thread.threadId,
-              dir: 'out', kind: 'auto', subject: thread.subject || '', body: text,
+              dir: 'out', kind: 'auto', subject: thread.subject || '',
+              // В журнал кладём и текст, и разметку: лента чата показывает
+              // текст, а посмотреть письмо целиком можно по разметке.
+              body: body.text, html: body.html,
             });
           }
           const rec = this.dialogStore.recordReply(account.id, thread.threadId, {
@@ -309,6 +313,23 @@ class SenderEngine {
         }
       }
     }
+  }
+
+  /**
+   * Тело автоответа по настройке вида ответа.
+   *
+   * В режиме HTML берётся один шаблон из настроек, а не случайный вариант из
+   * PASTE_DICT: шаблон верстается руками, и набора вариантов у него нет.
+   * Текстовая проекция остаётся всегда - на неё уходит запасной путь отправки и
+   * лента чата.
+   */
+  _autoReplyBody(loaded, lang, url, contact) {
+    if (htmlTemplate.mode(this.store) === 'html') {
+      const built = htmlTemplate.build(this.store, url, contact);
+      logger.debug('sender', t('reply.htmlMode'));
+      return built;
+    }
+    return { text: texts.autoReply(loaded, lang, url, contact), html: '' };
   }
 
   /**

@@ -169,6 +169,7 @@ const DICT = {
     'chat.noTitle': 'Без названия',
     'chat.openListing': 'Открыть объявление',
     'chat.photoOpen': 'Показать фото крупно',
+    'chat.viewHtml': 'Посмотреть письмо',
     'chat.i.price': 'Цена',
     'chat.i.seller': 'Продавец',
     'chat.i.platform': 'Площадка',
@@ -191,6 +192,7 @@ const DICT = {
     'set.g.link': 'Генератор ссылок',
     'set.g.telegram': 'Telegram',
     'set.g.texts': 'Тексты рассылки',
+    'set.g.autoreply': 'Авто-ответ',
 
     'set.h.interface': 'Язык приложения',
     'set.h.appearance': 'Фон, акцент и тема',
@@ -201,6 +203,7 @@ const DICT = {
     'set.h.link': 'Ссылки Haron Rent',
     'set.h.telegram': 'Уведомления в Telegram',
     'set.h.texts': 'Тексты писем и языки рассылки',
+    'set.h.autoreply': 'Чем отвечать на ответ продавца',
 
     // Строка под заголовком карточки: на что группа влияет.
     'set.s.interface': 'Язык интерфейса и сообщений в логах.',
@@ -212,6 +215,7 @@ const DICT = {
     'set.s.link': 'Данные для сборки ссылки, которая уходит в автоответе.',
     'set.s.telegram': 'Куда приходят уведомления о прогоне.',
     'set.s.texts': 'Что именно пишется продавцу на каждом шаге.',
+    'set.s.autoreply': 'Вид письма автоответчика: обычный текст или свой HTML-шаблон с фото товара.',
 
     // Разделы бокового меню настроек.
     'set.sec.run': 'Рассылка',
@@ -228,6 +232,27 @@ const DICT = {
     'set.b.ports': 'Порты отладки',
     'set.b.linkParams': 'Параметры ссылки',
     'set.b.bot': 'Бот',
+    'set.b.mode': 'Вид письма',
+    'set.b.template': 'HTML-шаблон',
+
+    'set.arModeHint': 'Обычным текстом уходит случайный вариант из словаря PASTE_DICT (раздел "Тексты рассылки"). HTML-шаблон один на всю рассылку и задаётся здесь.',
+    'set.arTplHint': 'Плейсхолдеры подставляются из данных объявления. Блок <!--if:image_url--> ... <!--/if--> вырезается целиком, когда фото у объявления нет.',
+
+    'ar.mode': 'Чем отвечать',
+    'ar.modeText': 'Обычный текст',
+    'ar.modeHtml': 'HTML-письмо',
+    'ar.preview': 'Как увидит продавец',
+    'ar.previewContact': 'Данные объявления: {title}',
+    'ar.previewDemo': 'Демо-данные: контактов рассылки пока нет',
+    'ar.sample': 'Вернуть образец',
+    'ar.sampleDone': 'Образец шаблона подставлен',
+    'ar.big': 'Открыть крупно',
+    'ar.slots': 'Плейсхолдеры',
+    'ar.allGood': 'С шаблоном всё в порядке.',
+    'ar.warnScript': 'В шаблоне есть тег script. Gmail его вырежет, а письмо может попасть в спам.',
+    'ar.warnHandlers': 'В шаблоне есть обработчики событий (onclick и подобные). В письме они не работают.',
+    'ar.warnNoLink': 'В шаблоне нет {link}. Ссылка не попадёт в письмо, и подтверждать продавцу будет нечего.',
+    'ar.warnNoImage': 'В шаблоне нет {image_url}. Фото товара в письмо не попадёт.',
 
     'set.searchPh': 'Поиск по настройкам',
     'set.noMatch': 'Ничего не нашлось. Попробуйте другое слово.',
@@ -704,6 +729,7 @@ const DICT = {
     'chat.noTitle': 'Untitled',
     'chat.openListing': 'Open the listing',
     'chat.photoOpen': 'Show the photo full size',
+    'chat.viewHtml': 'View the mail',
     'chat.i.price': 'Price',
     'chat.i.seller': 'Seller',
     'chat.i.platform': 'Platform',
@@ -724,6 +750,7 @@ const DICT = {
     'set.g.link': 'Link generator',
     'set.g.telegram': 'Telegram',
     'set.g.texts': 'Outreach texts',
+    'set.g.autoreply': 'Auto-reply',
 
     'set.h.interface': 'Application language',
     'set.h.appearance': 'Background, accent and theme',
@@ -734,6 +761,7 @@ const DICT = {
     'set.h.link': 'Haron Rent links',
     'set.h.telegram': 'Telegram notifications',
     'set.h.texts': 'Message texts and outreach languages',
+    'set.h.autoreply': 'What the auto-responder replies with',
 
     'set.s.interface': 'Interface language and the language of log messages.',
     'set.s.appearance': 'Workspace background, glass density, accent color and motion.',
@@ -744,6 +772,7 @@ const DICT = {
     'set.s.link': 'Data used to build the link sent in the auto-reply.',
     'set.s.telegram': 'Where run notifications are delivered.',
     'set.s.texts': 'What exactly is written to the seller at every step.',
+    'set.s.autoreply': 'The look of the auto-reply: plain text or your own HTML template with the listing photo.',
 
     'set.sec.run': 'Outreach',
     'set.sec.data': 'Data',
@@ -758,6 +787,27 @@ const DICT = {
     'set.b.ports': 'Debug ports',
     'set.b.linkParams': 'Link parameters',
     'set.b.bot': 'Bot',
+    'set.b.mode': 'Message kind',
+    'set.b.template': 'HTML template',
+
+    'set.arModeHint': 'Plain text sends a random variant from the PASTE_DICT dictionary (the "Outreach texts" group). The HTML template is a single one for the whole run and is edited here.',
+    'set.arTplHint': 'Placeholders are filled from the listing data. The <!--if:image_url--> ... <!--/if--> block is dropped entirely when the listing has no photo.',
+
+    'ar.mode': 'Reply with',
+    'ar.modeText': 'Plain text',
+    'ar.modeHtml': 'HTML mail',
+    'ar.preview': 'What the seller sees',
+    'ar.previewContact': 'Listing data: {title}',
+    'ar.previewDemo': 'Demo data: no outreach contacts yet',
+    'ar.sample': 'Restore the sample',
+    'ar.sampleDone': 'Sample template restored',
+    'ar.big': 'Open large',
+    'ar.slots': 'Placeholders',
+    'ar.allGood': 'The template looks fine.',
+    'ar.warnScript': 'The template contains a script tag. Gmail strips it, and the mail may land in spam.',
+    'ar.warnHandlers': 'The template contains event handlers (onclick and the like). They do not work in mail.',
+    'ar.warnNoLink': 'The template has no {link}. The link will not reach the mail, and there will be nothing for the seller to confirm.',
+    'ar.warnNoImage': 'The template has no {image_url}. The listing photo will not reach the mail.',
 
     'set.searchPh': 'Search settings',
     'set.noMatch': 'Nothing found. Try another word.',

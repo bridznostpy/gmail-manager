@@ -7,10 +7,12 @@
  * чатов нужны именно они.
  *
  * Запись:
- *   { id, threadId, profileId, email, dir, kind, subject, body, partial, ts }
+ *   { id, threadId, profileId, email, dir, kind, subject, body, html, partial, ts }
  *
  *   dir     - 'out' (наше письмо) | 'in' (ответ продавца)
  *   kind    - 'first' | 'auto' | 'nudge' | 'reply'
+ *   html    - разметка письма, если автоответ уходил HTML-шаблоном; в ленте чата
+ *             показывается текст (body), а разметка нужна для просмотра письма
  *   partial - текст получен обрывком из списка писем, а не целиком из треда
  *
  * Файл на диске один, записи держим плоским списком: переписок немного, а
@@ -67,6 +69,7 @@ class MessageStore {
       kind: entry.kind || 'first',
       subject: String(entry.subject == null ? '' : entry.subject),
       body: String(entry.body == null ? '' : entry.body),
+      html: String(entry.html == null ? '' : entry.html),
       partial: !!entry.partial,
       ts: entry.ts || Date.now(),
     };

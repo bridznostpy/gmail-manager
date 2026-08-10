@@ -50,20 +50,26 @@ class MessageStore {
   /**
    * Ключ переписки. Идентификатор треда есть не всегда: первое письмо уходит
    * до того, как переписка вообще появится в Gmail. Тогда опираемся на пару
-   * "профиль + адрес" - она известна всегда, и позже ответ в тот же адрес
+   * "почта + адрес" - она известна всегда, и позже ответ в тот же адрес
    * склеится с этим же чатом.
+   *
+   * Основа ключа - почта (accountKey), а не профиль: две почты одного профиля,
+   * написавшие одному человеку, - это две разные переписки, и в одну их
+   * склеивать нельзя.
    */
-  static chatKey({ profileId, email, threadId }) {
+  static chatKey({ accountKey, email, threadId }) {
     const who = String(email || '').trim().toLowerCase();
-    return String(profileId || '') + '|' + (who || 't:' + String(threadId || ''));
+    return String(accountKey || '') + '|' + (who || 't:' + String(threadId || ''));
   }
 
   add(entry) {
     const rec = {
       id: Date.now().toString(36) + '-' + (this._seq++).toString(36),
       chatKey: MessageStore.chatKey(entry),
+      accountKey: String(entry.accountKey || ''),
       threadId: String(entry.threadId || ''),
       profileId: String(entry.profileId || ''),
+      mailbox: String(entry.mailbox || ''),
       email: String(entry.email || '').trim().toLowerCase(),
       dir: entry.dir === 'in' ? 'in' : 'out',
       kind: entry.kind || 'first',
@@ -84,9 +90,9 @@ class MessageStore {
    * Дописываем его в записи этого чата, чтобы ответ и наше письмо оказались
    * в одной переписке.
    */
-  attachThread({ profileId, email, threadId }) {
+  attachThread({ accountKey, email, threadId }) {
     if (!threadId) return;
-    const key = MessageStore.chatKey({ profileId, email });
+    const key = MessageStore.chatKey({ accountKey, email });
     let touched = false;
     for (const m of this.items) {
       if (m.chatKey === key && !m.threadId) { m.threadId = String(threadId); touched = true; }
@@ -108,7 +114,9 @@ class MessageStore {
     for (const m of this.items) {
       const row = byKey.get(m.chatKey) || {
         chatKey: m.chatKey,
+        accountKey: m.accountKey || '',
         profileId: m.profileId,
+        mailbox: m.mailbox || '',
         email: m.email,
         threadId: '',
         total: 0,

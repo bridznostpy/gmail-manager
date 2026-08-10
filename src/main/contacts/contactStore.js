@@ -11,24 +11,9 @@
  */
 const fs = require('fs');
 const path = require('path');
-
-const DOTLESS_DOMAINS = ['gmail.com', 'googlemail.com'];
-
-/**
- * Привести адрес к одному виду. Gmail игнорирует точки в локальной части, то
- * есть "ky.burnside@gmail.com" и "kyburnside@gmail.com" - один и тот же ящик;
- * парсер и список писем Gmail могут отдать разные написания. В остальных
- * доменах точка значима, поэтому там её не трогаем.
- */
-function normalizeEmail(email) {
-  const lower = String(email || '').trim().toLowerCase();
-  const at = lower.indexOf('@');
-  if (at < 0) return lower;
-  const local = lower.slice(0, at);
-  const domain = lower.slice(at + 1);
-  if (DOTLESS_DOMAINS.indexOf(domain) < 0) return lower;
-  return local.replace(/\./g, '') + '@' + domain;
-}
+// Приведение адреса живёт в mailbox.js: тем же правилом опознаются и почты
+// профиля, и адресаты рассылки, и держать два таких правила нельзя.
+const { normalizeEmail } = require('../mailbox');
 
 class ContactStore {
   constructor(filePath) {
@@ -73,10 +58,11 @@ class ContactStore {
    * ссылки; при повторной рассылке на тот же адрес освежаем их, но первую дату
    * контакта сохраняем.
    */
-  recordSent({ lead, profile } = {}) {
+  recordSent({ lead, profile, mailbox } = {}) {
     const key = this._key(lead && lead.email);
     if (!key) return null;
     const meta = (lead && lead.meta) || {};
+    const mb = mailbox || {};
     const prev = this.byEmail.get(key) || {};
     const rec = {
       // Ключ нормализован, а в записи держим адрес как есть: именно на него
@@ -97,6 +83,10 @@ class ContactStore {
       sellerUrl: meta.sellerUrl || prev.sellerUrl || '',
       profileId: (profile && profile.id) || prev.profileId || '',
       profileLabel: (profile && profile.label) || prev.profileLabel || '',
+      // С какой именно почты профиля ушло письмо. Нужно "Подталкиванию": писать
+      // человеку надо из того же ящика, а в профиле их несколько.
+      mailbox: mb.email || prev.mailbox || '',
+      userIndex: mb.userIndex != null ? mb.userIndex : (prev.userIndex != null ? prev.userIndex : 0),
       firstSentAt: prev.firstSentAt || Date.now(),
       lastSentAt: Date.now(),
       nudged: prev.nudged || false,

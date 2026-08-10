@@ -145,7 +145,14 @@ function register(ctx) {
   const live = (p) => chrome.isRunning(p.id);
   const withRunState = (p) => {
     const running = live(p);
-    return { ...p, running, port: running ? p.port : null };
+    return {
+      ...p,
+      running,
+      port: running ? p.port : null,
+      // У погашенного профиля вкладок нет по определению: признак из файла
+      // устарел бы, и интерфейс показывал бы готовые почты у закрытого Chrome.
+      mailboxes: (p.mailboxes || []).map((m) => ({ ...m, hasTab: running && !!m.hasTab })),
+    };
   };
   // Флаги, оставшиеся от прошлого запуска приложения, ничего не запускают -
   // снимаем их сразу, чтобы файл не расходился с действительностью.
@@ -192,6 +199,8 @@ function register(ctx) {
   ipcMain.handle('profiles:launch', async (_e, { id, openGmail }) => {
     const p = profileStore.get(id);
     if (!p) throw new Error(t('err.profileNotFound'));
+    // Открываем общий адрес почты, без индекса аккаунта: остальные вкладки
+    // пользователь открывает сам, приложение их не заводит (Rules 6).
     const url = openGmail ? 'https://mail.google.com/mail/' : undefined;
     const inst = await chrome.launch(p, { url });
     profileStore.update(id, { running: true, port: inst.port });
@@ -253,6 +262,7 @@ function register(ctx) {
         threadId: d.threadId,
         profileId: d.profileId,
         profileLabel: byId.get(d.profileId) || '',
+        mailbox: d.mailbox || '',
         email: d.email || '',
         replies: d.replies || 0,
         firstReplyAt: d.firstReplyAt || 0,
@@ -311,10 +321,15 @@ function register(ctx) {
   ipcMain.handle('contacts:nudge', async (_e, { email }) => sender.nudge(email));
 
   // ── gmail (manual test send against a live logged-in profile) ─────
-  ipcMain.handle('gmail:testSend', async (_e, { id, to, subject, body }) => {
+  ipcMain.handle('gmail:testSend', async (_e, { id, mailbox, to, subject, body }) => {
     const p = profileStore.get(id);
     if (!p) throw new Error(t('err.profileNotFound'));
-    return chrome.gmailCompose(id, { to, subject, body });
+    // Почта не выбрана - берём первую с открытой вкладкой: у профиля их может
+    // быть несколько, и отправлять "куда-нибудь" нельзя.
+    const box = (mailbox && profileStore.getMailbox(id, mailbox))
+      || profileStore.mailboxes(id).find((m) => m.hasTab)
+      || null;
+    return chrome.gmailCompose(id, { mailbox: box, to, subject, body });
   });
   // Сухой прогон автоответа: скан непрочитанных без отправки.
   ipcMain.handle('gmail:dryRun', async (_e, { id }) => sender.dryRun(id));

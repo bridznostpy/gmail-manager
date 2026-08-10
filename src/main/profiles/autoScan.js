@@ -38,7 +38,7 @@ function scanAndPersist(ctx, id, opts) {
   return next;
 }
 
-/** Пишет в лог, только если статус или почта изменились. */
+/** Пишет в лог, только если статус, почта или их число изменились. */
 async function runScan(ctx, id, { quiet = false } = {}) {
   const { chrome, profileStore } = ctx;
   const before = profileStore.get(id);
@@ -47,16 +47,25 @@ async function runScan(ctx, id, { quiet = false } = {}) {
   // update мутирует на месте - сравнивать с ним после скана бессмысленно.
   const prevStatus = before.gmailStatus;
   const prevEmail = before.email || '';
+  const prevBoxes = profileStore.mailboxes(id).filter((m) => m.hasTab).length;
   const label = before.label;
 
   const res = await chrome.scanGmail(id, { quiet });
-  const email = res.email || prevEmail;
-  const after = profileStore.update(id, { gmailStatus: res.status, email });
-  if (quiet && (prevStatus !== res.status || prevEmail !== email)) {
+  // Список почт пишем всегда, даже пустой: закрытая вкладка должна снять
+  // признак, иначе движок будет ходить в почту, которой уже нет на экране.
+  const boxes = profileStore.setMailboxes(id, res.mailboxes || []);
+  const withTab = boxes.filter((m) => m.hasTab);
+  const email = (withTab[0] && withTab[0].email) || res.email || prevEmail;
+  // Профиль готов, если готова хотя бы одна его почта.
+  const status = withTab.length ? 'ready' : res.status;
+  const after = profileStore.update(id, { gmailStatus: status, email });
+  if (quiet && (prevStatus !== status || prevEmail !== email || prevBoxes !== withTab.length)) {
     logger.info('gmail', t('gmail.statusChanged', {
       label,
-      status: t('gmailStatus.' + res.status),
-      email: email ? ' (' + email + ')' : '',
+      status: t('gmailStatus.' + status),
+      email: withTab.length
+        ? ' (' + withTab.map((m) => m.email).join(', ') + ')'
+        : (email ? ' (' + email + ')' : ''),
     }));
   }
   return after;

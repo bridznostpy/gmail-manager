@@ -31,6 +31,7 @@ const { spawn, execFileSync } = require('child_process');
 const fingerprint = require('./fingerprint');
 const logger = require('../logger');
 const { t } = require('../i18n');
+const mailboxes = require('../mailbox');
 
 // playwright-core тянем мягко: без него приложение должно открыться и сказать
 // это словами, а не упасть на старте главного процесса.
@@ -48,7 +49,8 @@ const T_LONG = 10000;
 const T_MED = 6000;
 const T_SHORT = 3000;
 
-const INBOX_URL = 'https://mail.google.com/mail/u/0/#inbox';
+// Инбокс конкретной почты собирает mailbox.inboxUrl: при мультилогине адрес
+// зависит от индекса аккаунта, и одного общего адреса больше нет.
 
 // Как часто опрашиваем /json на предмет "во вкладке что-то изменилось".
 // Дёшево: локальный HTTP, без подключения к странице.
@@ -182,10 +184,13 @@ function probeTarget(target) {
   const onSignIn = /^https:\/\/accounts\.google\.com\//.test(href);
   const m = EMAIL_RE.exec(title);
   const email = m ? m[0] : '';
-  if (onSignIn) return { status: 'needs_login', email: '', href };
+  // Индекс аккаунта в адресе вкладки: при мультилогине именно он отличает почты
+  // друг от друга (/mail/u/0/, /mail/u/1/).
+  const userIndex = onMail ? mailboxes.userIndexFromUrl(href) : null;
+  if (onSignIn) return { status: 'needs_login', email: '', href, userIndex: null };
   // Пока инбокс грузится, заголовок ещё "Gmail" без адреса - это уже вход.
-  if (onMail && (email || /Gmail/i.test(title))) return { status: 'ready', email, href };
-  return { status: 'unknown', email: '', href };
+  if (onMail && (email || /Gmail/i.test(title))) return { status: 'ready', email, href, userIndex };
+  return { status: 'unknown', email: '', href, userIndex };
 }
 
 // TODO(gmail-dom): эвристика статуса входа по DOM. Используется только на
@@ -573,7 +578,9 @@ class PlaywrightManager {
       // Цепочка задач по вкладке почты, см. _serial.
       queue: Promise.resolve(),
       // Playwright появится здесь только при первой работе с почтой.
-      browser: null, context: null, page: null,
+      // Вкладки почт: адрес -> страница и индекс u/N -> страница, см.
+      // _resolveMailPages.
+      browser: null, context: null, pages: new Map(), pagesByIndex: new Map(),
       watch: null, seenKey: '', closing: false,
     };
     this.instances.set(profile.id, inst);
@@ -643,7 +650,8 @@ class PlaywrightManager {
     const browser = inst.browser;
     inst.browser = null;
     inst.context = null;
-    inst.page = null;
+    inst.pages = new Map();
+    inst.pagesByIndex = new Map();
     if (browser) { try { browser.close(); } catch (_e) {} }
   }
 
@@ -761,43 +769,36 @@ class PlaywrightManager {
   }
 
   /**
-   * Найти среди вкладок профиля ту, где реально открыт Gmail, и запомнить её в
-   * `inst.page`. Вход пользователь часто заканчивает в другой вкладке, а не в
-   * той, что была открыта при запуске, - без этого скан читал бы чужую страницу.
+   * Разложить вкладки профиля по почтам.
+   *
+   * Одной вкладки на профиль больше нет: при мультилогине у каждой почты своя
+   * вкладка, и работать надо ровно в её вкладке. Опознаём по адресу из пробы, а
+   * индекс u/N держим вторым ключом - он полезен, когда заголовок вкладки ещё
+   * не устоялся и адреса в нём нет.
    */
-  async _resolveGmailPage(profileId) {
+  async _resolveMailPages(profileId) {
     const inst = this.instances.get(profileId);
     if (!inst) throw new Error(t('err.profileNotRunning'));
     await this._connect(inst);
-    let best = null;
+    const byEmail = new Map();
+    const byIndex = new Map();
     for (const page of this._pages(inst)) {
       let parsed = null;
       // Страница могла уйти в навигацию или закрыться прямо во время пробы.
       try { parsed = await page.evaluate(gmailProbeFn); } catch (_e) { continue; }
-      const probe = {
-        page,
-        status: probeStatus(parsed),
-        email: (parsed && parsed.email) || '',
-        href: (parsed && parsed.href) || page.url() || '',
-      };
-      if (!best || STATUS_RANK[probe.status] > STATUS_RANK[best.status]) best = probe;
-      if (best.status === 'ready') break;
+      if (probeStatus(parsed) !== 'ready') continue;
+      const href = (parsed && parsed.href) || page.url() || '';
+      const index = mailboxes.userIndexFromUrl(href);
+      if (!byIndex.has(index)) byIndex.set(index, page);
+      const email = (parsed && parsed.email) || '';
+      if (email) {
+        const key = mailboxes.normalizeEmail(email);
+        if (!byEmail.has(key)) byEmail.set(key, page);
+      }
     }
-    if (!best) return { status: 'unknown', email: '', href: '' };
-
-    if (best.status !== 'unknown' && best.page !== inst.page) {
-      inst.page = best.page;
-      logger.info('cdp', t('gmail.tabSwitched', { id: profileId }));
-    } else if (!inst.page || inst.page.isClosed()) {
-      inst.page = best.page;
-    }
-    // У непонятной вкладки почте верить нельзя: адрес мог попасть в заголовок
-    // случайной страницы.
-    return {
-      status: best.status,
-      email: best.status === 'unknown' ? '' : best.email,
-      href: best.href,
-    };
+    inst.pages = byEmail;
+    inst.pagesByIndex = byIndex;
+    return { byEmail, byIndex };
   }
 
   /**
@@ -820,35 +821,74 @@ class PlaywrightManager {
       return 2;
     };
     let best = null;
+    // Перебираем ВСЕ вкладки, а не останавливаемся на первой готовой: при
+    // мультилогине каждая почта живёт в своей вкладке, и нужен весь список.
+    const found = [];
+    const seen = new Set();
     for (const target of targets.sort((a, b) => weight(a) - weight(b))) {
       const probe = probeTarget(target);
       if (!best || STATUS_RANK[probe.status] > STATUS_RANK[best.status]) best = probe;
-      if (best.status === 'ready') break;
+      if (probe.status !== 'ready' || !probe.email) continue;
+      // Адрес пока не прочитан (инбокс ещё грузится) - почту не заводим:
+      // опознать её нечем, следующий скан её подхватит.
+      const key = mailboxes.normalizeEmail(probe.email);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      found.push({ email: probe.email, userIndex: probe.userIndex || 0, href: probe.href });
     }
     const res = best || { status: 'unknown', email: '', href: '' };
+    // Основной почтой профиля считаем первую найденную: на ней держатся аватар
+    // и заголовки карточек.
+    const out = {
+      status: res.status,
+      email: (found[0] && found[0].email) || res.email || '',
+      href: res.href || '',
+      mailboxes: found,
+    };
     if (!quiet) {
-      if (res.status === 'unknown') logger.warn('gmail', t('gmail.noTab', { id: profileId }));
+      if (out.status === 'unknown') logger.warn('gmail', t('gmail.noTab', { id: profileId }));
       logger.info('gmail', t('gmail.scan', {
         id: profileId,
-        status: t('gmailStatus.' + res.status),
-        email: res.email ? ' (' + res.email + ')' : '',
+        status: t('gmailStatus.' + out.status),
+        email: found.length
+          ? ' (' + found.map((m) => m.email).join(', ') + ')'
+          : (out.email ? ' (' + out.email + ')' : ''),
       }));
     }
-    return res;
+    return out;
   }
 
   /**
-   * Вкладка почты профиля, привязанная к залогиненному Gmail. Здесь и только
-   * здесь Playwright подключается к браузеру: работа с почтой идёт уже после
-   * входа, а до неё профиль остаётся неуправляемым.
+   * Вкладка НУЖНОЙ почты профиля. Здесь и только здесь Playwright подключается к
+   * браузеру: работа с почтой идёт уже после входа, а до неё профиль остаётся
+   * неуправляемым.
+   *
+   * Вкладки приложение не открывает - это условие пользователя. Нет вкладки у
+   * почты - отказываемся с пометкой `no_tab`, и движок исключает эту почту до
+   * следующего скана.
    */
-  async _mailPage(profileId) {
+  async _mailPage(profileId, mailbox) {
     const inst = this.instances.get(profileId);
     if (!inst) throw new Error(t('err.profileNotRunning'));
+    const mb = typeof mailbox === 'string' ? { email: mailbox } : (mailbox || {});
     await this._connect(inst);
-    await this._resolveGmailPage(profileId).catch(() => {});
-    if (!inst.page || inst.page.isClosed()) throw new Error(t('err.profileNotRunning'));
-    return { inst, page: inst.page };
+    const { byEmail, byIndex } = await this._resolveMailPages(profileId);
+
+    let page = null;
+    if (mb.email) page = byEmail.get(mailboxes.normalizeEmail(mb.email)) || null;
+    // Запасной путь по индексу: заголовок вкладки мог ещё не устояться, и адреса
+    // в пробе нет. Индекс при этом виден прямо в адресе.
+    if (!page && mb.userIndex != null) page = byIndex.get(Number(mb.userIndex)) || null;
+    // Почта не названа вовсе (ручная проверка отправки) - берём любую готовую.
+    if (!page && !mb.email && mb.userIndex == null) {
+      page = byEmail.values().next().value || byIndex.values().next().value || null;
+    }
+    if (!page || page.isClosed()) {
+      const err = new Error(t('err.mailboxNoTab', { email: mailboxes.label(mb) }));
+      err.code = 'no_tab';
+      throw err;
+    }
+    return { inst, page, userIndex: mb.userIndex != null ? Number(mb.userIndex) : mailboxes.userIndexFromUrl(page.url()) };
   }
 
   // ── Gmail automation ─────────────────────────────────────────────────
@@ -1064,21 +1104,23 @@ class PlaywrightManager {
    * вкладке почты: нажимаем "Написать" (gh="cm"), заполняем поля своего окна и
    * жмём "Отправить". Отдельное окно ?view=cm остаётся запасным путём.
    */
-  async gmailCompose(profileId, { to, subject, body } = {}) {
-    return this._serial(profileId, () => this._gmailCompose(profileId, { to, subject, body }));
+  async gmailCompose(profileId, { mailbox, to, subject, body } = {}) {
+    return this._serial(profileId, () => this._gmailCompose(profileId, { mailbox, to, subject, body }));
   }
 
-  async _gmailCompose(profileId, { to, subject, body } = {}) {
+  async _gmailCompose(profileId, { mailbox, to, subject, body } = {}) {
     if (!to) throw new Error(t('err.noRecipient'));
-    const { inst, page } = await this._mailPage(profileId);
+    const { inst, page, userIndex } = await this._mailPage(profileId, mailbox);
 
-    if (!/mail\.google\.com/.test(page.url() || '')) {
-      await page.goto(INBOX_URL, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
+    // Уводим вкладку только на СВОЙ инбокс: чужой индекс u/N увёл бы вкладку
+    // другой почты, и та осталась бы без своей страницы.
+    if (!mailboxes.sameMailbox(page.url(), userIndex)) {
+      await page.goto(mailboxes.inboxUrl(userIndex), { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
     }
 
     if (!(await this._wait(page, SEL.composeBtn, this._t(T_LONG)))) {
       logger.warn('gmail', t('gmail.composeBtnMissing'));
-      return this._composeViaWindow(inst, { to, subject, body });
+      return this._composeViaWindow(inst, { to, subject, body, userIndex });
     }
 
     const cid = await this._openCompose(page);
@@ -1122,10 +1164,13 @@ class PlaywrightManager {
     }
   }
 
-  /** Запасной путь: отдельная вкладка ?view=cm, если кнопки "Написать" нет. */
-  async _composeViaWindow(inst, { to, subject, body } = {}) {
+  /**
+   * Запасной путь: отдельная вкладка ?view=cm, если кнопки "Написать" нет.
+   * Индекс аккаунта обязателен - иначе письмо ушло бы с первой почты профиля.
+   */
+  async _composeViaWindow(inst, { to, subject, body, userIndex = 0 } = {}) {
     const q = (s) => encodeURIComponent(String(s == null ? '' : s));
-    const url = 'https://mail.google.com/mail/u/0/?view=cm&fs=1&tf=1'
+    const url = `https://mail.google.com/mail/u/${Number(userIndex) || 0}/?view=cm&fs=1&tf=1`
       + `&to=${q(to)}&su=${q(subject)}&body=${q(body)}`;
 
     const page = await inst.context.newPage();
@@ -1157,14 +1202,14 @@ class PlaywrightManager {
    * lastMessageId строки, а не по прочитанности - она чужое состояние и
    * подводила уже дважды.
    */
-  async gmailListThreads(profileId, { unreadOnly = false, max = 25 } = {}) {
-    return this._serial(profileId, () => this._listRows(profileId, { unreadOnly, max }));
+  async gmailListThreads(profileId, { mailbox, unreadOnly = false, max = 25 } = {}) {
+    return this._serial(profileId, () => this._listRows(profileId, { mailbox, unreadOnly, max }));
   }
 
-  /** Прочитать строки списка писем на вкладке почты профиля. */
-  async _listRows(profileId, { unreadOnly = true, max = 25 } = {}) {
-    const { page } = await this._mailPage(profileId);
-    await this._ensureInbox(page);
+  /** Прочитать строки списка писем на вкладке нужной почты. */
+  async _listRows(profileId, { mailbox, unreadOnly = true, max = 25 } = {}) {
+    const { page, userIndex } = await this._mailPage(profileId, mailbox);
+    await this._ensureInbox(page, userIndex);
     // Свежесть списка обязательна. Не удалось обновить - лучше вернуть пусто,
     // чем отдать протухшие строки: по ним автоответ уйдёт повторно в переписку,
     // на которую уже отвечали. Так же поступает и расширение.
@@ -1189,8 +1234,10 @@ class PlaywrightManager {
    * инбоксе, и в ярлыке, где пользователь мог остаться сам. Уводим на инбокс
    * только когда строк нет (открытый тред, другой сайт, окно письма).
    */
-  async _ensureInbox(page) {
-    if (/mail\.google\.com/.test(page.url() || '')) {
+  async _ensureInbox(page, userIndex = 0) {
+    // Своя вкладка почты: возвращать её надо на СВОЙ инбокс, чужой индекс u/N
+    // увёл бы вкладку другого аккаунта.
+    if (mailboxes.sameMailbox(page.url(), userIndex)) {
       if (await this._exists(page, SEL.row)) return true;
       // Из открытой переписки возвращаемся стрелкой "Назад", как это сделал бы
       // человек: Gmail тут одностраничный, и перезагрузка ради возврата в
@@ -1199,7 +1246,7 @@ class PlaywrightManager {
         if (await this._wait(page, SEL.row, this._t(T_MED))) return true;
       }
     }
-    await page.goto(INBOX_URL, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
+    await page.goto(mailboxes.inboxUrl(userIndex), { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
     return this._wait(page, SEL.row, this._t(T_MED));
   }
 
@@ -1210,9 +1257,9 @@ class PlaywrightManager {
    * письмо уходит разметка, а text остаётся запасным путём и текстовой
    * проекцией для журнала.
    */
-  async gmailReply(profileId, thread, payload) {
+  async gmailReply(profileId, mailbox, thread, payload) {
     const body = typeof payload === 'string' ? { text: payload, html: '' } : (payload || {});
-    return this._serial(profileId, () => this._gmailReply(profileId, thread, body));
+    return this._serial(profileId, () => this._gmailReply(profileId, mailbox, thread, body));
   }
 
   /** Строка списка писем как локатор: по своему id, при промахе - по отправителю. */
@@ -1312,8 +1359,8 @@ class PlaywrightManager {
    * адресу отправителя. Настоящий data-legacy-thread-id, если он есть, остаётся
    * запасным путём через адрес.
    */
-  async _openThread(page, item) {
-    await this._ensureInbox(page);
+  async _openThread(page, item, userIndex = 0) {
+    await this._ensureInbox(page, userIndex);
     const clicked = await page.evaluate((arg) => {
       var r = arg.rowId ? document.getElementById(arg.rowId) : null;
       if (r && !(r.matches && r.matches(arg.row))) r = null;
@@ -1340,7 +1387,7 @@ class PlaywrightManager {
     // Запасной путь - адрес треда, но только если это настоящий id, а не id
     // строки: иначе получится заведомо мёртвая ссылка.
     if (!item.legacyId) return false;
-    await page.goto('https://mail.google.com/mail/u/0/#inbox/' + encodeURIComponent(item.legacyId),
+    await page.goto(mailboxes.inboxUrl(userIndex) + '/' + encodeURIComponent(item.legacyId),
       { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
     return this._wait(page, SEL.thread, this._t(T_LONG));
   }
@@ -1404,23 +1451,23 @@ class PlaywrightManager {
     return typeof id === 'string' ? id : '';
   }
 
-  async _gmailReply(profileId, thread, body) {
-    const { inst, page } = await this._mailPage(profileId);
+  async _gmailReply(profileId, mailbox, thread, body) {
+    const { inst, page, userIndex } = await this._mailPage(profileId, mailbox);
     const item = typeof thread === 'string' ? { threadId: thread } : (thread || {});
     const tid = item.threadId;
     if (!tid) throw new Error(t('err.noThreadId'));
 
     // Основной путь - ответить прямо из списка, не заходя в переписку.
-    await this._ensureInbox(page);
+    await this._ensureInbox(page, userIndex);
     const viaWidget = await this._replyViaWidget(page, inst, item, tid, body);
     if (viaWidget) return viaWidget;
     logger.debug('gmail', t('gmail.replyWidgetFallback'));
 
-    const opened = await this._openThread(page, item);
+    const opened = await this._openThread(page, item, userIndex);
     if (!opened) {
       // Вкладку оставлять на треде нельзя: без списка писем следующий скан
       // ничего не найдёт, а отправка не найдёт кнопку "Написать".
-      await this._ensureInbox(page).catch(() => {});
+      await this._ensureInbox(page, userIndex).catch(() => {});
       throw new Error(t('err.threadNotOpened'));
     }
 
@@ -1469,7 +1516,7 @@ class PlaywrightManager {
     } finally {
       // Возврат в список писем обязателен и при осечке - иначе вкладка так и
       // останется на треде и автоответ заглохнет до перезапуска.
-      await this._ensureInbox(page).catch(() => {});
+      await this._ensureInbox(page, userIndex).catch(() => {});
     }
   }
 

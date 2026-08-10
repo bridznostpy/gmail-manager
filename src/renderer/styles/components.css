@@ -433,6 +433,42 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
   transition: width var(--dur-slow) var(--ease);
 }
 
+/* Почты профиля в карточке. Каждая со своим счётчиком: лимит писем считается по
+   почте, а не по профилю. */
+.pc-boxes {
+  margin: 12px 0 4px; padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.pc-boxes > .section-label { display: block; margin-bottom: 8px; }
+.pc-box {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 0; min-width: 0;
+}
+.pc-box .pb-dot {
+  flex-shrink: 0; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--text-faint);
+}
+.pc-box .pb-dot.on { background: var(--green); }
+/* Усекаться должен адрес, а не пометка и не счётчик: длинный ящик встречается
+   часто, а обрезанное "нет вклад..." или "4 / 1" читаются как поломка. */
+.pc-box .pb-mail {
+  flex: 0 1 auto; font-size: 11.5px; min-width: 24px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pc-box .pc-tag { flex-shrink: 0; }
+.pc-box .pb-track {
+  flex: 1 1 auto; min-width: 32px; height: 4px; border-radius: 4px;
+  background: var(--border-strong); overflow: hidden;
+}
+.pc-box .pb-track span {
+  display: block; height: 100%; background: var(--gradient);
+  transition: width var(--dur-slow) var(--ease);
+}
+.pc-box .pb-cnt {
+  flex-shrink: 0; font-family: var(--font-mono); font-size: 10px; color: var(--text-faint);
+}
+.pc-box.off .pb-mail, .pc-box.off .pb-cnt { opacity: 0.55; }
+
 /* Пунктирная карточка "добавить" в конце сетки. */
 .add-card {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -1564,6 +1600,10 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
   font-family: var(--font-mono); font-size: 10.5px; color: var(--text-faint);
   flex: 0 0 auto;
 }
+.acc-row .nm { display: flex; align-items: center; gap: 6px; }
+.acc-row .acc-prof { font-size: 10.5px; color: var(--text-faint); }
+/* Почта без вкладки в рассылке не участвует, и строка это показывает. */
+.acc-row.off .nm, .acc-row.off .cnt { opacity: 0.55; }
 
 /* ── Панель "Оформление" ─────────────────────────────────── */
 .drawer-scrim {

@@ -7,8 +7,8 @@
  * того, открыли ли переписку. Оба раза, когда автоответ сбоил, виновата была
  * именно она. Теперь ведём учёт сами и переживаем перезапуск приложения.
  *
- * Ключ - профиль плюс переписка: один и тот же тред у разных аккаунтов это
- * разные диалоги.
+ * Ключ - ПОЧТА плюс переписка (см. mailbox.accountKey): один и тот же тред у
+ * разных почт это разные диалоги, а почт в одном профиле бывает несколько.
  *
  * Новизну определяем по идентификатору последнего письма треда - Gmail держит
  * его в строке списка (data-legacy-last-message-id). Все идентификаторы,
@@ -53,12 +53,12 @@ class DialogStore {
     fs.renameSync(tmp, this.filePath);
   }
 
-  _key(profileId, threadId) {
-    return String(profileId || '') + ':' + String(threadId || '');
+  _key(accountKey, threadId) {
+    return String(accountKey || '') + ':' + String(threadId || '');
   }
 
-  get(profileId, threadId) {
-    return this.byKey.get(this._key(profileId, threadId)) || null;
+  get(accountKey, threadId) {
+    return this.byKey.get(this._key(accountKey, threadId)) || null;
   }
 
   list() {
@@ -74,8 +74,8 @@ class DialogStore {
    * - `same`    - с прошлого раза ничего не изменилось;
    * - `limit`   - лимит ответов на диалог исчерпан.
    */
-  decide(profileId, threadId, lastMessageId, maxReplies) {
-    const rec = this.get(profileId, threadId);
+  decide(accountKey, threadId, lastMessageId, maxReplies) {
+    const rec = this.get(accountKey, threadId);
     if (!rec) return 'new';
     if (rec.replies >= maxReplies) return 'limit';
     // Идентификатора в разметке строки может не быть. Судить о новизне тогда
@@ -99,11 +99,17 @@ class DialogStore {
    * наш ответ, если его удалось разглядеть в строке списка; не удалось -
    * взводим pendingOwn и опознаем его при следующем проходе.
    */
-  recordReply(profileId, threadId, { email = '', seenMessageId = '', ownMessageId = '' } = {}) {
-    const key = this._key(profileId, threadId);
+  recordReply(accountKey, threadId, {
+    profileId = '', mailbox = '', email = '', seenMessageId = '', ownMessageId = '',
+  } = {}) {
+    const key = this._key(accountKey, threadId);
     const rec = this.byKey.get(key) || {
       key,
+      accountKey: String(accountKey || ''),
+      // Профиль и почту держим отдельными полями: экраны группируют переписки по
+      // профилю, а из составного ключа его пришлось бы разбирать строкой.
       profileId: String(profileId || ''),
+      mailbox: String(mailbox || ''),
       threadId: String(threadId || ''),
       email: '',
       replies: 0,
@@ -130,8 +136,8 @@ class DialogStore {
    * Запомнить письмо, не считая это ответом: мы его разобрали и отвечать не
    * стали (лимит, или это наш же ответ). Иначе перебирали бы его каждый проход.
    */
-  noteSeen(profileId, threadId, lastMessageId) {
-    const rec = this.get(profileId, threadId);
+  noteSeen(accountKey, threadId, lastMessageId) {
+    const rec = this.get(accountKey, threadId);
     if (!rec || !lastMessageId) return rec;
     if (rec.seenMessageIds.indexOf(lastMessageId) >= 0 && !rec.pendingOwn) return rec;
     this._push(rec, lastMessageId);

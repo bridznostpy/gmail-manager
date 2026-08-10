@@ -1074,8 +1074,15 @@ async function runAction(kind) {
   try {
     if (kind === 'start') {
       const res = await api.run.start();
-      if (res && res.ok) toast(t('dash.started'), 'success');
-      else {
+      if (res && res.ok) {
+        toast(t('dash.started'), 'success');
+        // Почты без вкладки в рассылке не участвуют. Говорим об этом сразу, а не
+        // оставляем человека ждать писем с аккаунта, до которого не доберёмся.
+        const skipped = (res.withoutTab || []).map((m) => m.email || m.profileLabel);
+        if (skipped.length) {
+          setTimeout(() => toast(t('dash.startedNoTab', { list: skipped.join(', ') }), 'error'), 2800);
+        }
+      } else {
         const reason = res && res.reason ? t('reason.' + res.reason) : t('dash.startFailedUnknown');
         toast(t('dash.startFailed', { reason }), 'error');
       }
@@ -1136,8 +1143,12 @@ function paintRun() {
       : mode === 'paused' ? t('dash.notePaused') : t('dash.noteIdle');
   }
 
-  const ready = state.profiles.filter((p) => p.gmailStatus === 'ready').length;
-  const sent = state.profiles.reduce((n, p) => n + (p.sentCount || 0), 0);
+  // Готовыми считаем ПОЧТЫ с открытой вкладкой: именно они и есть аккаунты, с
+  // которых уходят письма.
+  const slots = mailboxSlots();
+  const ready = slots.filter((s) => s.hasTab).length;
+  const noTab = slots.filter((s) => !s.hasTab).length;
+  const sent = slots.reduce((n, s) => n + s.sentCount, 0);
   const plan = sessionPlan();
 
   const st = $('#sRunState');
@@ -1163,6 +1174,9 @@ function paintRun() {
     if (!ready) plate.innerHTML = notePlate('bad', t('dash.plateNoReady'));
     else if (!state.settings.texts) plate.innerHTML = notePlate('warn', t('dash.plateNoTexts'));
     else if (mode === 'paused') plate.innerHTML = notePlate('warn', t('dash.platePaused'));
+    // Почта, в которую вошли, но вкладку не открыли, в рассылке не участвует.
+    // Молчать об этом нельзя: человек ждёт писем и с неё.
+    else if (noTab) plate.innerHTML = notePlate('warn', t('dash.plateNoTab', { n: noTab }));
     else plate.innerHTML = '';
   }
 
@@ -1188,40 +1202,82 @@ function notePlate(kind, text) {
   return `<span class="note-plate ${kind === 'warn' ? 'warn' : ''}">${ICONS.alert}${esc(text)}</span>`;
 }
 
-/** Мини-строки готовых аккаунтов с прогрессом по лимиту. */
+/**
+ * Мини-строки ПОЧТ с прогрессом по лимиту. Лимит считается по каждой почте
+ * отдельно, поэтому строка на профиль показывала бы неправду: в профиле их
+ * может быть несколько.
+ */
 function paintAccountRows(plan) {
   const box = $('#dAccounts');
   if (!box) return;
   const limit = state.settings.system.mailsPerAccount || 0;
-  const ready = state.profiles.filter((p) => p.gmailStatus === 'ready');
-  if (!ready.length) {
+  const slots = mailboxSlots();
+  if (!slots.length) {
     setOnce(box, `<div class="empty" style="padding:24px 0">${esc(t('dash.noAccounts'))}</div>`);
     return;
   }
-  setOnce(box, ready.map((p) => {
-    const done = limit > 0 ? clamp((p.sentCount || 0) / limit, 0, 1) : 0;
-    const live = plan.current && plan.current.id === p.id && state.runStatus.running;
-    return `<div class="acc-row">
-      <span class="nm">${esc(p.label)}${live ? ' <span class="pc-tag live">' + esc(t('prof.writingNow')) + '</span>' : ''}</span>
+  setOnce(box, slots.map((s) => {
+    const done = limit > 0 ? clamp(s.sentCount / limit, 0, 1) : 0;
+    const live = plan.current && plan.current.key === s.key && state.runStatus.running;
+    const tags = [];
+    if (live) tags.push(['live', t('prof.writingNow')]);
+    if (!s.hasTab) tags.push(['warn', t('prof.noTab')]);
+    return `<div class="acc-row ${s.hasTab ? '' : 'off'}">
+      <span class="nm">${esc(s.email || s.profileLabel)}
+        ${tags.map(([cls, text]) => `<span class="pc-tag ${cls}">${esc(text)}</span>`).join('')}
+        <span class="acc-prof">${esc(s.profileLabel)}</span></span>
       <span class="track"><span style="width:${(done * 100).toFixed(1)}%"></span></span>
-      <span class="cnt">${p.sentCount || 0} / ${limit}</span>
+      <span class="cnt">${s.sentCount} / ${limit}</span>
     </div>`;
   }).join(''));
 }
 
 /**
- * План сессии по готовым аккаунтам: сколько писем всего заложено лимитом,
- * сколько уже ушло и кто пишет сейчас. Порядок тот же, что у движка -
- * аккаунты заполняются последовательно (см. _currentAccount в senderEngine).
+ * Плоский список почт всех профилей - та же единица работы, что и в движке
+ * (см. _mailboxes в senderEngine). Профиль без найденных почт показываем одной
+ * строкой: иначе запущенный профиль, где ещё не открыли вкладку, исчезал бы с
+ * экрана совсем.
+ */
+function mailboxSlots() {
+  const out = [];
+  for (const p of state.profiles) {
+    const boxes = p.mailboxes || [];
+    if (!boxes.length) {
+      if (p.gmailStatus !== 'ready' && !p.running) continue;
+      out.push({
+        key: p.id + '#', profileId: p.id, profileLabel: p.label,
+        email: '', hasTab: false, sentCount: 0,
+      });
+      continue;
+    }
+    for (const m of boxes) {
+      out.push({
+        key: p.id + '#' + (m.email || ''),
+        profileId: p.id,
+        profileLabel: p.label,
+        email: m.email || '',
+        hasTab: !!m.hasTab,
+        sentCount: m.sentCount || 0,
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * План сессии по ПОЧТАМ: сколько писем всего заложено лимитом, сколько уже ушло
+ * и с какой почты пишем сейчас. Лимит применяется к каждой почте отдельно, а
+ * движок обходит их по кругу (см. _nextMailbox в senderEngine) - "текущей"
+ * считаем первую, не добравшую лимит.
  */
 function sessionPlan() {
   const limit = state.settings.system.mailsPerAccount || 0;
-  const ready = state.profiles.filter((p) => p.gmailStatus === 'ready');
-  const done = ready.reduce((n, p) => n + Math.min(p.sentCount || 0, limit), 0);
+  const slots = mailboxSlots().filter((s) => s.hasTab);
+  const done = slots.reduce((n, s) => n + Math.min(s.sentCount, limit), 0);
   return {
-    total: ready.length * limit,
+    total: slots.length * limit,
     done,
-    current: ready.find((p) => (p.sentCount || 0) < limit) || null,
+    current: slots.find((s) => s.sentCount < limit) || null,
   };
 }
 
@@ -1396,14 +1452,22 @@ VIEWS.chats = () => {
   return wrap;
 };
 
-/** Профили, у которых есть хоть одна переписка, плюс их счётчики. */
+/**
+ * Почты, у которых есть хоть одна переписка, плюс их счётчики.
+ *
+ * Группируем по почте, а не по профилю: в профиле их несколько, и переписки
+ * разных ящиков в одном списке путались бы - непонятно, из какого адреса шёл
+ * разговор.
+ */
 function chatProfiles() {
   const byId = new Map();
   for (const c of (state.chats || [])) {
-    const row = byId.get(c.profileId) || {
-      id: c.profileId,
-      label: c.profileLabel || t('chat.unknownProfile'),
-      email: c.profileEmail || '',
+    const id = c.accountKey || c.profileId;
+    const row = byId.get(id) || {
+      id,
+      label: c.mailbox || c.profileEmail || c.profileLabel || t('chat.unknownProfile'),
+      sub: c.profileLabel || '',
+      email: c.mailbox || c.profileEmail || '',
       running: c.profileRunning,
       status: c.profileStatus || 'unknown',
       chats: 0,
@@ -1411,9 +1475,9 @@ function chatProfiles() {
     };
     row.chats++;
     // Последним писал продавец - переписка ждёт нас. Это и есть повод открыть
-    // именно этот профиль, поэтому число выносим в список.
+    // именно эту почту, поэтому число выносим в список.
     if (c.lastDir === 'in') row.waiting++;
-    byId.set(c.profileId, row);
+    byId.set(id, row);
   }
   // Запущенные выше: с ними идёт работа прямо сейчас.
   return [...byId.values()].sort((a, b) => (b.running ? 1 : 0) - (a.running ? 1 : 0));
@@ -1455,12 +1519,12 @@ function renderChatRail() {
       </button>
       ${profiles.map((p) => `<button class="cr-item ${p.id === state.chatProfile ? 'on' : ''} ${p.running ? 'live' : ''}"
         data-p="${esc(p.id)}"
-        title="${esc(p.label + ' · ' + (p.email || t('status.' + p.status)) + ' · ' + (p.running ? t('chat.online') : t('chat.offline')))}">
+        title="${esc(p.label + ' · ' + (p.sub || t('status.' + p.status)) + ' · ' + (p.running ? t('chat.online') : t('chat.offline')))}">
         <span class="pc-avatar" style="--av:${avatarColor({ email: p.email || p.label })}">${esc(p.label.charAt(0).toUpperCase())}
           <span class="mark ${esc(p.status)}"></span></span>
         <span class="cr-id">
           <span class="cr-name">${esc(p.label)}</span>
-          <span class="cr-sub">${esc(p.running ? t('chat.online') : t('chat.offline'))}</span>
+          <span class="cr-sub">${esc(p.sub ? p.sub + ' · ' : '')}${esc(p.running ? t('chat.online') : t('chat.offline'))}</span>
           ${p.waiting ? `<span class="cr-wait">${esc(t('chat.waiting', { n: p.waiting }))}</span>` : ''}
         </span>
         <span class="cr-n">${p.chats}</span>
@@ -1488,13 +1552,16 @@ function pickChatProfile(id) {
 
 function chatMatches(c) {
   if (!c) return false;
-  if (state.chatProfile && c.profileId !== state.chatProfile) return false;
+  // Выбор в колонке - это почта (accountKey), а у старых записей его нет: там
+  // сравниваем по профилю.
+  if (state.chatProfile && (c.accountKey || c.profileId) !== state.chatProfile) return false;
   if (state.chatFilter === 'answered' && !c.replies) return false;
   const q = state.chatQuery.trim().toLowerCase();
   if (!q) return true;
   const title = (c.contact && c.contact.title) || '';
   return c.email.toLowerCase().includes(q)
     || title.toLowerCase().includes(q)
+    || (c.mailbox || '').toLowerCase().includes(q)
     || (c.profileLabel || '').toLowerCase().includes(q);
 }
 
@@ -1503,7 +1570,9 @@ function renderChatGroups() {
   const box = $('#chatGroups');
   if (!box) return;
   const all = state.chats || [];
-  const scope = state.chatProfile ? all.filter((c) => c.profileId === state.chatProfile) : all;
+  const scope = state.chatProfile
+    ? all.filter((c) => (c.accountKey || c.profileId) === state.chatProfile)
+    : all;
   const rows = all.filter(chatMatches);
 
   // Счётчики фильтров считаем в рамках выбранного профиля: иначе "Все 14" при
@@ -1599,7 +1668,10 @@ function chatRowHtml(c, showProfile) {
         <span class="clr-name">${markMatch(c.email || dash, q)}</span>
         <span class="clr-time">${esc(fmtShortTime(c.lastTs))}</span>
       </span>
-      ${showProfile ? `<span class="clr-prof">${markMatch(c.profileLabel || t('chat.unknownProfile'), q)}</span>` : ''}
+      ${showProfile ? `<span class="clr-prof">${markMatch(
+    (c.mailbox || c.profileEmail || c.profileLabel || t('chat.unknownProfile'))
+      + (c.mailbox && c.profileLabel ? ' · ' + c.profileLabel : ''), q,
+  )}</span>` : ''}
       ${title ? `<span class="clr-title">${ICONS.target}${markMatch(shorten(title, 42), q)}</span>` : ''}
       <span class="clr-last">${c.lastDir === 'out' ? esc(t('chat.you')) + ': ' : ''}${esc(last)}</span>
     </span>
@@ -1650,7 +1722,7 @@ function renderChatMain() {
       <span class="pc-avatar" style="--av:${avatarColor({ email: c.email })}">${esc((c.email || '?').charAt(0).toUpperCase())}</span>
       <span class="cm-id">
         <span class="cm-name">${esc(c.email || dash)}</span>
-        <span class="cm-sub">${esc(c.profileLabel || dash)} · ${esc(t('chat.repliesOf', { n: c.replies, cap }))}</span>
+        <span class="cm-sub">${esc(c.mailbox || c.profileLabel || dash)} · ${esc(t('chat.repliesOf', { n: c.replies, cap }))}</span>
       </span>
       <button class="mini" id="cmSide" title="${esc(t('chat.toggleSide'))}">${ICONS.dashboard}</button>
     </header>
@@ -2021,8 +2093,9 @@ function renderProfileCards(root) {
   const current = sessionPlan().current;
   const sign = JSON.stringify([
     state.booted, state.profileFilter, limit, state.selectedProfile,
-    current && state.runStatus.running ? current.id : '',
+    current && state.runStatus.running ? current.key : '',
     state.profiles.map((p) => [p.id, p.label, p.email, p.gmailStatus, p.running, p.port, p.sentCount,
+      (p.mailboxes || []).map((m) => [m.email, m.hasTab, m.sentCount]),
       (state.profileMetrics || {})[p.id]]),
   ]);
   if (cards.dataset.sign === sign) return;
@@ -2054,8 +2127,15 @@ function renderProfileCards(root) {
   }
 
   for (const p of shown) {
-    const done = limit > 0 ? clamp((p.sentCount || 0) / limit, 0, 1) : 0;
-    const isCurrent = !!(current && current.id === p.id && state.runStatus.running);
+    const boxes = p.mailboxes || [];
+    // Прогресс профиля - по сумме лимитов его почт: лимит применяется к каждой
+    // почте отдельно, и делить один лимит между ними было бы неправдой.
+    const cap = limit * Math.max(1, boxes.length);
+    const sent = boxes.length
+      ? boxes.reduce((n, m) => n + Math.min(m.sentCount || 0, limit), 0)
+      : (p.sentCount || 0);
+    const done = cap > 0 ? clamp(sent / cap, 0, 1) : 0;
+    const isCurrent = !!(current && current.profileId === p.id && state.runStatus.running);
     const m = (state.profileMetrics || {})[p.id] || { written: 0, dialogs: 0, replies: 0 };
     const bad = p.gmailStatus === 'error' || p.gmailStatus === 'needs_login';
     const card = h(`<div class="profile-card glass glass-sheen ${state.selectedProfile === p.id ? 'selected' : ''} ${isCurrent ? 'current' : ''} ${bad ? 'error' : ''}">
@@ -2067,6 +2147,7 @@ function renderProfileCards(root) {
           <div class="pc-email">${esc(p.email || t('prof.notSignedIn'))}</div>
           <div class="pc-tags">${profileTags(p, m, isCurrent, limit)}</div>
         </span>
+
         <span class="pc-head-actions">
           <button class="mini go" data-act="${p.running ? 'stop' : 'launch'}"
             title="${esc(p.running ? t('prof.stopBtnFull') : t('prof.launch'))}">${p.running ? ICONS.stop : ICONS.play}</button>
@@ -2080,10 +2161,12 @@ function renderProfileCards(root) {
         <span class="n" ${m.replies ? 'data-tone="ok"' : ''}><b>${m.replies}</b><span>${esc(t('prof.replies'))}</span></span>
       </div>
 
+      ${mailboxListHtml(p, limit, current)}
+
       <div class="pc-meta">
         <span><span class="dot ${p.running ? 'running' : 'new'}"></span> ${esc(p.running ? t('prof.running') : t('prof.stopped'))}</span>
         <span>${esc(t('prof.port'))}: ${p.port || dash}</span>
-        <span class="chip-mini">${p.sentCount} / ${limit}</span>
+        <span class="chip-mini" title="${esc(t('prof.sentHint'))}">${boxes.length ? sent + ' / ' + cap : sent}</span>
       </div>
 
       <div class="pc-foot">
@@ -2119,14 +2202,54 @@ function renderProfileCards(root) {
 }
 
 /**
+ * Почты профиля со своим счётчиком.
+ *
+ * В одном профиле их может быть несколько (мультилогин Google), и лимит писем
+ * считается по каждой отдельно. Почта без открытой вкладки в рассылке не
+ * участвует - об этом и говорит пометка: вкладку открывает пользователь, само
+ * приложение её не заводит.
+ */
+function mailboxListHtml(p, limit, current) {
+  const boxes = p.mailboxes || [];
+  if (!boxes.length) {
+    if (!p.running) return '';
+    return `<div class="pc-boxes"><div class="hint">${esc(t('prof.noMailboxes'))}</div></div>`;
+  }
+  return `<div class="pc-boxes">
+    <div class="section-label">${esc(t('prof.mailboxes', { n: boxes.length }))}</div>
+    ${boxes.map((m) => {
+    const sent = m.sentCount || 0;
+    const done = limit > 0 ? clamp(sent / limit, 0, 1) : 0;
+    const live = !!(current && state.runStatus.running
+      && current.profileId === p.id && current.email === m.email);
+    return `<div class="pc-box ${m.hasTab ? '' : 'off'}">
+        <span class="pb-dot ${m.hasTab ? 'on' : ''}"></span>
+        <span class="pb-mail">${esc(m.email || dash)}</span>
+        ${live ? `<span class="pc-tag live">${esc(t('prof.writingNow'))}</span>` : ''}
+        ${m.hasTab ? '' : `<span class="pc-tag warn" title="${esc(t('prof.noTabHint'))}">${esc(t('prof.noTab'))}</span>`}
+        <span class="pb-track"><span style="width:${(done * 100).toFixed(1)}%"></span></span>
+        <span class="pb-cnt">${sent} / ${limit}</span>
+      </div>`;
+  }).join('')}
+  </div>`;
+}
+
+/**
  * Теги карточки. Только то, что видно по данным: выдуманных ярлыков вроде
  * "надёжный" здесь быть не должно - они ничего не значат.
  */
 function profileTags(p, m, isCurrent, limit) {
   const tags = [];
+  const boxes = p.mailboxes || [];
   if (isCurrent) tags.push(['live', t('prof.writingNow')]);
   if (p.gmailStatus !== 'ready') tags.push([p.gmailStatus === 'error' ? 'bad' : 'warn', t('status.' + p.gmailStatus)]);
-  if (limit > 0 && (p.sentCount || 0) >= limit) tags.push(['done', t('prof.tagLimit')]);
+  // Лимит профиля исчерпан, только когда его добрали ВСЕ почты: пока хоть одна
+  // под лимитом, с профиля продолжают уходить письма.
+  const capped = boxes.length
+    ? boxes.every((b) => limit > 0 && (b.sentCount || 0) >= limit)
+    : (limit > 0 && (p.sentCount || 0) >= limit);
+  if (capped) tags.push(['done', t('prof.tagLimit')]);
+  if (boxes.length > 1) tags.push(['', t('prof.tagMailboxes', { n: boxes.length })]);
   if (m.replies > 0) tags.push(['ok', t('prof.tagReplies', { n: m.replies })]);
   if (!tags.length) tags.push(['', t('status.ready')]);
   return tags.map(([cls, text]) => `<span class="pc-tag ${cls}">${esc(text)}</span>`).join('');
@@ -2219,7 +2342,10 @@ function profileDetailCard(p) {
     <div class="kv"><span class="k">${esc(t('prof.email'))}</span><span class="v">${esc(p.email || dash)}</span></div>
     <div class="kv"><span class="k">${esc(t('prof.isRunning'))}</span><span class="v">${p.running ? esc(t('common.yes')) : esc(t('common.no'))}</span></div>
     <div class="kv"><span class="k">${esc(t('prof.port'))}</span><span class="v">${p.port || dash}</span></div>
-    <div class="kv"><span class="k">${esc(t('prof.sentCount'))}</span><span class="v">${p.sentCount} / ${state.settings.system.mailsPerAccount}</span></div>
+    ${(p.mailboxes || []).length
+      ? (p.mailboxes || []).map((m) => `<div class="kv"><span class="k">${esc(m.email || dash)}${m.hasTab ? '' : ' · ' + esc(t('prof.noTab'))}</span>
+          <span class="v">${m.sentCount || 0} / ${state.settings.system.mailsPerAccount}</span></div>`).join('')
+      : `<div class="kv"><span class="k">${esc(t('prof.sentCount'))}</span><span class="v">${p.sentCount} / ${state.settings.system.mailsPerAccount}</span></div>`}
     <div class="kv stacked"><span class="k">${esc(t('prof.ua'))}</span><span class="v">${esc(fp.userAgent)}</span></div>
     <div class="kv"><span class="k">${esc(t('prof.platform'))}</span><span class="v">${esc(fp.platform)}</span></div>
     <div class="kv"><span class="k">${esc(t('prof.screen'))}</span><span class="v">${fp.screen.width}x${fp.screen.height}</span></div>

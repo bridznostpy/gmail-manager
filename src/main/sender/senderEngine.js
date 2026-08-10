@@ -26,6 +26,7 @@ const haron = require('../link/haronRent');
 const telegram = require('../telegram/telegram');
 const texts = require('../texts');
 const htmlTemplate = require('../htmlTemplate');
+const mailboxes = require('../mailbox');
 
 class SenderEngine {
   constructor({ store, profileStore, chrome, parser, contactStore, dialogStore, statsStore, messageStore }) {
@@ -53,6 +54,8 @@ class SenderEngine {
     this._notifiedAllLimits = false;
     // Идёт проход автоответа - новые письма в это время не шлём, см. _sendLoop.
     this._replying = false;
+    // Указатель круговой отправки по почтам, см. _nextMailbox.
+    this._rr = 0;
   }
 
   status() {
@@ -69,21 +72,62 @@ class SenderEngine {
     return this.profileStore.list().filter((p) => p.gmailStatus === 'ready');
   }
 
-  /** Ready accounts whose Chrome instance is actually up (for reply-scanning). */
+  /** Профили с живым Chrome: только в них есть вкладки, с которыми можно работать. */
   _runningReady() {
     return this._readyProfiles().filter((p) => this.chrome.isRunning(p.id));
   }
 
-  _allLimitsReached() {
-    const limit = this.store.get('system').mailsPerAccount;
-    const ready = this._readyProfiles();
-    return ready.length > 0 && ready.every((p) => p.sentCount >= limit);
+  /**
+   * Все почты, с которыми можно работать прямо сейчас: плоский список пар
+   * "профиль + почта". Почта участвует, только если у неё есть своя вкладка -
+   * приложение вкладок не открывает, это делает пользователь (Rules 6).
+   */
+  _mailboxes() {
+    const out = [];
+    for (const profile of this._runningReady()) {
+      for (const mailbox of this.profileStore.mailboxes(profile.id)) {
+        if (mailbox && mailbox.hasTab) out.push({ profile, mailbox });
+      }
+    }
+    return out;
   }
 
-  /** The next account still under its send limit (sequential fill). */
-  _currentAccount() {
+  /** Почты профилей, у которых вкладки нет: о них надо сказать пользователю. */
+  _mailboxesWithoutTab() {
+    const out = [];
+    for (const profile of this._runningReady()) {
+      for (const mailbox of this.profileStore.mailboxes(profile.id)) {
+        if (mailbox && !mailbox.hasTab) out.push({ profile, mailbox });
+      }
+    }
+    return out;
+  }
+
+  _allLimitsReached() {
     const limit = this.store.get('system').mailsPerAccount;
-    return this._readyProfiles().find((p) => p.sentCount < limit) || null;
+    const slots = this._mailboxes();
+    return slots.length > 0 && slots.every(({ mailbox }) => (mailbox.sentCount || 0) >= limit);
+  }
+
+  /**
+   * Следующая почта по кругу: письмо в каждую по очереди, а не пачкой с одной.
+   * Так лимиты выбираются равномерно, и ни один ящик не пишет подряд десятки
+   * писем. Указатель круга живёт между заходами, а список почт может меняться на
+   * ходу (скан нашёл новую вкладку, старую закрыли) - поэтому идём по остатку от
+   * длины, а не по сохранённому индексу.
+   */
+  _nextMailbox() {
+    const limit = this.store.get('system').mailsPerAccount;
+    const slots = this._mailboxes();
+    if (!slots.length) return null;
+    for (let i = 0; i < slots.length; i++) {
+      const slot = slots[(this._rr + i) % slots.length];
+      if ((slot.mailbox.sentCount || 0) < limit) {
+        this._rr = (this._rr + i + 1) % slots.length;
+        return slot;
+      }
+    }
+    return null;
   }
 
   async start() {
@@ -97,13 +141,15 @@ class SenderEngine {
     this.paused = false;
     this.startedAt = Date.now();
     this._notifiedAllLimits = false;
+    this._rr = 0;
     logger.success('system', t('run.started', { count: ready.length }));
 
-    // Launch a Chrome instance for each ready account (if not already up).
+    // Поднимаем Chrome каждому готовому профилю, если он ещё не запущен. Адрес
+    // первой почты: остальные вкладки открывает пользователь сам.
     for (const p of ready) {
       try {
         if (!this.chrome.isRunning(p.id)) {
-          const inst = await this.chrome.launch(p, { url: 'https://mail.google.com/mail/u/0/#inbox' });
+          const inst = await this.chrome.launch(p, { url: mailboxes.inboxUrl(0) });
           this.profileStore.update(p.id, { running: true, port: inst.port });
         }
       } catch (e) {
@@ -111,10 +157,25 @@ class SenderEngine {
       }
     }
 
+    // Почты без своей вкладки в рассылке не участвуют. Молчать об этом нельзя:
+    // человек вошёл в аккаунт и ждёт, что с него тоже пишут.
+    const noTab = this._mailboxesWithoutTab();
+    if (noTab.length) {
+      logger.warn('sender', t('run.noTab', {
+        list: noTab.map(({ profile, mailbox }) => profile.label + ' / ' + mailboxes.label(mailbox)).join(', '),
+      }));
+    }
+
     this.parser.start();
     this._sendLoop();
     this._replyLoop();
-    return { ok: true };
+    return {
+      ok: true,
+      mailboxes: this._mailboxes().length,
+      withoutTab: noTab.map(({ profile, mailbox }) => ({
+        profileId: profile.id, profileLabel: profile.label, email: mailbox.email,
+      })),
+    };
   }
 
   async _sendLoop() {
@@ -131,8 +192,8 @@ class SenderEngine {
       this._sendTimer = setTimeout(() => this._sendLoop(), 1000);
       return;
     }
-    const account = this._currentAccount();
-    if (!account) {
+    const slot = this._nextMailbox();
+    if (!slot) {
       if (this._allLimitsReached() && !this._notifiedAllLimits) {
         this._notifiedAllLimits = true;
         logger.warn('system', t('run.allLimits'));
@@ -147,16 +208,30 @@ class SenderEngine {
       this._sendTimer = setTimeout(() => this._sendLoop(), 2000);
       return;
     }
+    const { profile, mailbox } = slot;
     try {
-      await this._sendFirstMessage(account, lead);
-      this.profileStore.update(account.id, { sentCount: account.sentCount + 1 });
-      // Сохраняем контакт с данными товара, чтобы позже подтолкнуть по email.
-      if (this.contactStore) this.contactStore.recordSent({ lead, profile: account });
+      await this._sendFirstMessage(slot, lead);
+      this.profileStore.bumpMailbox(profile.id, mailbox.email);
+      // Сохраняем контакт с данными товара и почтой, с которой ушло письмо:
+      // подталкивать человека надо из того же ящика.
+      if (this.contactStore) this.contactStore.recordSent({ lead, profile, mailbox });
       if (this.statsStore) this.statsStore.note('sent');
       this.parser.noteSent();
     } catch (e) {
-      if (this.statsStore) this.statsStore.note('errors');
-      logger.error('sender', t('send.failed', { label: account.label, error: e.message }));
+      if (e && e.code === 'no_tab') {
+        // Вкладку почты закрыли посреди прогона. Лид возвращаем в очередь - он
+        // ничей вины не потерял, - а почту исключаем до следующего скана.
+        this.parser.pushLead(lead);
+        this.profileStore.setMailboxTab(profile.id, mailbox.email, false);
+        logger.warn('sender', t('send.mailboxGone', {
+          label: profile.label, email: mailboxes.label(mailbox),
+        }));
+      } else {
+        if (this.statsStore) this.statsStore.note('errors');
+        logger.error('sender', t('send.failed', {
+          label: profile.label + ' / ' + mailboxes.label(mailbox), error: e.message,
+        }));
+      }
     }
     // Пауза между письмами - из настроек. Ждём именно здесь, после отправки:
     // очередь и лимиты уже сошлись, и следующий заход начнётся с чистого места.
@@ -173,7 +248,7 @@ class SenderEngine {
     return Math.max(1, Number.isFinite(sec) ? sec : 2) * 1000;
   }
 
-  async _sendFirstMessage(account, lead) {
+  async _sendFirstMessage({ profile, mailbox }, lead) {
     if (!lead || !lead.email) throw new Error(t('err.noLeadEmail'));
     // Первое письмо ссылки не несёт: тема - название товара из парсера, тело -
     // случайный текст из MESSAGES_DICT на языке рассылки.
@@ -181,13 +256,17 @@ class SenderEngine {
     const lang = texts.outreachLang(this.store);
     const subject = (lead.meta && lead.meta.title) || lead.title || t('send.defaultSubject');
     const body = texts.firstMessage(loaded, lang);
-    logger.info('sender', t('send.message', { label: account.label, to: lead.email, subject }));
-    // Drive Gmail compose with Playwright against the logged-in profile.
-    // TODO(gmail-dom): validate the compose/send selectors on a live account.
-    await this.chrome.gmailCompose(account.id, { to: lead.email, subject, body });
+    logger.info('sender', t('send.message', {
+      label: profile.label + ' / ' + mailboxes.label(mailbox), to: lead.email, subject,
+    }));
+    // Отправка идёт в вкладке ИМЕННО этой почты, см. _mailPage.
+    // TODO(gmail-dom): проверять селекторы окна письма на живом аккаунте.
+    await this.chrome.gmailCompose(profile.id, { mailbox, to: lead.email, subject, body });
     if (this.messageStore) {
       this.messageStore.add({
-        profileId: account.id, email: lead.email, dir: 'out', kind: 'first', subject, body,
+        accountKey: mailboxes.accountKey(profile.id, mailbox.email),
+        profileId: profile.id, mailbox: mailbox.email,
+        email: lead.email, dir: 'out', kind: 'first', subject, body,
       });
     }
     return { subject, body };
@@ -228,16 +307,28 @@ class SenderEngine {
       logger.debug('sender', t('reply.disabled'));
       return;
     }
-    const accounts = this._runningReady();
-    logger.debug('sender', t('reply.poll', { count: accounts.length, cap: maxReplies }));
-    for (const account of accounts) {
+    // Проход идёт по ПОЧТАМ, а не по профилям: в одном профиле их несколько, и
+    // список писем у каждой свой.
+    const slots = this._mailboxes();
+    logger.debug('sender', t('reply.poll', { count: slots.length, cap: maxReplies }));
+    for (const { profile, mailbox } of slots) {
+      const account = profile;
+      const box = mailboxes.label(mailbox);
+      const key = mailboxes.accountKey(profile.id, mailbox.email);
       let rows = [];
       try {
         // Берём весь список, а не только непрочитанное: что новое, а что нет,
         // решаем сами по идентификатору последнего письма треда.
-        rows = await this.chrome.gmailListThreads(account.id, { max: 25 });
+        rows = await this.chrome.gmailListThreads(account.id, { mailbox, max: 25 });
       } catch (e) {
-        logger.warn('sender', t('reply.unreadFailed', { label: account.label, error: e.message }));
+        if (e && e.code === 'no_tab') {
+          this.profileStore.setMailboxTab(profile.id, mailbox.email, false);
+          logger.warn('sender', t('reply.mailboxGone', { label: account.label, email: box }));
+          continue;
+        }
+        logger.warn('sender', t('reply.unreadFailed', {
+          label: account.label + ' / ' + box, error: e.message,
+        }));
         continue;
       }
       for (const thread of rows) {
@@ -250,19 +341,19 @@ class SenderEngine {
           continue;
         }
         const verdict = this.dialogStore.decide(
-          account.id, thread.threadId, thread.lastMessageId, maxReplies,
+          key, thread.threadId, thread.lastMessageId, maxReplies,
         );
         if (verdict === 'same') continue;
         if (verdict === 'limit') {
           // Запоминаем письмо, чтобы не разбирать эту переписку каждый проход.
-          this.dialogStore.noteSeen(account.id, thread.threadId, thread.lastMessageId);
+          this.dialogStore.noteSeen(key, thread.threadId, thread.lastMessageId);
           logger.debug('sender', t('reply.capReached', { tid: thread.threadId, cap: maxReplies }));
           continue;
         }
         if (verdict === 'own') {
           // Последнее письмо треда - наш же прошлый ответ, а не новое от
           // продавца. Просто запоминаем его.
-          this.dialogStore.noteSeen(account.id, thread.threadId, thread.lastMessageId);
+          this.dialogStore.noteSeen(key, thread.threadId, thread.lastMessageId);
           logger.debug('sender', t('reply.ownMessage', { tid: thread.threadId }));
           continue;
         }
@@ -273,10 +364,11 @@ class SenderEngine {
           // к нему первое письмо, которое ушло ещё без него.
           if (this.messageStore) {
             this.messageStore.attachThread({
-              profileId: account.id, email: thread.from, threadId: thread.threadId,
+              accountKey: key, email: thread.from, threadId: thread.threadId,
             });
             this.messageStore.add({
-              profileId: account.id, email: thread.from, threadId: thread.threadId,
+              accountKey: key, profileId: account.id, mailbox: mailbox.email,
+              email: thread.from, threadId: thread.threadId,
               dir: 'in', kind: 'reply',
               subject: thread.subject || '',
               body: thread.body || thread.snippet || '',
@@ -287,7 +379,7 @@ class SenderEngine {
           // переписки названия товара и цены нет.
           const url = await this._linkFor(thread.from, thread);
           const body = this._autoReplyBody(loaded, lang, url, contact);
-          const res = await this.chrome.gmailReply(account.id, thread, body);
+          const res = await this.chrome.gmailReply(account.id, mailbox, thread, body);
           if (!res || !res.ok) {
             logger.warn('sender', t('reply.failed', { tid: thread.threadId, error: t('reply.notConfirmed') }));
             continue;
@@ -295,20 +387,30 @@ class SenderEngine {
           if (this.statsStore) this.statsStore.note('replies');
           if (this.messageStore) {
             this.messageStore.add({
-              profileId: account.id, email: thread.from, threadId: thread.threadId,
+              accountKey: key, profileId: account.id, mailbox: mailbox.email,
+              email: thread.from, threadId: thread.threadId,
               dir: 'out', kind: 'auto', subject: thread.subject || '',
               // В журнал кладём и текст, и разметку: лента чата показывает
               // текст, а посмотреть письмо целиком можно по разметке.
               body: body.text, html: body.html,
             });
           }
-          const rec = this.dialogStore.recordReply(account.id, thread.threadId, {
+          const rec = this.dialogStore.recordReply(key, thread.threadId, {
+            profileId: account.id,
+            mailbox: mailbox.email,
             email: thread.from,
             seenMessageId: thread.lastMessageId,
             ownMessageId: res.lastMessageId,
           });
-          logger.info('sender', t('reply.sent', { label: account.label, n: rec.replies, cap: maxReplies }));
+          logger.info('sender', t('reply.sent', {
+            label: account.label + ' / ' + box, n: rec.replies, cap: maxReplies,
+          }));
         } catch (e) {
+          if (e && e.code === 'no_tab') {
+            this.profileStore.setMailboxTab(profile.id, mailbox.email, false);
+            logger.warn('sender', t('reply.mailboxGone', { label: account.label, email: box }));
+            break;
+          }
           logger.warn('sender', t('reply.failed', { tid: thread.threadId, error: e.message }));
         }
       }
@@ -333,8 +435,8 @@ class SenderEngine {
   }
 
   /**
-   * Сухой прогон автоответа по одному профилю: сканируем непрочитанные и пишем
-   * в лог, кого увидели и распознан ли отправитель как контакт рассылки.
+   * Сухой прогон автоответа по профилю: сканируем список писем КАЖДОЙ его почты
+   * и пишем в лог, кого увидели и распознан ли отправитель как контакт рассылки.
    * Ничего не отправляем - это способ проверить связку "письмо -> контакт" до
    * первой реальной отправки.
    */
@@ -345,44 +447,62 @@ class SenderEngine {
       logger.warn('sender', t('dry.profileStopped', { label: account.label }));
       return { ok: false, reason: 'profile_stopped', rows: [] };
     }
-    let found = [];
-    try {
-      found = await this.chrome.gmailListThreads(account.id, { max: 25 });
-    } catch (e) {
-      logger.warn('sender', t('reply.unreadFailed', { label: account.label, error: e.message }));
-      return { ok: false, reason: 'scan_failed', rows: [] };
+    const boxes = this.profileStore.mailboxes(profileId).filter((m) => m.hasTab);
+    if (!boxes.length) {
+      logger.warn('sender', t('dry.noMailbox', { label: account.label }));
+      return { ok: false, reason: 'no_mailbox', rows: [] };
     }
     const maxReplies = this.store.get('system').maxRepliesPerDialog;
-    logger.info('sender', t('dry.title', { label: account.label, count: found.length }));
-    if (!found.length) logger.info('sender', t('dry.empty'));
-    const rows = found.map((thread) => {
-      const contact = this.contactStore ? this.contactStore.get(thread.from) : null;
-      const rec = this.dialogStore.get(account.id, thread.threadId);
-      // Тот же вердикт, что и в настоящем проходе - видно, что уйдёт, а что нет.
-      const verdict = contact
-        ? this.dialogStore.decide(account.id, thread.threadId, thread.lastMessageId, maxReplies)
-        : 'unknown';
-      const row = {
-        threadId: thread.threadId,
-        from: thread.from || '',
-        subject: thread.subject || '',
-        known: !!contact,
-        title: contact ? contact.title : '',
-        replies: rec ? rec.replies : 0,
-        verdict,
-      };
-      logger.info('sender', t('dry.row', {
-        subject: row.subject || '?',
-        from: row.from || '?',
-        contact: t(row.known ? 'dry.known' : 'dry.unknown'),
-      }));
-      if (row.known) {
-        logger.info('sender', t('dry.verdict', {
-          verdict: t('verdict.' + verdict), n: row.replies, cap: maxReplies,
+    const rows = [];
+    let scanned = 0;
+    for (const mailbox of boxes) {
+      const box = mailboxes.label(mailbox);
+      const key = mailboxes.accountKey(profileId, mailbox.email);
+      let found = [];
+      try {
+        found = await this.chrome.gmailListThreads(profileId, { mailbox, max: 25 });
+      } catch (e) {
+        logger.warn('sender', t('reply.unreadFailed', {
+          label: account.label + ' / ' + box, error: e.message,
         }));
+        continue;
       }
-      return row;
-    });
+      scanned++;
+      logger.info('sender', t('dry.title', {
+        label: account.label + ' / ' + box, count: found.length,
+      }));
+      if (!found.length) logger.info('sender', t('dry.empty'));
+      for (const thread of found) {
+        const contact = this.contactStore ? this.contactStore.get(thread.from) : null;
+        const rec = this.dialogStore.get(key, thread.threadId);
+        // Тот же вердикт, что и в настоящем проходе - видно, что уйдёт, а что нет.
+        const verdict = contact
+          ? this.dialogStore.decide(key, thread.threadId, thread.lastMessageId, maxReplies)
+          : 'unknown';
+        const row = {
+          threadId: thread.threadId,
+          mailbox: mailbox.email,
+          from: thread.from || '',
+          subject: thread.subject || '',
+          known: !!contact,
+          title: contact ? contact.title : '',
+          replies: rec ? rec.replies : 0,
+          verdict,
+        };
+        logger.info('sender', t('dry.row', {
+          subject: row.subject || '?',
+          from: row.from || '?',
+          contact: t(row.known ? 'dry.known' : 'dry.unknown'),
+        }));
+        if (row.known) {
+          logger.info('sender', t('dry.verdict', {
+            verdict: t('verdict.' + verdict), n: row.replies, cap: maxReplies,
+          }));
+        }
+        rows.push(row);
+      }
+    }
+    if (!scanned) return { ok: false, reason: 'scan_failed', rows: [] };
     return {
       ok: true, rows,
       known: rows.filter((r) => r.known).length,
@@ -426,17 +546,37 @@ class SenderEngine {
       logger.warn('sender', t('nudge.profileStopped', { label: account.label }));
       return { ok: false, reason: 'profile_stopped' };
     }
+    // Пишем из той же почты, что и в первый раз. У контактов, записанных до
+    // появления мультипочты, поля нет - тогда берём основную почту профиля и
+    // говорим об этом в логе.
+    let mailbox = contact.mailbox ? this.profileStore.getMailbox(account.id, contact.mailbox) : null;
+    if (!mailbox) {
+      mailbox = this.profileStore.mailboxes(account.id).find((m) => m.hasTab) || null;
+      if (mailbox) {
+        logger.warn('sender', t('nudge.mailboxGuess', {
+          email: addr, mailbox: mailboxes.label(mailbox),
+        }));
+      }
+    }
+    if (!mailbox || !mailbox.hasTab) {
+      logger.warn('sender', t('nudge.noMailbox', { email: addr, label: account.label }));
+      return { ok: false, reason: 'no_mailbox' };
+    }
     const loaded = this.store.get('texts');
     const lang = texts.outreachLang(this.store);
     const url = await this._linkFor(addr, null);
     const body = texts.nudge(loaded, lang, url, contact);
     const subject = contact.title || t('send.defaultSubject');
-    logger.info('sender', t('nudge.sending', { email: addr, label: account.label }));
-    const res = await this.chrome.gmailCompose(account.id, { to: addr, subject, body });
+    logger.info('sender', t('nudge.sending', {
+      email: addr, label: account.label + ' / ' + mailboxes.label(mailbox),
+    }));
+    const res = await this.chrome.gmailCompose(account.id, { mailbox, to: addr, subject, body });
     if (res && res.ok) {
       if (this.messageStore) {
         this.messageStore.add({
-          profileId: account.id, email: addr, dir: 'out', kind: 'nudge', subject, body,
+          accountKey: mailboxes.accountKey(account.id, mailbox.email),
+          profileId: account.id, mailbox: mailbox.email,
+          email: addr, dir: 'out', kind: 'nudge', subject, body,
         });
       }
       this.contactStore.markNudged(addr);

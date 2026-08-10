@@ -322,10 +322,16 @@ function gmailRowsFn(arg) {
     var mid = r.getAttribute('data-legacy-last-message-id')
       || (mh ? mh.getAttribute('data-legacy-last-message-id') : '') || '';
     var s = r.querySelector('.bog, .y6 span');
+    // Обрывок письма из строки списка. Полного текста тут нет, но он даётся
+    // даром - открывать переписку ради него не нужно.
+    var sn = r.querySelector('.y2');
+    var snippet = sn ? sn.textContent : '';
     out.push({
       threadId: tid || rid, legacyId: tid, rowId: rid, lastMessageId: mid,
       unread: r.classList.contains('zE'),
       from: pickEmail(r), subject: s ? s.textContent : '',
+      // Gmail отделяет обрывок от темы длинным тире с пробелами - убираем.
+      snippet: snippet.replace(/^\s*[-–—]\s*/, '').trim(),
     });
   }
   return out;

@@ -27,7 +27,7 @@ const telegram = require('../telegram/telegram');
 const texts = require('../texts');
 
 class SenderEngine {
-  constructor({ store, profileStore, chrome, parser, contactStore, dialogStore, statsStore }) {
+  constructor({ store, profileStore, chrome, parser, contactStore, dialogStore, statsStore, messageStore }) {
     this.store = store;
     this.profileStore = profileStore;
     this.chrome = chrome;
@@ -39,6 +39,9 @@ class SenderEngine {
     // Журнал по дням для графика статистики. Счётчик в профиле накопительный и
     // исчезает вместе с профилем, а история должна оставаться.
     this.statsStore = statsStore;
+    // Журнал переписки для экрана чатов: dialogStore хранит только решения
+    // автоответчика, тексты писем нужны отдельно.
+    this.messageStore = messageStore;
     this.running = false;
     // Пауза - это остановленная ОТПРАВКА при живом прогоне: автоответчик
     // продолжает опрашивать почту, аптайм идёт, очередь не теряется.
@@ -170,6 +173,11 @@ class SenderEngine {
     // Drive Gmail compose with Playwright against the logged-in profile.
     // TODO(gmail-dom): validate the compose/send selectors on a live account.
     await this.chrome.gmailCompose(account.id, { to: lead.email, subject, body });
+    if (this.messageStore) {
+      this.messageStore.add({
+        profileId: account.id, email: lead.email, dir: 'out', kind: 'first', subject, body,
+      });
+    }
     return { subject, body };
   }
 
@@ -247,6 +255,22 @@ class SenderEngine {
           continue;
         }
         try {
+          // Ответ продавца записываем ДО отправки автоответа: если отправка
+          // сорвётся, письмо в переписке всё равно было, и в чате оно должно
+          // остаться. Идентификатор треда известен только сейчас - привязываем
+          // к нему первое письмо, которое ушло ещё без него.
+          if (this.messageStore) {
+            this.messageStore.attachThread({
+              profileId: account.id, email: thread.from, threadId: thread.threadId,
+            });
+            this.messageStore.add({
+              profileId: account.id, email: thread.from, threadId: thread.threadId,
+              dir: 'in', kind: 'reply',
+              subject: thread.subject || '',
+              body: thread.body || thread.snippet || '',
+              partial: !thread.body,
+            });
+          }
           // Ссылку строим по сохранённым данным товара этого адресата - у самой
           // переписки названия товара и цены нет.
           const url = await this._linkFor(thread.from, thread);
@@ -257,6 +281,12 @@ class SenderEngine {
             continue;
           }
           if (this.statsStore) this.statsStore.note('replies');
+          if (this.messageStore) {
+            this.messageStore.add({
+              profileId: account.id, email: thread.from, threadId: thread.threadId,
+              dir: 'out', kind: 'auto', subject: thread.subject || '', body: text,
+            });
+          }
           const rec = this.dialogStore.recordReply(account.id, thread.threadId, {
             email: thread.from,
             seenMessageId: thread.lastMessageId,
@@ -372,6 +402,11 @@ class SenderEngine {
     logger.info('sender', t('nudge.sending', { email: addr, label: account.label }));
     const res = await this.chrome.gmailCompose(account.id, { to: addr, subject, body });
     if (res && res.ok) {
+      if (this.messageStore) {
+        this.messageStore.add({
+          profileId: account.id, email: addr, dir: 'out', kind: 'nudge', subject, body,
+        });
+      }
       this.contactStore.markNudged(addr);
       logger.success('sender', t('nudge.sent', { email: addr }));
     }

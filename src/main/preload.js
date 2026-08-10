@@ -71,6 +71,10 @@ contextBridge.exposeInMainWorld('api', {
   dialogs: {
     list: () => ipcRenderer.invoke('dialogs:list'),
   },
+  chats: {
+    list: () => ipcRenderer.invoke('chats:list'),
+    messages: (chatKey) => ipcRenderer.invoke('chats:messages', { chatKey }),
+  },
   contacts: {
     list: () => ipcRenderer.invoke('contacts:list'),
     nudge: (email) => ipcRenderer.invoke('contacts:nudge', { email }),

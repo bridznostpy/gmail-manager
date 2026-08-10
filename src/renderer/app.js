@@ -25,8 +25,12 @@ const state = {
   profileMetrics: null, // id -> { written, dialogs, replies }
   stats: null, // { daily: [...], totals: {...} }
   slowFetchedAt: 0, // когда последний раз тянули журнал и диалоги
-  dialogs: [],
-  dialogQuery: '',
+  // Экран чатов: список, открытая переписка и её лента.
+  chats: [],
+  chatQuery: '',
+  chatFilter: 'all',
+  openChat: '',
+  chatMessages: [],
   notes: [], // лента уведомлений из потока логов
   notesSeen: 0,
   // Выбранная группа на странице настроек - переживает уход на другой раздел.
@@ -51,7 +55,7 @@ const ROUTES = [
   { id: 'home', labelKey: 'nav.home', icon: 'home', titleKey: 'home.title', subKey: 'home.sub', bare: true },
   { id: 'overview', labelKey: 'nav.overview', icon: 'dashboard', titleKey: 'ov.title', subKey: 'ov.sub' },
   { id: 'run', labelKey: 'nav.run', icon: 'play', titleKey: 'run.title', subKey: 'run.sub' },
-  { id: 'dialogs', labelKey: 'nav.dialogs', icon: 'chat', titleKey: 'dlg.title', subKey: 'dlg.sub' },
+  { id: 'chats', labelKey: 'nav.chats', icon: 'chat', titleKey: 'chat.title', subKey: 'chat.sub', fullHeight: true },
   { id: 'profiles', labelKey: 'nav.profiles', icon: 'profiles', titleKey: 'prof.title', subKey: 'prof.sub' },
   { id: 'settings', labelKey: 'nav.settings', icon: 'settings', titleKey: 'set.title', subKey: 'set.sub' },
 ];
@@ -512,6 +516,9 @@ function render() {
 
   const main = $('#main');
   main.innerHTML = '';
+  // Чаты занимают всю рабочую область и прокручиваются внутри колонок, а не
+  // страницей: иначе шапка переписки уплывала бы за край при листании ленты.
+  main.classList.toggle('no-scroll', !!route.fullHeight);
   const view = VIEWS[route.id]();
   view.classList.add('view-enter');
   main.appendChild(view);
@@ -553,7 +560,7 @@ function wireCascade(root) {
 const HOME_TILES = [
   { route: 'run', icon: 'play', titleKey: 'nav.run', descKey: 'home.tile.run', value: (s) => fmtUptime(s.runStatus.uptimeSec) },
   { route: 'profiles', icon: 'profiles', titleKey: 'nav.profiles', descKey: 'home.tile.profiles', value: (s) => s.profiles.length },
-  { route: 'dialogs', icon: 'chat', titleKey: 'nav.dialogs', descKey: 'home.tile.dialogs', value: (s) => (s.dialogs || []).length },
+  { route: 'chats', icon: 'chat', titleKey: 'nav.chats', descKey: 'home.tile.chats', value: (s) => (s.chats || []).length },
   { route: 'overview', icon: 'dashboard', titleKey: 'nav.overview', descKey: 'home.tile.overview', value: (s) => sumMetric(s, 'written') },
 ];
 
@@ -1309,82 +1316,309 @@ ACTIONS.profiles = () => {
   return [nudge, create];
 };
 
-// ── Диалоги ────────────────────────────────────────────────────────
-// Показываем то, что действительно знаем: с кем переписка, по какому товару,
-// сколько автоответов ушло и когда был последний. Тел писем у приложения нет -
-// оно их не хранит, и выдумывать переписку в интерфейсе нечестно.
-VIEWS.dialogs = () => {
-  const wrap = h(`<div>
-    <div class="filter-row">
-      <div style="flex:1 1 320px;max-width:420px">
-        <input type="text" id="dlgSearch" placeholder="${esc(t('dlg.search'))}" value="${esc(state.dialogQuery)}"/>
+
+// ── Чаты ───────────────────────────────────────────────────────────
+// Три колонки: слева переписки, сгруппированные по профилю, посередине лента
+// писем, справа карточка объявления. Всё показанное - настоящие данные:
+// исходящие письма приложение пишет само, ответ продавца приходит из скана
+// почты, карточка собрана из сохранённого контакта парсера.
+
+/** Открытый чат и загруженная лента живут в state - перерисовка их не теряет. */
+function chatById(key) {
+  return (state.chats || []).find((c) => c.chatKey === key) || null;
+}
+
+VIEWS.chats = () => {
+  const wrap = h(`<div class="chats">
+    <aside class="chat-list glass">
+      <div class="cl-head">
+        <div class="seg filters" id="chatFilters">
+          <button data-v="all" class="${state.chatFilter === 'all' ? 'active' : ''}">${esc(t('chat.f.all'))}<span class="count" id="cntAll">0</span></button>
+          <button data-v="answered" class="${state.chatFilter === 'answered' ? 'active' : ''}">${esc(t('chat.f.answered'))}<span class="count" id="cntAns">0</span></button>
+        </div>
+        <button class="mini" id="chatRefresh" title="${esc(t('chat.refresh'))}">${ICONS.reset}</button>
       </div>
-      <span class="logs-count" id="dlgCount"></span>
-      <span class="spacer"></span>
-      <span id="viewActions" style="display:flex;gap:8px"></span>
-    </div>
-    <div id="dlgList"></div>
+      <div class="cl-search"><input type="text" id="chatSearch" placeholder="${esc(t('chat.search'))}" value="${esc(state.chatQuery)}"/></div>
+      <div class="cl-body" id="chatGroups"></div>
+    </aside>
+
+    <section class="chat-main glass" id="chatMain"></section>
+
+    <aside class="chat-side glass" id="chatSide"></aside>
   </div>`);
 
-  wrap.querySelector('#dlgSearch').addEventListener('input', debounce((e) => {
-    state.dialogQuery = e.target.value;
-    renderDialogs();
+  $$('#chatFilters button', wrap).forEach((b) => b.addEventListener('click', () => {
+    state.chatFilter = b.dataset.v;
+    $$('#chatFilters button', wrap).forEach((x) => x.classList.toggle('active', x === b));
+    renderChatGroups();
+  }));
+  wrap.querySelector('#chatSearch').addEventListener('input', debounce((e) => {
+    state.chatQuery = e.target.value;
+    renderChatGroups();
   }, 200));
+  wrap.querySelector('#chatRefresh').addEventListener('click', () => refreshChats(true));
 
-  setTimeout(() => renderDialogs(), 0);
+  setTimeout(() => {
+    renderChatGroups();
+    renderChatMain();
+  }, 0);
   return wrap;
 };
 
-function renderDialogs() {
-  const box = $('#dlgList');
-  if (!box) return;
-  const q = state.dialogQuery.trim().toLowerCase();
-  const rows = (state.dialogs || []).filter((d) => !q
-    || d.email.toLowerCase().includes(q)
-    || (d.title || '').toLowerCase().includes(q)
-    || (d.profileLabel || '').toLowerCase().includes(q));
+function chatMatches(c) {
+  if (state.chatFilter === 'answered' && !c.replies) return false;
+  const q = state.chatQuery.trim().toLowerCase();
+  if (!q) return true;
+  const title = (c.contact && c.contact.title) || '';
+  return c.email.toLowerCase().includes(q)
+    || title.toLowerCase().includes(q)
+    || (c.profileLabel || '').toLowerCase().includes(q);
+}
 
-  const cnt = $('#dlgCount');
-  if (cnt) cnt.textContent = t('logs.shown', { shown: rows.length, total: (state.dialogs || []).length });
+/** Список слева: профиль - заголовок группы, под ним его переписки. */
+function renderChatGroups() {
+  const box = $('#chatGroups');
+  if (!box) return;
+  const all = state.chats || [];
+  const rows = all.filter(chatMatches);
+
+  const cAll = $('#cntAll'); if (cAll) cAll.textContent = all.length;
+  const cAns = $('#cntAns'); if (cAns) cAns.textContent = all.filter((c) => c.replies > 0).length;
 
   if (!rows.length) {
-    box.innerHTML = `<div class="card glass"><div class="empty">${ICONS.chat}
-      <div>${esc((state.dialogs || []).length ? t('dlg.emptyFiltered') : t('dlg.empty'))}</div></div></div>`;
+    setOnce(box, `<div class="empty" style="padding:36px 16px">${ICONS.chat}
+      <div>${esc(all.length ? t('chat.emptyFiltered') : t('chat.empty'))}</div></div>`);
+    return;
+  }
+
+  // Группируем по профилю. Запущенные выше остановленных: с ними идёт работа
+  // прямо сейчас, и их переписки нужны чаще.
+  const groups = new Map();
+  for (const c of rows) {
+    const g = groups.get(c.profileId) || {
+      id: c.profileId, label: c.profileLabel || t('chat.unknownProfile'),
+      email: c.profileEmail, running: c.profileRunning, items: [],
+    };
+    g.items.push(c);
+    groups.set(c.profileId, g);
+  }
+  const ordered = [...groups.values()].sort((a, b) => (b.running ? 1 : 0) - (a.running ? 1 : 0));
+
+  setOnce(box, ordered.map((g) => `
+    <div class="cl-group ${g.running ? 'live' : ''}">
+      <div class="clg-head">
+        <span class="dot ${g.running ? 'running' : 'new'}"></span>
+        <span class="clg-id">
+          <span class="clg-name">${esc(g.label)}</span>
+          <span class="clg-sub">${esc(g.running ? t('chat.online') : t('chat.offline'))} · ${esc(t('chat.nChats', { n: g.items.length }))}</span>
+        </span>
+      </div>
+      ${g.items.map((c) => chatRowHtml(c)).join('')}
+    </div>`).join(''));
+
+  $$('.cl-row', box).forEach((el) => el.addEventListener('click', () => openChat(el.dataset.key)));
+  markActiveChatRow();
+}
+
+function chatRowHtml(c) {
+  const title = (c.contact && c.contact.title) || '';
+  const last = c.lastText ? shorten(c.lastText, 60) : '';
+  return `<button class="cl-row ${state.openChat === c.chatKey ? 'on' : ''}" data-key="${esc(c.chatKey)}">
+    <span class="pc-avatar" style="--av:${avatarColor({ email: c.email })}">${esc((c.email || '?').charAt(0).toUpperCase())}</span>
+    <span class="clr-id">
+      <span class="clr-top">
+        <span class="clr-name">${esc(c.email || dash)}</span>
+        <span class="clr-time">${esc(fmtShortTime(c.lastTs))}</span>
+      </span>
+      ${title ? `<span class="clr-title">${ICONS.target}${esc(shorten(title, 42))}</span>` : ''}
+      <span class="clr-last">${c.lastDir === 'out' ? esc(t('chat.you')) + ': ' : ''}${esc(last)}</span>
+    </span>
+    ${c.replies ? `<span class="clr-badge">${c.replies}</span>` : ''}
+  </button>`;
+}
+
+/** Подсветку открытого чата ставим классом, а не пересборкой списка. */
+function markActiveChatRow() {
+  $$('.cl-row').forEach((el) => el.classList.toggle('on', el.dataset.key === state.openChat));
+}
+
+async function openChat(key) {
+  if (state.openChat === key && state.chatMessages.length) return;
+  state.openChat = key;
+  markActiveChatRow();
+  state.chatMessages = await api.chats.messages(key);
+  renderChatMain();
+}
+
+/** Средняя колонка: шапка, лента писем, поле ответа. */
+function renderChatMain() {
+  const box = $('#chatMain');
+  const side = $('#chatSide');
+  if (!box) return;
+
+  const c = chatById(state.openChat);
+  if (!c) {
+    setOnce(box, `<div class="empty" style="height:100%">${ICONS.chat}
+      <div>${esc((state.chats || []).length ? t('chat.pick') : t('chat.empty'))}</div></div>`);
+    if (side) setOnce(side, '');
     return;
   }
 
   const cap = state.settings.system.maxRepliesPerDialog;
-  box.innerHTML = `<div class="cards-grid">` + rows.map((d) => `
-    <div class="dlg-card glass">
-      <div class="dlg-head">
-        <span class="pc-avatar" style="--av:${avatarColor({ email: d.email })}">${esc((d.email || '?').charAt(0).toUpperCase())}</span>
-        <span class="pc-id">
-          <span class="pc-name">${esc(d.email || dash)}</span>
-          <div class="pc-email">${esc(d.title || t('dlg.noTitle'))}</div>
-        </span>
-        <span class="pc-tag ${d.replies >= cap ? 'done' : 'live'}">${d.replies} / ${cap}</span>
-      </div>
-      <div class="pc-meta">
-        <span>${esc(d.profileLabel || dash)}</span>
-        <span class="chip-mini">${esc(d.price ? d.price + ' ' + (d.currency || '') : dash)}</span>
-      </div>
-      <div class="pc-foot">
-        <span>${esc(t('dlg.last'))}: ${esc(fmtDate(d.lastReplyAt))}</span>
-        <span class="acts">
-          <button class="mini go" data-nudge="${esc(d.email)}" title="${esc(t('nudge.btn'))}">${ICONS.send}</button>
-        </span>
-      </div>
-    </div>`).join('') + `</div>`;
+  const canReply = c.replies > 0;
 
-  $$('[data-nudge]', box).forEach((b) => b.addEventListener('click', async (e) => {
-    e.stopPropagation();
+  setOnce(box, `
+    <header class="cm-head">
+      <span class="pc-avatar" style="--av:${avatarColor({ email: c.email })}">${esc((c.email || '?').charAt(0).toUpperCase())}</span>
+      <span class="cm-id">
+        <span class="cm-name">${esc(c.email || dash)}</span>
+        <span class="cm-sub">${esc(c.profileLabel || dash)} · ${esc(t('chat.repliesOf', { n: c.replies, cap }))}</span>
+      </span>
+      <button class="mini" id="cmSide" title="${esc(t('chat.toggleSide'))}">${ICONS.dashboard}</button>
+    </header>
+    <div class="cm-feed" id="cmFeed"></div>
+    ${canReply
+      ? `<div class="cm-compose">
+           <input type="text" id="cmInput" placeholder="${esc(t('chat.placeholder'))}"/>
+           <button class="btn primary icon-only" id="cmSend" title="${esc(t('chat.send'))}">${ICONS.send}</button>
+         </div>`
+      : `<div class="cm-locked">${ICONS.lock}<span>${esc(t('chat.locked'))}</span></div>`}
+  `);
+
+  renderChatFeed();
+  renderChatSide(c);
+
+  const sideBtn = $('#cmSide', box);
+  if (sideBtn) sideBtn.addEventListener('click', () => {
+    document.documentElement.classList.toggle('side-off');
+  });
+
+  const input = $('#cmInput', box);
+  if (input) {
+    const send = () => sendChatMessage(c, input);
+    $('#cmSend', box).addEventListener('click', send);
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
+  }
+  wireRipples(box);
+}
+
+/**
+ * Отправка в тред. Движок такого пока не умеет: есть только "Подтолкнуть" по
+ * адресу, а ответ в конкретную переписку - отдельная работа по DOM Gmail.
+ * Поле оставлено рабочим на вид, отправка помечена как незаконченная.
+ */
+async function sendChatMessage(chat, input) {
+  const text = input.value.trim();
+  if (!text) return;
+  // TODO(gmail-dom): ответ в конкретный тред через chrome.gmailReply.
+  toast(t('chat.sendTodo'), 'error');
+}
+
+function renderChatFeed() {
+  const feed = $('#cmFeed');
+  if (!feed) return;
+  const rows = state.chatMessages || [];
+  if (!rows.length) {
+    setOnce(feed, `<div class="empty" style="padding:40px 0">${esc(t('chat.noMessages'))}</div>`);
+    return;
+  }
+  setOnce(feed, rows.map((m) => chatBubbleHtml(m)).join(''));
+  // К последнему письму - в кадре, чтобы не считать раскладку сразу после
+  // вставки всей ленты.
+  requestAnimationFrame(() => { feed.scrollTop = feed.scrollHeight; });
+}
+
+function chatBubbleHtml(m) {
+  const out = m.dir === 'out';
+  const kind = t('chat.kind.' + (m.kind || 'first'));
+  // Тексты рассылки заканчиваются переносом строки - в письме он не виден, а в
+  // пузыре рисовался бы пустой строкой. Внутренние абзацы сохраняем: они
+  // осмысленные, ими текст и разбит.
+  const body = String(m.body || '').trim();
+  return `<div class="bubble ${out ? 'out' : 'in'}">
+    <div class="bb-body">
+      ${m.subject && m.kind === 'first' ? `<div class="bb-subj">${esc(m.subject)}</div>` : ''}
+      <div class="bb-text">${esc(body)}</div>
+      <div class="bb-foot">
+        <span class="bb-kind">${esc(kind)}</span>
+        ${m.partial ? `<span class="bb-partial" title="${esc(t('chat.partialHint'))}">${esc(t('chat.partial'))}</span>` : ''}
+        <span class="bb-time">${esc(fmtShortTime(m.ts))}</span>
+      </div>
+    </div>
+  </div>`;
+}
+
+/** Правая колонка: карточка объявления. Пустых строк не рисуем. */
+function renderChatSide(c) {
+  const side = $('#chatSide');
+  if (!side) return;
+  const info = c.contact;
+  if (!info) {
+    setOnce(side, `<div class="empty" style="padding:36px 16px">${ICONS.target}
+      <div>${esc(t('chat.noContact'))}</div></div>`);
+    return;
+  }
+
+  const rows = [
+    [t('chat.i.price'), info.price ? String(info.price) + (info.currency ? ' ' + info.currency : '') : ''],
+    [t('chat.i.seller'), info.name],
+    [t('chat.i.platform'), info.platform],
+    [t('chat.i.date'), info.datePublication],
+    [t('chat.i.firstSent'), info.firstSentAt ? fmtDate(info.firstSentAt) : ''],
+  ].filter(([, v]) => v);
+
+  setOnce(side, `
+    <div class="cs-head"><span class="section-label">${esc(t('chat.listing'))}</span></div>
+    ${info.imageUrl
+      ? `<div class="cs-photo"><img src="${esc(info.imageUrl)}" alt="" loading="lazy"/></div>`
+      : `<div class="cs-photo empty-photo">${ICONS.image}</div>`}
+    <div class="cs-title">${esc(info.title || t('chat.noTitle'))}</div>
+    <div class="cs-rows">
+      ${rows.map(([k, v]) => `<div class="kv"><span class="k">${esc(k)}</span><span class="v">${esc(v)}</span></div>`).join('')}
+    </div>
+    <div class="cs-acts">
+      ${info.listingUrl ? `<button class="btn ghost" data-open="${esc(info.listingUrl)}">${ICONS.link}<span>${esc(t('chat.openListing'))}</span></button>` : ''}
+      <button class="btn ghost" data-nudge="${esc(c.email)}">${ICONS.send}<span>${esc(t('nudge.btn'))}</span></button>
+    </div>
+  `);
+
+  const openBtn = $('[data-open]', side);
+  // Ссылку на объявление открываем во внешнем браузере, а не в окне
+  // приложения: своего браузера тут нет, а подменять интерфейс страницей
+  // площадки незачем.
+  if (openBtn) openBtn.addEventListener('click', () => toast(t('chat.openTodo')));
+  const nudgeBtn = $('[data-nudge]', side);
+  if (nudgeBtn) nudgeBtn.addEventListener('click', async () => {
     toast(t('nudge.sending'));
     try {
-      const res = await api.contacts.nudge(b.dataset.nudge);
-      if (res && res.ok) { toast(t('nudge.ok'), 'success'); await refreshProfiles(); }
-      else toast(t('nudge.fail.' + ((res && res.reason) || 'unknown')), 'error');
-    } catch (err) { toast(t('nudge.error', { error: err.message }), 'error'); }
-  }));
+      const res = await api.contacts.nudge(nudgeBtn.dataset.nudge);
+      toast(res && res.ok ? t('nudge.ok') : t('nudge.fail.' + ((res && res.reason) || 'unknown')),
+        res && res.ok ? 'success' : 'error');
+      if (res && res.ok) refreshChats(true);
+    } catch (e) { toast(t('nudge.error', { error: e.message }), 'error'); }
+  });
+  wireRipples(side);
+}
+
+/** Короткое время: сегодняшнее - часами, старое - датой. */
+function fmtShortTime(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  return sameDay
+    ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : d.toLocaleDateString([], { day: '2-digit', month: '2-digit' });
+}
+
+async function refreshChats(force) {
+  state.chats = await api.chats.list();
+  if (state.route !== 'chats') return;
+  renderChatGroups();
+  // Ленту перечитываем только по явному запросу: она меняется реже списка, а
+  // каждое чтение - это обход всего журнала сообщений в main.
+  if (force && state.openChat) state.chatMessages = await api.chats.messages(state.openChat);
+  renderChatMain();
 }
 
 // Фильтры карточек профилей. Считаются по тем же полям, что рисует карточка.
@@ -2793,11 +3027,11 @@ async function refreshProfiles() {
   // четыре секунды незачем. Обновляем раз в минуту и сразу, когда открыт
   // экран, который их показывает.
   const slow = Date.now() - state.slowFetchedAt > 60000
-    || state.route === 'overview' || state.route === 'dialogs';
+    || state.route === 'overview' || state.route === 'chats';
   if (slow) {
-    const [overview, dialogs] = await Promise.all([api.stats.overview(14), api.dialogs.list()]);
+    const [overview, chats] = await Promise.all([api.stats.overview(14), api.chats.list()]);
     state.stats = overview;
-    state.dialogs = dialogs;
+    state.chats = chats;
     state.slowFetchedAt = Date.now();
   }
 
@@ -2819,8 +3053,8 @@ async function refreshProfiles() {
     paintRun();
   } else if (state.route === 'overview') {
     paintOverview();
-  } else if (state.route === 'dialogs') {
-    renderDialogs();
+  } else if (state.route === 'chats') {
+    renderChatGroups();
   } else if (state.route === 'home') {
     paintHome();
   }

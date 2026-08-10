@@ -226,6 +226,47 @@ function register(ctx) {
     }).sort((a, b) => b.lastReplyAt - a.lastReplyAt);
   });
 
+  // ── чаты ──────────────────────────────────────────────────────────
+  /**
+   * Список переписок для экрана чатов: свод из журнала сообщений, обогащённый
+   * данными профиля, контакта и счётчиком автоответов из dialogStore.
+   *
+   * Чаты без единого записанного письма не отдаём: журнал появился позже
+   * первых прогонов, и такие переписки показать всё равно нечем.
+   */
+  ipcMain.handle('chats:list', () => {
+    const profiles = new Map(profileStore.list().map((p) => [p.id, p]));
+    return (ctx.messageStore ? ctx.messageStore.chats() : []).map((c) => {
+      const p = profiles.get(c.profileId);
+      const contact = contactStore ? contactStore.get(c.email) : null;
+      return {
+        ...c,
+        profileLabel: p ? p.label : '',
+        profileEmail: p ? p.email : '',
+        profileRunning: p ? !!chrome.isRunning(p.id) : false,
+        profileStatus: p ? p.gmailStatus : 'unknown',
+        // Отвечать вручную можно только там, где автоответ уже сработал: такой
+        // диалог легко найти в инбоксе, см. замысел экрана чатов.
+        //
+        // Считаем по журналу, а не по dialogStore: журнал знает, что письмо
+        // действительно ушло, а счётчик диалога опирается на идентификатор
+        // треда, который к первому письму ещё не привязан.
+        replies: c.autoReplies,
+        contact: contact ? {
+          title: contact.title || '', price: contact.price, currency: contact.currency || '',
+          listingUrl: contact.listingUrl || '', imageUrl: contact.imageUrl || '',
+          name: contact.name || '', platform: contact.platform || '',
+          datePublication: contact.datePublication || '', sellerUrl: contact.sellerUrl || '',
+          firstSentAt: contact.firstSentAt || 0, nudged: !!contact.nudged,
+        } : null,
+      };
+    });
+  });
+
+  ipcMain.handle('chats:messages', (_e, { chatKey }) => (
+    ctx.messageStore ? ctx.messageStore.byChat(chatKey) : []
+  ));
+
   // ── contacts / nudge ──────────────────────────────────────────────
   ipcMain.handle('contacts:list', () => (contactStore ? contactStore.list() : []));
   ipcMain.handle('contacts:nudge', async (_e, { email }) => sender.nudge(email));

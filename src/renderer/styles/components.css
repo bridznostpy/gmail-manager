@@ -893,11 +893,6 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
 /* Быстрый пуск в шапке - компактнее обычной кнопки. */
 .btn.quick { height: 34px; padding: 0 14px; border-radius: 20px; font-size: 12px; }
 
-/* ── Карточка диалога ────────────────────────────────────── */
-.dlg-card { padding: 0; overflow: hidden; }
-.dlg-head { display: flex; align-items: flex-start; gap: 11px; padding: 14px 15px 12px; }
-.dlg-card .pc-meta { border-top: 1px solid var(--border); }
-
 /* ── Тексты рассылки ─────────────────────────────────────── */
 .txt-drop {
   display: flex; flex-direction: column; align-items: center; text-align: center;
@@ -1024,6 +1019,189 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
 .tl-edit-acts { display: flex; align-items: center; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
 
 .td-add { margin: 10px 0 12px; }
+
+/* ── Чаты ────────────────────────────────────────────────────
+   Три колонки: переписки, лента, карточка объявления. Высота фиксируется по
+   рабочей области, а прокрутка живёт внутри колонок - иначе страница ехала бы
+   целиком и шапка чата уплывала за край. */
+.chats {
+  display: grid;
+  grid-template-columns: 296px minmax(0, 1fr) 288px;
+  gap: 12px;
+  height: 100%;
+  min-height: 0;
+}
+:root.side-off .chats { grid-template-columns: 296px minmax(0, 1fr); }
+:root.side-off .chat-side { display: none; }
+
+.chat-list, .chat-main, .chat-side {
+  display: flex; flex-direction: column;
+  min-height: 0; overflow: hidden;
+  border-radius: var(--radius);
+}
+
+/* Список переписок */
+.cl-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 12px 12px 8px; flex-shrink: 0;
+}
+.cl-head .seg { flex: 1 1 auto; }
+.cl-head .seg button {
+  flex: 1 1 0; justify-content: center; padding: 6px 8px; font-size: 11.5px;
+  white-space: nowrap; min-width: 0;
+}
+.cl-search { padding: 0 12px 10px; flex-shrink: 0; }
+.cl-search input { padding: 8px 11px; font-size: 12px; }
+.cl-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 0 8px 10px; }
+
+.cl-group { margin-bottom: 10px; }
+.clg-head {
+  display: flex; align-items: center; gap: 9px;
+  padding: 8px 8px 6px;
+  position: sticky; top: 0; z-index: 1;
+  background: var(--glass-bg);
+}
+.clg-id { min-width: 0; }
+.clg-name { display: block; font-size: 12px; font-weight: 650; }
+.clg-sub {
+  display: block; font-family: var(--font-mono);
+  font-size: 9.5px; color: var(--text-faint);
+}
+.cl-group:not(.live) .clg-name { color: var(--text-dim); }
+
+.cl-row {
+  width: 100%; display: flex; align-items: flex-start; gap: 10px;
+  padding: 9px 10px; margin-bottom: 2px;
+  border-radius: var(--radius-sm);
+  background: transparent; border: 1px solid transparent;
+  cursor: pointer; text-align: left; font-family: var(--font);
+  color: var(--text);
+  /* Строк может быть много - за пределами списка их не размечаем. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 62px;
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+.cl-row:hover { background: rgba(255, 255, 255, 0.05); }
+.cl-row.on { background: var(--accent-soft); border-color: var(--accent-line); }
+.cl-row .pc-avatar { width: 30px; height: 30px; border-radius: 10px; font-size: 12px; }
+.clr-id { flex: 1 1 auto; min-width: 0; }
+.clr-top { display: flex; align-items: baseline; gap: 8px; }
+.clr-name {
+  flex: 1 1 auto; min-width: 0; font-size: 12px; font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.clr-time { font-family: var(--font-mono); font-size: 9.5px; color: var(--text-faint); flex-shrink: 0; }
+.clr-title {
+  display: flex; align-items: center; gap: 5px; margin-top: 3px;
+  font-size: 10.5px; color: var(--accent);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.clr-title svg { width: 11px; height: 11px; flex-shrink: 0; }
+.clr-last {
+  display: block; margin-top: 2px;
+  font-size: 11px; color: var(--text-faint);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.clr-badge {
+  flex-shrink: 0; min-width: 18px; height: 18px; padding: 0 6px;
+  border-radius: 20px; display: grid; place-items: center;
+  background: var(--accent); color: var(--on-accent);
+  font-family: var(--font-mono); font-size: 9.5px; font-weight: 700;
+}
+
+/* Лента переписки */
+.cm-head {
+  display: flex; align-items: center; gap: 11px;
+  padding: 13px 16px; flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+}
+.cm-id { flex: 1 1 auto; min-width: 0; }
+.cm-name { display: block; font-size: 13px; font-weight: 650; }
+.cm-sub { display: block; font-size: 10.5px; color: var(--text-faint); margin-top: 2px; }
+
+.cm-feed {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto;
+  padding: 18px 16px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.bubble { display: flex; }
+.bubble.out { justify-content: flex-end; }
+.bb-body {
+  /* Ограничение и в долях, и в пикселях: на широком окне пузырь во всю
+     колонку читается тяжело - строка получается длиннее книжной. */
+  max-width: min(72%, 520px);
+  padding: 10px 13px; border-radius: 14px;
+  font-size: 12.5px; line-height: 1.55;
+  white-space: pre-wrap; word-break: break-word;
+  /* Пузыри за экраном не размечаем: переписка может быть длинной. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 64px;
+}
+.bubble.in .bb-body {
+  background: var(--control-bg); border: 1px solid var(--border);
+  border-bottom-left-radius: 5px;
+}
+.bubble.out .bb-body {
+  background: var(--accent); color: var(--on-accent);
+  border-bottom-right-radius: 5px;
+}
+.bb-subj {
+  font-weight: 700; margin-bottom: 6px; opacity: 0.9;
+  padding-bottom: 6px; border-bottom: 1px solid rgba(0, 0, 0, 0.14);
+}
+.bubble.in .bb-subj { border-bottom-color: var(--border); }
+.bb-text { min-height: 1em; }
+.bb-foot {
+  display: flex; align-items: center; gap: 8px; margin-top: 6px;
+  font-family: var(--font-mono); font-size: 9px;
+  opacity: 0.7;
+}
+.bubble.in .bb-foot { color: var(--text-faint); }
+.bb-partial {
+  padding: 1px 6px; border-radius: 20px;
+  background: rgba(255, 180, 67, 0.18); color: var(--amber);
+}
+.bubble.out .bb-partial { background: rgba(0, 0, 0, 0.2); color: inherit; }
+
+.cm-compose {
+  display: flex; gap: 8px; align-items: center;
+  padding: 12px 14px; flex-shrink: 0;
+  border-top: 1px solid var(--border);
+}
+.cm-compose input { border-radius: 20px; padding: 10px 15px; }
+.cm-compose .btn { border-radius: 50%; width: 38px; height: 38px; padding: 0; flex-shrink: 0; }
+
+/* Отправка закрыта, пока автоответ не сработал: так переписку легко найти в
+   инбоксе, и ручной ответ не уходит вслепую. */
+.cm-locked {
+  display: flex; align-items: center; justify-content: center; gap: 9px;
+  padding: 15px 16px; flex-shrink: 0;
+  border-top: 1px solid var(--border);
+  color: var(--text-faint); font-size: 11.5px; text-align: center;
+}
+.cm-locked svg { width: 14px; height: 14px; flex-shrink: 0; }
+
+/* Карточка объявления */
+.chat-side { padding: 14px; overflow-y: auto; }
+.cs-head { margin-bottom: 10px; }
+.cs-photo {
+  height: 148px; border-radius: var(--radius-sm); overflow: hidden;
+  background: var(--control-bg); border: 1px solid var(--border);
+  margin-bottom: 12px;
+}
+.cs-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.cs-photo.empty-photo { display: grid; place-items: center; }
+.cs-photo.empty-photo svg { width: 26px; height: 26px; color: var(--text-faint); opacity: 0.5; }
+.cs-title { font-size: 13px; font-weight: 650; line-height: 1.4; margin-bottom: 10px; }
+.cs-rows { margin-bottom: 14px; }
+.cs-rows .kv { padding: 7px 0; font-size: 11.5px; }
+.cs-acts { display: flex; flex-direction: column; gap: 7px; }
+.cs-acts .btn { justify-content: flex-start; }
+
+@media (max-width: 1320px) {
+  .chats { grid-template-columns: 262px minmax(0, 1fr); }
+  .chat-side { display: none; }
+}
 
 /* ── Командная палитра (Ctrl+K) ──────────────────────────── */
 .palette-scrim {

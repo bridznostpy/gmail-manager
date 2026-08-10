@@ -162,6 +162,9 @@ body {
      запаздывания. Где плавность нужна, она задаётся вызовом scrollTo. */
   -webkit-app-region: no-drag;
 }
+/* Экраны во всю высоту (чаты) прокручиваются внутри своих колонок. */
+.shell-body.no-scroll { overflow: hidden; }
+.shell-body.no-scroll > * { height: 100%; min-height: 0; }
 
 /* ── Скроллбары ──────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 10px; height: 10px; }

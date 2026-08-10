@@ -29,6 +29,7 @@ const state = {
   chats: [],
   chatQuery: '',
   chatFilter: 'all',
+  chatProfile: '', // выбранный профиль в колонке слева, пусто = все
   openChat: '',
   chatMessages: [],
   notes: [], // лента уведомлений из потока логов
@@ -113,6 +114,22 @@ const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 const h = (html) => { const tpl = document.createElement('template'); tpl.innerHTML = html.trim(); return tpl.content.firstElementChild; };
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const dash = '-'; // прочерк для пустых значений
+
+/**
+ * Текст с подсвеченным совпадением поискового запроса. Экранируем сначала, а
+ * теги дописываем уже поверх экранированного: иначе адрес продавца с угловыми
+ * скобками уехал бы в разметку. Ищем подстрокой, без RegExp - запрос вводит
+ * человек, и звёздочка в нём не должна ронять поиск.
+ */
+function markMatch(text, q) {
+  const s = String(text == null ? '' : text);
+  const needle = String(q || '').trim().toLowerCase();
+  if (!needle) return esc(s);
+  const at = s.toLowerCase().indexOf(needle);
+  if (at < 0) return esc(s);
+  return esc(s.slice(0, at)) + '<mark>' + esc(s.slice(at, at + needle.length)) + '</mark>'
+    + esc(s.slice(at + needle.length));
+}
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
 const debounce = (fn, ms = 400) => { let timer; return (...a) => { clearTimeout(timer); timer = setTimeout(() => fn(...a), ms); }; };
@@ -1318,8 +1335,8 @@ ACTIONS.profiles = () => {
 
 
 // ── Чаты ───────────────────────────────────────────────────────────
-// Три колонки: слева переписки, сгруппированные по профилю, посередине лента
-// писем, справа карточка объявления. Всё показанное - настоящие данные:
+// Четыре колонки: слева список профилей, рядом переписки выбранного, посередине
+// лента писем, справа карточка объявления. Всё показанное - настоящие данные:
 // исходящие письма приложение пишет само, ответ продавца приходит из скана
 // почты, карточка собрана из сохранённого контакта парсера.
 
@@ -1330,6 +1347,8 @@ function chatById(key) {
 
 VIEWS.chats = () => {
   const wrap = h(`<div class="chats">
+    <aside class="chat-rail glass" id="chatRail"></aside>
+
     <aside class="chat-list glass">
       <div class="cl-head">
         <div class="seg filters" id="chatFilters">
@@ -1338,7 +1357,10 @@ VIEWS.chats = () => {
         </div>
         <button class="mini" id="chatRefresh" title="${esc(t('chat.refresh'))}">${ICONS.reset}</button>
       </div>
-      <div class="cl-search"><input type="text" id="chatSearch" placeholder="${esc(t('chat.search'))}" value="${esc(state.chatQuery)}"/></div>
+      <div class="cl-search">
+        ${ICONS.search}
+        <input type="text" id="chatSearch" placeholder="${esc(t('chat.search'))}" value="${esc(state.chatQuery)}"/>
+      </div>
       <div class="cl-body" id="chatGroups"></div>
     </aside>
 
@@ -1359,13 +1381,106 @@ VIEWS.chats = () => {
   wrap.querySelector('#chatRefresh').addEventListener('click', () => refreshChats(true));
 
   setTimeout(() => {
+    renderChatRail();
     renderChatGroups();
     renderChatMain();
   }, 0);
   return wrap;
 };
 
+/** Профили, у которых есть хоть одна переписка, плюс их счётчики. */
+function chatProfiles() {
+  const byId = new Map();
+  for (const c of (state.chats || [])) {
+    const row = byId.get(c.profileId) || {
+      id: c.profileId,
+      label: c.profileLabel || t('chat.unknownProfile'),
+      email: c.profileEmail || '',
+      running: c.profileRunning,
+      status: c.profileStatus || 'unknown',
+      chats: 0,
+      waiting: 0,
+    };
+    row.chats++;
+    // Последним писал продавец - переписка ждёт нас. Это и есть повод открыть
+    // именно этот профиль, поэтому число выносим в список.
+    if (c.lastDir === 'in') row.waiting++;
+    byId.set(c.profileId, row);
+  }
+  // Запущенные выше: с ними идёт работа прямо сейчас.
+  return [...byId.values()].sort((a, b) => (b.running ? 1 : 0) - (a.running ? 1 : 0));
+}
+
+/** Сколько переписок ждут ответа во всех профилях сразу. */
+function chatsWaiting() {
+  return (state.chats || []).filter((c) => c.lastDir === 'in').length;
+}
+
+/**
+ * Колонка выбора профиля. Раньше профили были заголовками групп в одном длинном
+ * списке - при нескольких аккаунтах приходилось прокручивать чужие переписки,
+ * чтобы добраться до нужных. Список держим на виду, а не прячем в выпадающее
+ * меню: оно закрывало бы сами переписки и стоило лишнего клика на каждый
+ * переход между аккаунтами.
+ */
+function renderChatRail() {
+  const box = $('#chatRail');
+  if (!box) return;
+  const profiles = chatProfiles();
+  const total = (state.chats || []).length;
+  const waiting = chatsWaiting();
+
+  setOnce(box, `
+    <div class="cr-head">
+      <span class="section-label">${esc(t('chat.profiles'))}</span>
+      <span class="cr-count">${profiles.length}</span>
+    </div>
+    <div class="cr-body">
+      <button class="cr-item ${!state.chatProfile ? 'on' : ''}" data-p=""
+        title="${esc(t('chat.allProfiles'))}">
+        <span class="cr-all">${ICONS.profiles}</span>
+        <span class="cr-id">
+          <span class="cr-name">${esc(t('chat.allProfiles'))}</span>
+          ${waiting ? `<span class="cr-wait">${esc(t('chat.waiting', { n: waiting }))}</span>` : ''}
+        </span>
+        <span class="cr-n">${total}</span>
+      </button>
+      ${profiles.map((p) => `<button class="cr-item ${p.id === state.chatProfile ? 'on' : ''} ${p.running ? 'live' : ''}"
+        data-p="${esc(p.id)}"
+        title="${esc(p.label + ' · ' + (p.email || t('status.' + p.status)) + ' · ' + (p.running ? t('chat.online') : t('chat.offline')))}">
+        <span class="pc-avatar" style="--av:${avatarColor({ email: p.email || p.label })}">${esc(p.label.charAt(0).toUpperCase())}
+          <span class="mark ${esc(p.status)}"></span></span>
+        <span class="cr-id">
+          <span class="cr-name">${esc(p.label)}</span>
+          <span class="cr-sub">${esc(p.running ? t('chat.online') : t('chat.offline'))}</span>
+          ${p.waiting ? `<span class="cr-wait">${esc(t('chat.waiting', { n: p.waiting }))}</span>` : ''}
+        </span>
+        <span class="cr-n">${p.chats}</span>
+      </button>`).join('')}
+    </div>`);
+
+  $$('.cr-item', box).forEach((el) => el.addEventListener('click', () => pickChatProfile(el.dataset.p)));
+}
+
+/** Переключение профиля: список переписок и середина пересобираются. */
+function pickChatProfile(id) {
+  if (state.chatProfile === id) return;
+  state.chatProfile = id;
+  // Открытая переписка чужого профиля при смене выбора закрывается: держать
+  // её открытой, когда её нет в списке, - врать пользователю о том, где он.
+  if (state.openChat && !chatMatches(chatById(state.openChat))) {
+    state.openChat = '';
+    state.chatMessages = [];
+  }
+  // Подсветку выбранного ставим классом, а не пересборкой списка профилей.
+  $$('.cr-item').forEach((el) => el.classList.toggle('on', el.dataset.p === id));
+  renderChatGroups();
+  renderChatMain();
+}
+
 function chatMatches(c) {
+  if (!c) return false;
+  if (state.chatProfile && c.profileId !== state.chatProfile) return false;
   if (state.chatFilter === 'answered' && !c.replies) return false;
   const q = state.chatQuery.trim().toLowerCase();
   if (!q) return true;
@@ -1375,15 +1490,18 @@ function chatMatches(c) {
     || (c.profileLabel || '').toLowerCase().includes(q);
 }
 
-/** Список слева: профиль - заголовок группы, под ним его переписки. */
+/** Список переписок выбранного профиля. */
 function renderChatGroups() {
   const box = $('#chatGroups');
   if (!box) return;
   const all = state.chats || [];
+  const scope = state.chatProfile ? all.filter((c) => c.profileId === state.chatProfile) : all;
   const rows = all.filter(chatMatches);
 
-  const cAll = $('#cntAll'); if (cAll) cAll.textContent = all.length;
-  const cAns = $('#cntAns'); if (cAns) cAns.textContent = all.filter((c) => c.replies > 0).length;
+  // Счётчики фильтров считаем в рамках выбранного профиля: иначе "Все 14" при
+  // одном видимом чате выглядит как поломка.
+  const cAll = $('#cntAll'); if (cAll) cAll.textContent = scope.length;
+  const cAns = $('#cntAns'); if (cAns) cAns.textContent = scope.filter((c) => c.replies > 0).length;
 
   if (!rows.length) {
     setOnce(box, `<div class="empty" style="padding:36px 16px">${ICONS.chat}
@@ -1391,50 +1509,77 @@ function renderChatGroups() {
     return;
   }
 
-  // Группируем по профилю. Запущенные выше остановленных: с ними идёт работа
-  // прямо сейчас, и их переписки нужны чаще.
-  const groups = new Map();
-  for (const c of rows) {
-    const g = groups.get(c.profileId) || {
-      id: c.profileId, label: c.profileLabel || t('chat.unknownProfile'),
-      email: c.profileEmail, running: c.profileRunning, items: [],
-    };
-    g.items.push(c);
-    groups.set(c.profileId, g);
+  // Внутри выбранного профиля группировать незачем, но в режиме "Все профили"
+  // подпись нужна: иначе непонятно, чей это адрес.
+  const showProfile = !state.chatProfile;
+  setOnce(box, rows.map((c) => chatRowHtml(c, showProfile)).join(''));
+  if (!box.dataset.wired) {
+    // Клики ловим на контейнере: строк много, и они пересобираются на каждый
+    // ввод в поиске - вешать по обработчику на строку значит платить за это
+    // каждый раз.
+    box.dataset.wired = '1';
+    box.addEventListener('click', onChatListClick);
+    box.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      // Нажатие на кнопке действия внутри строки - её дело, переписку не
+      // открываем: клик по кнопке придёт отдельным событием.
+      if (e.target.closest('[data-act]')) return;
+      const row = e.target.closest('.cl-row');
+      if (!row) return;
+      e.preventDefault();
+      openChat(row.dataset.key);
+    });
   }
-  const ordered = [...groups.values()].sort((a, b) => (b.running ? 1 : 0) - (a.running ? 1 : 0));
-
-  setOnce(box, ordered.map((g) => `
-    <div class="cl-group ${g.running ? 'live' : ''}">
-      <div class="clg-head">
-        <span class="dot ${g.running ? 'running' : 'new'}"></span>
-        <span class="clg-id">
-          <span class="clg-name">${esc(g.label)}</span>
-          <span class="clg-sub">${esc(g.running ? t('chat.online') : t('chat.offline'))} · ${esc(t('chat.nChats', { n: g.items.length }))}</span>
-        </span>
-      </div>
-      ${g.items.map((c) => chatRowHtml(c)).join('')}
-    </div>`).join(''));
-
-  $$('.cl-row', box).forEach((el) => el.addEventListener('click', () => openChat(el.dataset.key)));
   markActiveChatRow();
 }
 
-function chatRowHtml(c) {
+/** Действия в строке идут раньше открытия переписки: они на ней же и лежат. */
+function onChatListClick(e) {
+  const act = e.target.closest('[data-act]');
+  if (act) {
+    e.stopPropagation();
+    if (act.dataset.act === 'nudge') nudgeChat(act.dataset.email);
+    // Ссылку на объявление открываем во внешнем браузере, а не в окне
+    // приложения - этого пока нет, см. renderChatSide.
+    else toast(t('chat.openTodo'));
+    return;
+  }
+  const row = e.target.closest('.cl-row');
+  if (row) openChat(row.dataset.key);
+}
+
+/**
+ * Строка переписки. Не `button`: внутри свои кнопки действий, а кнопка в кнопке
+ * - недопустимая разметка. Роль и tabindex оставляют строку доступной с
+ * клавиатуры, нажатие обрабатывает renderChatGroups.
+ */
+function chatRowHtml(c, showProfile) {
+  const q = state.chatQuery.trim();
   const title = (c.contact && c.contact.title) || '';
   const last = c.lastText ? shorten(c.lastText, 60) : '';
-  return `<button class="cl-row ${state.openChat === c.chatKey ? 'on' : ''}" data-key="${esc(c.chatKey)}">
+  const listing = (c.contact && c.contact.listingUrl) || '';
+  return `<div class="cl-row ${state.openChat === c.chatKey ? 'on' : ''}" data-key="${esc(c.chatKey)}"
+    role="button" tabindex="0">
     <span class="pc-avatar" style="--av:${avatarColor({ email: c.email })}">${esc((c.email || '?').charAt(0).toUpperCase())}</span>
     <span class="clr-id">
       <span class="clr-top">
-        <span class="clr-name">${esc(c.email || dash)}</span>
+        <span class="clr-name">${markMatch(c.email || dash, q)}</span>
         <span class="clr-time">${esc(fmtShortTime(c.lastTs))}</span>
       </span>
-      ${title ? `<span class="clr-title">${ICONS.target}${esc(shorten(title, 42))}</span>` : ''}
+      ${showProfile ? `<span class="clr-prof">${markMatch(c.profileLabel || t('chat.unknownProfile'), q)}</span>` : ''}
+      ${title ? `<span class="clr-title">${ICONS.target}${markMatch(shorten(title, 42), q)}</span>` : ''}
       <span class="clr-last">${c.lastDir === 'out' ? esc(t('chat.you')) + ': ' : ''}${esc(last)}</span>
     </span>
-    ${c.replies ? `<span class="clr-badge">${c.replies}</span>` : ''}
-  </button>`;
+    <span class="clr-side">
+      ${c.replies ? `<span class="clr-badge">${c.replies}</span>` : ''}
+      <span class="clr-acts">
+        <button class="mini" data-act="nudge" data-email="${esc(c.email)}"
+          title="${esc(t('nudge.btn'))}" aria-label="${esc(t('nudge.btn'))}">${ICONS.send}</button>
+        ${listing ? `<button class="mini" data-act="open" data-url="${esc(listing)}"
+          title="${esc(t('chat.openListing'))}" aria-label="${esc(t('chat.openListing'))}">${ICONS.link}</button>` : ''}
+      </span>
+    </span>
+  </div>`;
 }
 
 /** Подсветку открытого чата ставим классом, а не пересборкой списка. */
@@ -1522,7 +1667,15 @@ function renderChatFeed() {
     setOnce(feed, `<div class="empty" style="padding:40px 0">${esc(t('chat.noMessages'))}</div>`);
     return;
   }
-  setOnce(feed, rows.map((m) => chatBubbleHtml(m)).join(''));
+  // Разделитель дня перед первым письмом каждой даты: у пузыря есть только
+  // время, и в переписке на две недели непонятно, когда что было.
+  let day = '';
+  setOnce(feed, rows.map((m) => {
+    const key = m.ts ? new Date(m.ts).toDateString() : '';
+    const head = key && key !== day ? `<div class="cm-day"><span>${esc(fmtDayLabel(m.ts))}</span></div>` : '';
+    day = key || day;
+    return head + chatBubbleHtml(m);
+  }).join(''));
   // К последнему письму - в кадре, чтобы не считать раскладку сразу после
   // вставки всей ленты.
   requestAnimationFrame(() => { feed.scrollTop = feed.scrollHeight; });
@@ -1588,16 +1741,31 @@ function renderChatSide(c) {
   // площадки незачем.
   if (openBtn) openBtn.addEventListener('click', () => toast(t('chat.openTodo')));
   const nudgeBtn = $('[data-nudge]', side);
-  if (nudgeBtn) nudgeBtn.addEventListener('click', async () => {
-    toast(t('nudge.sending'));
-    try {
-      const res = await api.contacts.nudge(nudgeBtn.dataset.nudge);
-      toast(res && res.ok ? t('nudge.ok') : t('nudge.fail.' + ((res && res.reason) || 'unknown')),
-        res && res.ok ? 'success' : 'error');
-      if (res && res.ok) refreshChats(true);
-    } catch (e) { toast(t('nudge.error', { error: e.message }), 'error'); }
-  });
+  if (nudgeBtn) nudgeBtn.addEventListener('click', () => nudgeChat(nudgeBtn.dataset.nudge));
   wireRipples(side);
+}
+
+/** Напоминание продавцу. Одно и то же и из строки списка, и из карточки. */
+async function nudgeChat(email) {
+  if (!email) return;
+  toast(t('nudge.sending'));
+  try {
+    const res = await api.contacts.nudge(email);
+    toast(res && res.ok ? t('nudge.ok') : t('nudge.fail.' + ((res && res.reason) || 'unknown')),
+      res && res.ok ? 'success' : 'error');
+    if (res && res.ok) refreshChats(true);
+  } catch (e) { toast(t('nudge.error', { error: e.message }), 'error'); }
+}
+
+/** Подпись дня для разделителя в ленте. */
+function fmtDayLabel(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  const now = new Date();
+  if (d.toDateString() === now.toDateString()) return t('chat.today');
+  const yesterday = new Date(now.getTime() - 86400000);
+  if (d.toDateString() === yesterday.toDateString()) return t('chat.yesterday');
+  return d.toLocaleDateString([], { day: '2-digit', month: 'long' });
 }
 
 /** Короткое время: сегодняшнее - часами, старое - датой. */
@@ -1614,6 +1782,8 @@ function fmtShortTime(ts) {
 async function refreshChats(force) {
   state.chats = await api.chats.list();
   if (state.route !== 'chats') return;
+  // Счётчики профилей и статусы Chrome тоже могли поменяться.
+  renderChatRail();
   renderChatGroups();
   // Ленту перечитываем только по явному запросу: она меняется реже списка, а
   // каждое чтение - это обход всего журнала сообщений в main.

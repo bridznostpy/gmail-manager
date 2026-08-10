@@ -1021,23 +1021,81 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
 .td-add { margin: 10px 0 12px; }
 
 /* ── Чаты ────────────────────────────────────────────────────
-   Три колонки: переписки, лента, карточка объявления. Высота фиксируется по
-   рабочей области, а прокрутка живёт внутри колонок - иначе страница ехала бы
-   целиком и шапка чата уплывала за край. */
+   Четыре колонки: профили, переписки, лента, карточка объявления. Высота
+   фиксируется по рабочей области, а прокрутка живёт внутри колонок - иначе
+   страница ехала бы целиком и шапка чата уплывала за край. */
 .chats {
   display: grid;
-  grid-template-columns: 296px minmax(0, 1fr) 288px;
+  grid-template-columns: 184px 288px minmax(0, 1fr) 288px;
   gap: 12px;
   height: 100%;
   min-height: 0;
 }
-:root.side-off .chats { grid-template-columns: 296px minmax(0, 1fr); }
+:root.side-off .chats { grid-template-columns: 184px 288px minmax(0, 1fr); }
 :root.side-off .chat-side { display: none; }
 
-.chat-list, .chat-main, .chat-side {
+.chat-rail, .chat-list, .chat-main, .chat-side {
   display: flex; flex-direction: column;
   min-height: 0; overflow: hidden;
   border-radius: var(--radius);
+}
+
+/* Список профилей. Держим его развёрнутым, а не в выпадающем меню: меню
+   закрывало бы переписки и стоило клика на каждый переход между аккаунтами. */
+.cr-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 14px 13px 9px; flex-shrink: 0;
+}
+.cr-count {
+  font-family: var(--font-mono); font-size: 9.5px; color: var(--text-faint);
+}
+.cr-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 0 8px 10px; }
+
+.cr-item {
+  width: 100%; min-height: 46px;
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 9px; margin-bottom: 3px;
+  border-radius: var(--radius-sm);
+  background: transparent; border: 1px solid transparent;
+  cursor: pointer; text-align: left; font-family: var(--font); color: var(--text);
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+.cr-item:hover { background: rgba(255, 255, 255, 0.05); }
+.cr-item.on { background: var(--accent-soft); border-color: var(--accent-line); }
+.cr-item .pc-avatar { width: 30px; height: 30px; border-radius: 10px; font-size: 12px; }
+.cr-all {
+  flex-shrink: 0; width: 30px; height: 30px; border-radius: 10px;
+  display: grid; place-items: center;
+  background: var(--bg-input); border: 1px solid var(--border); color: var(--text-dim);
+}
+.cr-all svg { width: 15px; height: 15px; }
+.cr-id { flex: 1 1 auto; min-width: 0; }
+.cr-name {
+  display: block; font-size: 12px; font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cr-sub {
+  display: block; margin-top: 2px;
+  font-family: var(--font-mono); font-size: 9px; color: var(--text-faint);
+}
+/* Ожидание ответа - не только цветом: рядом с ним всегда стоит число. */
+.cr-wait { display: block; margin-top: 2px; font-size: 9.5px; color: var(--amber); }
+.cr-n {
+  flex-shrink: 0; font-family: var(--font-mono); font-size: 10px;
+  color: var(--text-faint);
+}
+.cr-item.on .cr-n { color: var(--accent); }
+
+/* Запущенный профиль - кольцо вокруг аватара. Точка на аватаре занята
+   состоянием Gmail, и путать одно с другим нельзя. */
+.cr-item.live .pc-avatar::after {
+  content: ''; position: absolute; inset: -3px;
+  border-radius: 13px; border: 1.5px solid var(--accent);
+  animation: cr-pulse 2.4s var(--ease) infinite;
+}
+@keyframes cr-pulse {
+  0%, 100% { opacity: 0.85; transform: scale(1); }
+  50% { opacity: 0.35; transform: scale(1.06); }
 }
 
 /* Список переписок */
@@ -1050,24 +1108,15 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
   flex: 1 1 0; justify-content: center; padding: 6px 8px; font-size: 11.5px;
   white-space: nowrap; min-width: 0;
 }
-.cl-search { padding: 0 12px 10px; flex-shrink: 0; }
-.cl-search input { padding: 8px 11px; font-size: 12px; }
+/* Иконка лежит поверх поля, а не рядом: так поле остаётся во всю ширину
+   колонки и не прыгает, когда в него встаёт курсор. */
+.cl-search { padding: 0 12px 10px; flex-shrink: 0; position: relative; }
+.cl-search input { padding: 8px 11px 8px 31px; font-size: 12px; }
+.cl-search > svg {
+  position: absolute; left: 22px; top: 9px;
+  width: 13px; height: 13px; color: var(--text-faint); pointer-events: none;
+}
 .cl-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 0 8px 10px; }
-
-.cl-group { margin-bottom: 10px; }
-.clg-head {
-  display: flex; align-items: center; gap: 9px;
-  padding: 8px 8px 6px;
-  position: sticky; top: 0; z-index: 1;
-  background: var(--glass-bg);
-}
-.clg-id { min-width: 0; }
-.clg-name { display: block; font-size: 12px; font-weight: 650; }
-.clg-sub {
-  display: block; font-family: var(--font-mono);
-  font-size: 9.5px; color: var(--text-faint);
-}
-.cl-group:not(.live) .clg-name { color: var(--text-dim); }
 
 .cl-row {
   width: 100%; display: flex; align-items: flex-start; gap: 10px;
@@ -1083,6 +1132,7 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
 }
 .cl-row:hover { background: rgba(255, 255, 255, 0.05); }
 .cl-row.on { background: var(--accent-soft); border-color: var(--accent-line); }
+.cl-row:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 .cl-row .pc-avatar { width: 30px; height: 30px; border-radius: 10px; font-size: 12px; }
 .clr-id { flex: 1 1 auto; min-width: 0; }
 .clr-top { display: flex; align-items: baseline; gap: 8px; }
@@ -1102,11 +1152,34 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
   font-size: 11px; color: var(--text-faint);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+.clr-prof {
+  display: block; margin-top: 3px;
+  font-size: 10px; color: var(--text-dim);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .clr-badge {
-  flex-shrink: 0; min-width: 18px; height: 18px; padding: 0 6px;
+  min-width: 18px; height: 18px; padding: 0 6px;
   border-radius: 20px; display: grid; place-items: center;
   background: var(--accent); color: var(--on-accent);
   font-family: var(--font-mono); font-size: 9.5px; font-weight: 700;
+}
+.clr-side {
+  flex-shrink: 0; display: flex; flex-direction: column; align-items: flex-end; gap: 6px;
+}
+
+/* Действия строки: показываются по наведению, но с клавиатуры доступны всегда -
+   иначе до них было бы не добраться без мыши. */
+.clr-acts { display: flex; gap: 4px; opacity: 0; transition: opacity var(--dur-fast) var(--ease); }
+.cl-row:hover .clr-acts,
+.cl-row:focus-within .clr-acts,
+.clr-acts:focus-within { opacity: 1; }
+.clr-acts .mini { width: 26px; height: 26px; }
+.clr-acts .mini svg { width: 13px; height: 13px; }
+
+/* Подсветка совпадения поиска. */
+.cl-row mark {
+  background: var(--accent-soft); color: var(--accent);
+  border-radius: 4px; padding: 0 2px;
 }
 
 /* Лента переписки */
@@ -1124,6 +1197,24 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
   padding: 18px 16px;
   display: flex; flex-direction: column; gap: 10px;
 }
+/* Разделитель дня. Липкий: при прокрутке длинной переписки видно, какой день
+   сейчас на экране. */
+.cm-day {
+  display: flex; align-items: center; gap: 10px;
+  position: sticky; top: -18px; z-index: 1;
+  padding: 4px 0; margin: 2px 0;
+  color: var(--text-faint);
+  font-family: var(--font-mono); font-size: 9px;
+  text-transform: uppercase; letter-spacing: var(--track-wide);
+}
+.cm-day::before, .cm-day::after {
+  content: ''; flex: 1 1 auto; height: 1px; background: var(--border);
+}
+.cm-day span {
+  flex-shrink: 0; padding: 3px 9px; border-radius: 20px;
+  background: var(--control-bg); border: 1px solid var(--border);
+}
+
 .bubble { display: flex; }
 .bubble.out { justify-content: flex-end; }
 .bb-body {
@@ -1132,7 +1223,7 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
   max-width: min(72%, 520px);
   padding: 10px 13px; border-radius: 14px;
   font-size: 12.5px; line-height: 1.55;
-  white-space: pre-wrap; word-break: break-word;
+  word-break: break-word;
   /* Пузыри за экраном не размечаем: переписка может быть длинной. */
   content-visibility: auto;
   contain-intrinsic-size: auto 64px;
@@ -1150,7 +1241,10 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
   padding-bottom: 6px; border-bottom: 1px solid rgba(0, 0, 0, 0.14);
 }
 .bubble.in .bb-subj { border-bottom-color: var(--border); }
-.bb-text { min-height: 1em; }
+/* Переносы строк сохраняем только в теле письма. На всём пузыре это давало
+   пустые строки: отступы разметки между заголовком, текстом и подписью
+   считались бы содержимым. */
+.bb-text { min-height: 1em; white-space: pre-wrap; }
 .bb-foot {
   display: flex; align-items: center; gap: 8px; margin-top: 6px;
   font-family: var(--font-mono); font-size: 9px;
@@ -1199,8 +1293,18 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
 .cs-acts .btn { justify-content: flex-start; }
 
 @media (max-width: 1320px) {
-  .chats { grid-template-columns: 262px minmax(0, 1fr); }
+  .chats { grid-template-columns: 184px 258px minmax(0, 1fr); }
   .chat-side { display: none; }
+}
+/* Совсем узкое окно: от списка профилей остаются аватар и число, имя живёт в
+   подсказке. Убирать список целиком нельзя - выбирать профиль станет нечем. */
+@media (max-width: 1120px) {
+  .chats,
+  :root.side-off .chats { grid-template-columns: 64px minmax(0, 262px) minmax(0, 1fr); }
+  .cr-head, .cr-name, .cr-sub, .cr-wait { display: none; }
+  .cr-body { padding: 8px 6px; }
+  .cr-item { flex-direction: column; gap: 3px; padding: 8px 4px; }
+  .cr-item .pc-avatar, .cr-all { width: 28px; height: 28px; }
 }
 
 /* ── Командная палитра (Ctrl+K) ──────────────────────────── */

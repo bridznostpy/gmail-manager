@@ -628,7 +628,27 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
   display: grid; grid-template-columns: 236px minmax(0, 860px);
   gap: 16px; align-items: start; justify-content: start;
 }
-.set-menu { padding: 8px; display: flex; flex-direction: column; gap: 2px; position: sticky; top: 0; }
+.set-menu { padding: 8px; display: flex; flex-direction: column; gap: 8px; position: sticky; top: 0; }
+
+/* Поиск по настройкам. Иконка лежит поверх поля, поэтому у самого поля свой
+   левый отступ - иначе текст запроса наезжал бы на лупу. */
+.set-search { position: relative; }
+.set-search svg {
+  position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
+  width: 14px; height: 14px; color: var(--text-faint); pointer-events: none;
+}
+.set-search input { padding-left: 32px; font-size: 12px; }
+.set-search input::-webkit-search-cancel-button { -webkit-appearance: none; }
+
+.set-nav { display: flex; flex-direction: column; gap: 2px; }
+.set-sec + .set-sec { margin-top: 12px; }
+.set-sec-cap {
+  padding: 4px 12px 6px;
+  font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--text-faint);
+}
+.set-nomatch { padding: 10px 12px; }
+
 .set-tab {
   display: flex; align-items: center; gap: 10px;
   padding: 10px 12px; border-radius: var(--radius-sm);
@@ -638,6 +658,9 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
   transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease),
     border-color var(--dur-fast) var(--ease);
 }
+/* Скрытие поиском. Атрибут hidden сам по себе не сработал бы: у кнопки и у
+   раздела задан свой display, а он сильнее display:none от браузера. */
+.set-tab[hidden], .set-sec[hidden] { display: none; }
 .set-tab .icon { display: grid; place-items: center; flex-shrink: 0; }
 .set-tab .icon svg { width: 16px; height: 16px; }
 .set-tab:hover { background: rgba(255, 255, 255, 0.05); color: var(--text); }
@@ -646,8 +669,53 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
   color: var(--accent); font-weight: 600;
 }
 .set-panel > .card { padding: 22px 24px; }
+/* Подсказки в настройках сами держат отступы: общее правило .card .hint тянет
+   их вверх отрицательным margin, и под ползунками текст наезжал на кнопки.
+   Цвет на ступень светлее общего: поверх фотографии фона --text-faint читался
+   с трудом. */
+.set-panel .hint { margin: 0; color: var(--text-dim); }
 .set-panel .hint a { color: var(--accent); text-decoration: none; }
 .set-panel .hint a:hover { text-decoration: underline; }
+
+/* Шапка карточки: заголовок, строка о назначении группы и сброс раздела. */
+.set-card-head {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
+  padding-bottom: 14px; margin-bottom: 18px;
+  border-bottom: 1px solid var(--border);
+}
+.set-card-head h3 { font-size: 17px; margin: 0; }
+.set-card-head .sch-sub { color: var(--text-dim); font-size: 11.5px; margin-top: 5px; line-height: 1.6; max-width: 62ch; }
+.set-card-head .btn { flex-shrink: 0; }
+
+/* Подразделы. Отступы кратны четырём: между полями 14, между подразделами 26 -
+   пауза между темами должна читаться заметнее, чем между строками одной темы. */
+.set-block + .set-block { margin-top: 26px; padding-top: 22px; border-top: 1px solid var(--border); }
+.set-block > .section-label { display: block; margin-bottom: 6px; }
+.set-block .sb-hint { margin-bottom: 14px; max-width: 68ch; }
+/* Подсказка под конкретным полем, а не под подразделом. */
+.field-hint { margin-top: 6px; max-width: 68ch; }
+
+/* Сетка полей: одинаковая ширина колонок вместо flex-basis у каждого поля по
+   отдельности - от них ряды получались разной высоты и разной длины. */
+.set-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0 16px; }
+
+/* Найденное поиском поле. Подсветка кромкой, а не заливкой: поле остаётся
+   читаемым, и глазу видно, куда смотреть. */
+.field.hit > label { color: var(--accent); }
+.field.hit input, .field.hit select, .field.hit textarea, .field.hit .seg {
+  border-color: var(--accent-line); box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* Отметка "сохранено" у подписи поля. */
+.saved-mark {
+  display: inline-flex; align-items: center; gap: 4px; margin-left: 8px;
+  color: var(--green, var(--accent)); font-size: 10px; font-weight: 600;
+  opacity: 0; transform: translateY(-2px);
+  transition: opacity var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
+}
+.saved-mark svg { width: 11px; height: 11px; }
+.saved-mark.show { opacity: 1; transform: none; }
+
 /* В настройках контролы оформления идут в две колонки: места больше, чем в
    выезжающей панели, и вертикальная простыня там ни к чему. */
 .opt-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 28px; }
@@ -655,7 +723,10 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
 
 @media (max-width: 1180px) {
   .settings { grid-template-columns: 1fr; }
-  .set-menu { position: static; flex-direction: row; flex-wrap: wrap; }
+  .set-menu { position: static; }
+  .set-nav { flex-direction: row; flex-wrap: wrap; }
+  .set-sec { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+  .set-sec + .set-sec { margin-top: 4px; }
   .opt-list { grid-template-columns: 1fr; }
 }
 

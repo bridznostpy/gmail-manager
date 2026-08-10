@@ -35,7 +35,8 @@ const state = {
   notes: [], // лента уведомлений из потока логов
   notesSeen: 0,
   // Выбранная группа на странице настроек - переживает уход на другой раздел.
-  settingsGroup: 'interface',
+  settingsGroup: 'limits',
+  settingsQuery: '', // поиск по настройкам, тоже переживает уход со страницы
   textsLang: 'en', // язык, открытый на экране текстов рассылки
   runStatus: { running: false, paused: false, uptimeSec: 0, queueSize: 0 },
   // Живые логи держим массивом, а не только в DOM: иначе их нечем фильтровать.
@@ -150,16 +151,18 @@ const debounce = (fn, ms = 400) => { let timer; return (...a) => { clearTimeout(
 function bindNumber(input, section, key, min) {
   if (!input) return;
   input.setAttribute('min', String(min));
-  input.addEventListener('input', debounce(() => {
+  input.addEventListener('input', debounce(async () => {
     const raw = input.value.trim();
     if (raw === '') return;
     const val = Math.max(min, Math.floor(Number(raw)) || min);
-    saveSection(section, { [key]: val });
+    await saveSection(section, { [key]: val });
+    markSaved(input);
   }));
-  input.addEventListener('blur', () => {
+  input.addEventListener('blur', async () => {
     const val = Math.max(min, Math.floor(Number(input.value)) || min);
     input.value = String(val);
-    saveSection(section, { [key]: val });
+    await saveSection(section, { [key]: val });
+    markSaved(input);
   });
 }
 
@@ -2254,27 +2257,78 @@ async function launchProfile(id, openGmail) {
   catch (e) { toast(t('prof.launchFailed', { error: e.message }), 'error'); }
 }
 
-// ── Настройки: одна страница, группы слева ─────────────────────────
+// ── Настройки: разделы слева, содержимое справа ─────────────────────
 // Всё настраиваемое собрано здесь. Отдельных разделов под парсер, CDP,
-// ссылки и Telegram в верхней панели больше нет: одно место правды.
+// ссылки и Telegram в верхней панели нет: одно место правды.
+//
+// Группы разложены по разделам, а не идут одним плоским списком: девять
+// пунктов подряд ничего не подсказывают, а "пауза между письмами" и "лимит на
+// аккаунт" - это одна тема, и лежать они должны рядом.
+//
+// `terms` - ключи подписей, по которым группа находится поиском. Список
+// небольшой и заодно показывает, что в группе вообще есть.
 
 const SETTINGS_GROUPS = [
-  { id: 'interface', icon: 'settings', build: buildSetInterface },
-  { id: 'appearance', icon: 'palette', build: buildSetAppearance },
-  { id: 'limits', icon: 'dashboard', build: buildSetLimits },
-  { id: 'parser', icon: 'parser', build: buildSetParser },
-  { id: 'targets', icon: 'target', build: buildSetTargets },
-  { id: 'cdp', icon: 'cdp', build: buildSetCdp },
-  { id: 'link', icon: 'link', build: buildSetLink },
-  { id: 'telegram', icon: 'telegram', build: buildSetTelegram },
-  { id: 'texts', icon: 'inbox', build: buildSetTexts },
+  {
+    id: 'limits', section: 'run', icon: 'dashboard', reset: 'system', build: buildSetLimits,
+    terms: ['set.mails', 'set.replies', 'set.sendDelay', 'set.checkInterval', 'set.waitScale'],
+  },
+  {
+    id: 'texts', section: 'run', icon: 'inbox', build: buildSetTexts,
+    terms: ['txt.outreachLang', 'txt.editJson', 'txt.d.first', 'txt.d.reply', 'txt.d.nudge'],
+  },
+  {
+    id: 'parser', section: 'data', icon: 'parser', reset: 'parser', build: buildSetParser,
+    terms: ['parser.apiKey', 'parser.type', 'parser.enabled', 'parser.aiSwap', 'parser.swapN',
+      'set.batch', 'set.threshold'],
+  },
+  {
+    id: 'targets', section: 'data', icon: 'target', build: buildSetTargets,
+    terms: ['set.g.targets'],
+  },
+  {
+    id: 'link', section: 'data', icon: 'link', reset: 'link', build: buildSetLink,
+    terms: ['link.apiKey', 'link.team', 'link.mode', 'link.profileId', 'link.country'],
+  },
+  {
+    id: 'cdp', section: 'system', icon: 'cdp', reset: 'cdp', build: buildSetCdp,
+    terms: ['cdp.portStart', 'cdp.portEnd', 'cdp.path', 'cdp.detect'],
+  },
+  {
+    id: 'telegram', section: 'system', icon: 'telegram', reset: 'telegram', build: buildSetTelegram,
+    terms: ['tg.token', 'tg.chatId', 'tg.test'],
+  },
+  {
+    id: 'interface', section: 'look', icon: 'settings', build: buildSetInterface,
+    terms: ['set.language'],
+  },
+  {
+    id: 'appearance', section: 'look', icon: 'palette', build: buildSetAppearance,
+    terms: ['appear.background', 'appear.presets', 'appear.fit', 'appear.dim', 'appear.blur',
+      'appear.glass', 'appear.accent', 'appear.motion'],
+  },
 ];
+
+const SETTINGS_SECTIONS = ['run', 'data', 'system', 'look'];
 
 VIEWS.settings = () => {
   const wrap = h(`<div class="settings">
     <aside class="set-menu glass">
-      ${SETTINGS_GROUPS.map((g) => `<button class="set-tab" data-g="${g.id}">
-        <span class="icon">${ICONS[g.icon]}</span><span>${esc(t('set.g.' + g.id))}</span></button>`).join('')}
+      <div class="set-search">
+        ${ICONS.search}
+        <input type="search" id="setSearch" autocomplete="off" spellcheck="false"
+          placeholder="${esc(t('set.searchPh'))}" aria-label="${esc(t('set.searchPh'))}"/>
+      </div>
+      <div class="set-nav" id="setNav">
+        ${SETTINGS_SECTIONS.map((sec) => `<div class="set-sec" data-sec="${sec}">
+          <div class="set-sec-cap">${esc(t('set.sec.' + sec))}</div>
+          ${SETTINGS_GROUPS.filter((g) => g.section === sec).map((g) => `
+            <button class="set-tab" data-g="${g.id}">
+              <span class="icon">${ICONS[g.icon]}</span><span>${esc(t('set.g.' + g.id))}</span>
+            </button>`).join('')}
+        </div>`).join('')}
+      </div>
+      <div class="set-nomatch hint" id="setNoMatch" hidden>${esc(t('set.noMatch'))}</div>
     </aside>
     <div class="set-panel" id="setPanel"></div>
   </div>`);
@@ -2284,9 +2338,60 @@ VIEWS.settings = () => {
     renderSettingsGroup(wrap);
   }));
 
-  setTimeout(() => renderSettingsGroup(wrap), 0);
+  const search = $('#setSearch', wrap);
+  search.value = state.settingsQuery;
+  search.addEventListener('input', debounce(() => {
+    state.settingsQuery = search.value;
+    filterSettings(wrap);
+  }, 160));
+
+  setTimeout(() => {
+    renderSettingsGroup(wrap);
+    if (state.settingsQuery) filterSettings(wrap);
+  }, 0);
   return wrap;
 };
+
+/**
+ * Поиск по настройкам. Прячет непопавшие группы и подсвечивает найденные поля в
+ * открытой карточке. Совпадение ищем подстрокой, без RegExp: запрос вводит
+ * человек, и звёздочка в нём не должна ронять поиск.
+ */
+function filterSettings(root) {
+  const q = state.settingsQuery.trim().toLowerCase();
+  const hit = (g) => !q || [t('set.g.' + g.id), t('set.h.' + g.id), t('set.s.' + g.id)]
+    .concat((g.terms || []).map((k) => t(k)))
+    .some((s) => String(s).toLowerCase().includes(q));
+
+  const shown = SETTINGS_GROUPS.filter(hit);
+  $$('.set-tab', root).forEach((b) => {
+    b.hidden = !shown.some((g) => g.id === b.dataset.g);
+  });
+  // Подпись раздела без единой видимой группы только мешает.
+  $$('.set-sec', root).forEach((sec) => {
+    sec.hidden = !$$('.set-tab', sec).some((b) => !b.hidden);
+  });
+  const none = $('#setNoMatch', root);
+  if (none) none.hidden = !!shown.length;
+
+  // Открытая группа выпала из поиска - показываем первую найденную, иначе
+  // справа осталась бы карточка, которой в списке уже нет.
+  if (shown.length && !shown.some((g) => g.id === state.settingsGroup)) {
+    state.settingsGroup = shown[0].id;
+    renderSettingsGroup(root);
+    return;
+  }
+  markSettingsHits(root, q);
+}
+
+/** Подсветка полей, подходящих под запрос, внутри открытой карточки. */
+function markSettingsHits(root, q) {
+  $$('.set-panel .field', root).forEach((field) => {
+    const label = field.querySelector('label');
+    const text = label ? label.textContent.toLowerCase() : '';
+    field.classList.toggle('hit', !!q && text.includes(q));
+  });
+}
 
 function renderSettingsGroup(root) {
   const group = SETTINGS_GROUPS.find((g) => g.id === state.settingsGroup) || SETTINGS_GROUPS[0];
@@ -2298,8 +2403,30 @@ function renderSettingsGroup(root) {
   const el = group.build();
   el.classList.add('view-enter');
   panel.appendChild(el);
+  // Сброс раздела висит на карточке, а обработчик один на все группы: кнопка
+  // одна и та же, отличается только имя раздела настроек.
+  const resetBtn = $('[data-reset]', panel);
+  if (resetBtn) resetBtn.addEventListener('click', () => resetSettingsSection(resetBtn.dataset.reset));
   wireRipples(panel);
   wireSheen(panel);
+  markSettingsHits(root, state.settingsQuery.trim().toLowerCase());
+}
+
+/**
+ * Вернуть раздел настроек к значениям по умолчанию. Значения берём из main
+ * (DEFAULTS в store.js), своей копии в рендере нет - она бы разошлась с
+ * настоящими значениями при первой же правке движка.
+ */
+async function resetSettingsSection(section) {
+  const defaults = await api.settings.defaults();
+  const value = defaults && defaults[section];
+  if (!value) return;
+  const ok = await askConfirm(t('set.resetTitle'), t('set.resetText'), { okLabel: t('set.reset') });
+  if (!ok) return;
+  await saveSection(section, value);
+  toast(t('set.resetDone'), 'success');
+  const root = $('.settings');
+  if (root) renderSettingsGroup(root);
 }
 
 /** Открыть настройки сразу на нужной группе (например, из подсказки). */
@@ -2312,13 +2439,93 @@ function goSettings(groupId) {
   go('settings');
 }
 
-/** Шапка карточки настроек. Название группы уже стоит в боковом меню, поэтому
-    здесь только поясняющий заголовок - иначе одно и то же трижды на экране. */
+/**
+ * Шапка карточки настроек: поясняющий заголовок, строка о том, на что группа
+ * влияет, и кнопка сброса раздела. Название группы стоит в боковом меню и здесь
+ * не повторяется - иначе одно и то же трижды на экране.
+ */
 function setCard(groupId, bodyHtml) {
+  const group = SETTINGS_GROUPS.find((g) => g.id === groupId);
   return `<div class="card glass">
-    <h3 style="font-size:17px;margin-bottom:16px">${esc(t('set.h.' + groupId))}</h3>
+    <div class="set-card-head">
+      <div class="sch-id">
+        <h3>${esc(t('set.h.' + groupId))}</h3>
+        <div class="sch-sub">${esc(t('set.s.' + groupId))}</div>
+      </div>
+      ${group && group.reset
+        ? `<button class="btn ghost" data-reset="${group.reset}">${ICONS.reset}<span>${esc(t('set.reset'))}</span></button>`
+        : ''}
+    </div>
     ${bodyHtml}
   </div>`;
+}
+
+/**
+ * Подраздел внутри карточки. Плоский список полей не показывал, что от чего
+ * зависит: лимиты, темп отправки и очередь парсера жили в одной куче.
+ */
+function setBlock(titleKey, hintKey, bodyHtml) {
+  return `<section class="set-block">
+    <div class="section-label">${esc(t(titleKey))}</div>
+    ${hintKey ? `<div class="hint sb-hint">${esc(t(hintKey))}</div>` : ''}
+    ${bodyHtml}
+  </section>`;
+}
+
+/**
+ * Отметка "сохранено" у поля.
+ *
+ * Настройки пишутся сразу при вводе, без кнопки "Применить", и по виду экрана
+ * понять, дошло ли значение до файла, было нельзя. Отметка живёт пару секунд и
+ * пропадает сама.
+ */
+function markSaved(el) {
+  const field = el && el.closest ? el.closest('.field') : null;
+  const host = field && (field.querySelector('label') || field);
+  if (!host) return;
+  let mark = host.querySelector('.saved-mark');
+  if (!mark) {
+    mark = h(`<span class="saved-mark">${ICONS.check}<span>${esc(t('set.saved'))}</span></span>`);
+    host.appendChild(mark);
+  }
+  // Перезапуск проявления: без перерисовки повторное сохранение не мигает.
+  mark.classList.remove('show');
+  void mark.offsetWidth;
+  mark.classList.add('show');
+  clearTimeout(savedTimers.get(mark));
+  savedTimers.set(mark, setTimeout(() => mark.classList.remove('show'), 1800));
+}
+// Таймеры отметок держим отдельно от разметки: карточка настроек пересобирается,
+// и вешать состояние на data-атрибуты значило бы возить его туда-обратно строкой.
+const savedTimers = new WeakMap();
+
+/** Текстовое поле настроек: пишем с задержкой и отмечаем сохранение. */
+function bindText(input, section, key) {
+  if (!input) return;
+  input.addEventListener('input', debounce(async () => {
+    await saveSection(section, { [key]: input.value });
+    markSaved(input);
+  }));
+}
+
+/** Переключатель настроек. */
+function bindToggle(input, section, key) {
+  if (!input) return;
+  input.addEventListener('change', async () => {
+    await saveSection(section, { [key]: input.checked });
+    markSaved(input);
+  });
+}
+
+/** Ряд кнопок-переключателей: значение берём из data-v. */
+function bindSeg(box, section, key, cast) {
+  if (!box) return;
+  $$('button', box).forEach((b) => b.addEventListener('click', async () => {
+    $$('button', box).forEach((x) => x.classList.toggle('active', x === b));
+    const raw = b.dataset.v;
+    await saveSection(section, { [key]: cast ? cast(raw) : raw });
+    markSaved(box);
+  }));
 }
 
 function buildSetInterface() {
@@ -2343,27 +2550,24 @@ function buildSetAppearance() {
 function buildSetLimits() {
   const s = state.settings.system;
   const el = h(setCard('limits', `
-    <div class="row">
-      <div class="field"><label>${esc(t('set.mails'))}</label><input type="number" id="mMails" min="1" value="${s.mailsPerAccount}"/></div>
-      <div class="field"><label>${esc(t('set.replies'))}</label><input type="number" id="mReplies" min="0" value="${s.maxRepliesPerDialog}"/></div>
-    </div>
-    <div class="row">
-      <div class="field"><label>${esc(t('set.sendDelay'))}</label><input type="number" id="mDelay" min="1" value="${s.sendDelaySec}"/></div>
-      <div class="field"><label>${esc(t('set.checkInterval'))}</label><input type="number" id="mCheck" min="3" value="${s.checkIntervalSec}"/></div>
-    </div>
-    <div class="hint">${esc(t('set.sendDelayHint'))}</div>
-    <div class="row" style="margin-top:14px">
-      <div class="field"><label>${esc(t('set.batch'))}</label><input type="number" id="mBatch" min="1" value="${s.parserBatchSize}"/></div>
-      <div class="field"><label>${esc(t('set.threshold'))}</label><input type="number" id="mThresh" min="0" value="${s.queueRefillThreshold}"/></div>
-    </div>
-    <div class="field" style="max-width:260px">
-      <label>${esc(t('set.waitScale'))}</label>
-      <div class="seg" id="mWait">
-        ${WAIT_SCALES.map((v) => `<button data-v="${v}" class="${Number(s.waitScale || 1) === v ? 'active' : ''}">${v}x</button>`).join('')}
+    ${setBlock('set.b.caps', 'set.limitsHint', `
+      <div class="set-grid">
+        <div class="field"><label for="mMails">${esc(t('set.mails'))}</label><input type="number" id="mMails" min="1" value="${s.mailsPerAccount}"/></div>
+        <div class="field"><label for="mReplies">${esc(t('set.replies'))}</label><input type="number" id="mReplies" min="0" value="${s.maxRepliesPerDialog}"/></div>
+      </div>`)}
+
+    ${setBlock('set.b.pace', 'set.sendDelayHint', `
+      <div class="set-grid">
+        <div class="field"><label for="mDelay">${esc(t('set.sendDelay'))}</label><input type="number" id="mDelay" min="1" value="${s.sendDelaySec}"/></div>
+        <div class="field"><label for="mCheck">${esc(t('set.checkInterval'))}</label><input type="number" id="mCheck" min="3" value="${s.checkIntervalSec}"/></div>
       </div>
-    </div>
-    <div class="hint">${esc(t('set.waitScaleHint'))}</div>
-    <div class="hint" style="margin-top:8px">${esc(t('set.limitsHint'))}</div>`));
+      <div class="field">
+        <label>${esc(t('set.waitScale'))}</label>
+        <div class="seg" id="mWait">
+          ${WAIT_SCALES.map((v) => `<button data-v="${v}" class="${Number(s.waitScale || 1) === v ? 'active' : ''}">${v}x</button>`).join('')}
+        </div>
+        <div class="hint field-hint">${esc(t('set.waitScaleHint'))}</div>
+      </div>`)}`));
   // Минимумы обязательны. Пустое поле или ноль в "Писем на аккаунт" делали
   // прогон бессмысленным: движок не находил ни одного аккаунта под лимитом,
   // ничего не отправлял и писал в лог "все лимиты достигнуты".
@@ -2371,42 +2575,47 @@ function buildSetLimits() {
   bindNumber($('#mReplies', el), 'system', 'maxRepliesPerDialog', 0);
   bindNumber($('#mDelay', el), 'system', 'sendDelaySec', 1);
   bindNumber($('#mCheck', el), 'system', 'checkIntervalSec', 3);
-  bindNumber($('#mBatch', el), 'system', 'parserBatchSize', 1);
-  bindNumber($('#mThresh', el), 'system', 'queueRefillThreshold', 1);
   // Терпение - готовые ступени, а не поле ввода: значение дробное, и вписать
   // туда ноль значило бы отменить все ожидания сразу.
-  $$('#mWait button', el).forEach((b) => b.addEventListener('click', () => {
-    $$('#mWait button', el).forEach((x) => x.classList.toggle('active', x === b));
-    saveSection('system', { waitScale: Number(b.dataset.v) });
-  }));
+  bindSeg($('#mWait', el), 'system', 'waitScale', Number);
   return el;
 }
 
 function buildSetParser() {
   const p = state.settings.parser;
+  const s = state.settings.system;
   const el = h(setCard('parser', `
-    <div class="row">
-      <div class="field"><label>${esc(t('parser.apiKey'))}</label><input type="password" id="pKey" value="${esc(p.apiKey)}" placeholder="${esc(t('parser.apiKeyPh'))}"/></div>
-      <div class="field" style="flex:0 0 190px"><label>${esc(t('parser.type'))}</label>
-        <div class="seg" id="pType">
-          <button data-v="xproject" class="${p.apiType === 'xproject' ? 'active' : ''}">xproject</button>
-          <button data-v="vvs" class="${p.apiType === 'vvs' ? 'active' : ''}">vvs</button>
+    ${setBlock('set.b.api', '', `
+      <div class="set-grid">
+        <div class="field"><label for="pKey">${esc(t('parser.apiKey'))}</label><input type="password" id="pKey" value="${esc(p.apiKey)}" placeholder="${esc(t('parser.apiKeyPh'))}"/></div>
+        <div class="field"><label>${esc(t('parser.type'))}</label>
+          <div class="seg" id="pType">
+            <button data-v="xproject" class="${p.apiType === 'xproject' ? 'active' : ''}">xproject</button>
+            <button data-v="vvs" class="${p.apiType === 'vvs' ? 'active' : ''}">vvs</button>
+          </div>
         </div>
       </div>
-    </div>
-    <div class="field"><label class="switch"><input type="checkbox" id="pEnabled" ${p.enabled ? 'checked' : ''}/><span class="track"></span><span class="lbl">${esc(t('parser.enabled'))}</span></label></div>
-    <div class="field"><label class="switch"><input type="checkbox" id="pAi" ${p.aiTemplateSwap ? 'checked' : ''}/><span class="track"></span><span class="lbl">${esc(t('parser.aiSwap'))}</span></label></div>
-    <div class="field" style="max-width:340px"><label>${esc(t('parser.swapN'))}</label><input type="number" id="pSwapN" min="0" value="${p.swapKeyEveryN}"/></div>
+      <div class="field"><label class="switch"><input type="checkbox" id="pEnabled" ${p.enabled ? 'checked' : ''}/><span class="track"></span><span class="lbl">${esc(t('parser.enabled'))}</span></label></div>
+      <div class="field"><label class="switch"><input type="checkbox" id="pAi" ${p.aiTemplateSwap ? 'checked' : ''}/><span class="track"></span><span class="lbl">${esc(t('parser.aiSwap'))}</span></label></div>
+      <div class="field" style="max-width:340px"><label for="pSwapN">${esc(t('parser.swapN'))}</label><input type="number" id="pSwapN" min="0" value="${p.swapKeyEveryN}"/></div>`)}
+
+    ${setBlock('set.b.queue', 'set.queueHint', `
+      <div class="set-grid">
+        <div class="field"><label for="mBatch">${esc(t('set.batch'))}</label><input type="number" id="mBatch" min="1" value="${s.parserBatchSize}"/></div>
+        <div class="field"><label for="mThresh">${esc(t('set.threshold'))}</label><input type="number" id="mThresh" min="0" value="${s.queueRefillThreshold}"/></div>
+      </div>`)}
+
     <div class="hint">${esc(t('parser.platformsHint'))} <a href="#" id="pToTargets">${esc(t('set.g.targets'))}</a>.</div>`));
 
-  $('#pKey', el).addEventListener('input', debounce((e) => saveSection('parser', { apiKey: e.target.value })));
-  $$('#pType button', el).forEach((b) => b.addEventListener('click', () => {
-    $$('#pType button', el).forEach((x) => x.classList.toggle('active', x === b));
-    saveSection('parser', { apiType: b.dataset.v });
-  }));
-  $('#pEnabled', el).addEventListener('change', (e) => saveSection('parser', { enabled: e.target.checked }));
-  $('#pAi', el).addEventListener('change', (e) => saveSection('parser', { aiTemplateSwap: e.target.checked }));
+  bindText($('#pKey', el), 'parser', 'apiKey');
+  bindSeg($('#pType', el), 'parser', 'apiType');
+  bindToggle($('#pEnabled', el), 'parser', 'enabled');
+  bindToggle($('#pAi', el), 'parser', 'aiTemplateSwap');
   bindNumber($('#pSwapN', el), 'parser', 'swapKeyEveryN', 0);
+  // Размер пачки и порог пополнения живут в разделе system, но настраивают они
+  // именно парсер - поэтому стоят здесь, а не в лимитах рассылки.
+  bindNumber($('#mBatch', el), 'system', 'parserBatchSize', 1);
+  bindNumber($('#mThresh', el), 'system', 'queueRefillThreshold', 1);
   $('#pToTargets', el).addEventListener('click', (e) => { e.preventDefault(); goSettings('targets'); });
   return el;
 }
@@ -2422,16 +2631,19 @@ function buildSetTargets() {
 function buildSetCdp() {
   const c = state.settings.cdp;
   const el = h(setCard('cdp', `
-    <div class="row">
-      <div class="field"><label>${esc(t('cdp.portStart'))}</label><input type="number" id="cStart" value="${c.portStart}"/></div>
-      <div class="field"><label>${esc(t('cdp.portEnd'))}</label><input type="number" id="cEnd" value="${c.portEnd}"/></div>
-    </div>
-    <div class="field"><label>${esc(t('cdp.path'))}</label><input type="text" id="cPath" value="${esc(c.chromePath)}" placeholder="${esc(t('cdp.pathPh'))}"/></div>
-    <button class="btn" id="cDetect">${ICONS.search}<span>${esc(t('cdp.detect'))}</span></button>
-    <div class="hint" id="cDetected" style="margin-top:12px"></div>`));
+    ${setBlock('set.b.chrome', 'set.chromeHint', `
+      <div class="field"><label for="cPath">${esc(t('cdp.path'))}</label><input type="text" id="cPath" value="${esc(c.chromePath)}" placeholder="${esc(t('cdp.pathPh'))}"/></div>
+      <button class="btn" id="cDetect">${ICONS.search}<span>${esc(t('cdp.detect'))}</span></button>
+      <div class="hint" id="cDetected" style="margin-top:12px"></div>`)}
+
+    ${setBlock('set.b.ports', 'set.portsHint', `
+      <div class="set-grid">
+        <div class="field"><label for="cStart">${esc(t('cdp.portStart'))}</label><input type="number" id="cStart" value="${c.portStart}"/></div>
+        <div class="field"><label for="cEnd">${esc(t('cdp.portEnd'))}</label><input type="number" id="cEnd" value="${c.portEnd}"/></div>
+      </div>`)}`));
   bindNumber($('#cStart', el), 'cdp', 'portStart', 1024);
   bindNumber($('#cEnd', el), 'cdp', 'portEnd', 1024);
-  $('#cPath', el).addEventListener('input', debounce((e) => saveSection('cdp', { chromePath: e.target.value })));
+  bindText($('#cPath', el), 'cdp', 'chromePath');
   $('#cDetect', el).addEventListener('click', async () => {
     const found = await api.cdp.detectChrome();
     $('#cDetected', el).textContent = found ? t('cdp.found', { path: found }) : t('cdp.notFound');
@@ -2442,37 +2654,48 @@ function buildSetCdp() {
 function buildSetLink() {
   const l = state.settings.link;
   const el = h(setCard('link', `
-    <div class="row">
-      <div class="field"><label>${esc(t('link.apiKey'))}</label><input type="password" id="lKey" value="${esc(l.apiKey)}"/></div>
-      <div class="field" style="flex:0 0 210px"><label>${esc(t('link.team'))}</label>
-        <select id="lTeam"><option value="haron_rent" ${l.team === 'haron_rent' ? 'selected' : ''}>Haron Rent</option></select>
-      </div>
-    </div>
-    <div class="row">
-      <div class="field"><label>${esc(t('link.mode'))}</label><input type="text" id="lMode" value="${esc(l.mode)}" placeholder="${esc(t('link.modePh'))}"/></div>
-      <div class="field"><label>${esc(t('link.profileId'))}</label><input type="text" id="lPid" value="${esc(l.profileId)}"/></div>
-      <div class="field" style="flex:0 0 140px"><label>${esc(t('link.country'))}</label>
-        <select id="lCountry"><option value="US" ${l.country === 'US' ? 'selected' : ''}>US</option></select>
-      </div>
-    </div>
-    <div class="hint">${esc(t('link.hint'))}</div>`));
-  $('#lKey', el).addEventListener('input', debounce((e) => saveSection('link', { apiKey: e.target.value })));
-  $('#lTeam', el).addEventListener('change', (e) => saveSection('link', { team: e.target.value }));
-  $('#lMode', el).addEventListener('input', debounce((e) => saveSection('link', { mode: e.target.value })));
-  $('#lPid', el).addEventListener('input', debounce((e) => saveSection('link', { profileId: e.target.value })));
-  $('#lCountry', el).addEventListener('change', (e) => saveSection('link', { country: e.target.value }));
+    ${setBlock('set.b.api', '', `
+      <div class="set-grid">
+        <div class="field"><label for="lKey">${esc(t('link.apiKey'))}</label><input type="password" id="lKey" value="${esc(l.apiKey)}"/></div>
+        <div class="field"><label for="lTeam">${esc(t('link.team'))}</label>
+          <select id="lTeam"><option value="haron_rent" ${l.team === 'haron_rent' ? 'selected' : ''}>Haron Rent</option></select>
+        </div>
+      </div>`)}
+
+    ${setBlock('set.b.linkParams', 'link.hint', `
+      <div class="set-grid">
+        <div class="field"><label for="lMode">${esc(t('link.mode'))}</label><input type="text" id="lMode" value="${esc(l.mode)}" placeholder="${esc(t('link.modePh'))}"/></div>
+        <div class="field"><label for="lPid">${esc(t('link.profileId'))}</label><input type="text" id="lPid" value="${esc(l.profileId)}"/></div>
+        <div class="field"><label for="lCountry">${esc(t('link.country'))}</label>
+          <select id="lCountry"><option value="US" ${l.country === 'US' ? 'selected' : ''}>US</option></select>
+        </div>
+      </div>`)}`));
+  bindText($('#lKey', el), 'link', 'apiKey');
+  bindText($('#lMode', el), 'link', 'mode');
+  bindText($('#lPid', el), 'link', 'profileId');
+  $('#lTeam', el).addEventListener('change', async (e) => {
+    await saveSection('link', { team: e.target.value });
+    markSaved(e.target);
+  });
+  $('#lCountry', el).addEventListener('change', async (e) => {
+    await saveSection('link', { country: e.target.value });
+    markSaved(e.target);
+  });
   return el;
 }
 
 function buildSetTelegram() {
   const tg = state.settings.telegram;
   const el = h(setCard('telegram', `
-    <div class="field"><label>${esc(t('tg.token'))}</label><input type="password" id="tToken" value="${esc(tg.botToken)}"/></div>
-    <div class="field"><label>${esc(t('tg.chatId'))}</label><input type="text" id="tId" value="${esc(tg.botId)}"/></div>
-    <button class="btn" id="tTest">${ICONS.send}<span>${esc(t('tg.test'))}</span></button>
-    <div class="hint" id="tResult" style="margin-top:12px"></div>`));
-  $('#tToken', el).addEventListener('input', debounce((e) => saveSection('telegram', { botToken: e.target.value })));
-  $('#tId', el).addEventListener('input', debounce((e) => saveSection('telegram', { botId: e.target.value })));
+    ${setBlock('set.b.bot', 'set.tgHint', `
+      <div class="set-grid">
+        <div class="field"><label for="tToken">${esc(t('tg.token'))}</label><input type="password" id="tToken" value="${esc(tg.botToken)}"/></div>
+        <div class="field"><label for="tId">${esc(t('tg.chatId'))}</label><input type="text" id="tId" value="${esc(tg.botId)}"/></div>
+      </div>
+      <button class="btn" id="tTest">${ICONS.send}<span>${esc(t('tg.test'))}</span></button>
+      <div class="hint" id="tResult" style="margin-top:12px"></div>`)}`));
+  bindText($('#tToken', el), 'telegram', 'botToken');
+  bindText($('#tId', el), 'telegram', 'botId');
   $('#tTest', el).addEventListener('click', async () => {
     const res = await api.telegram.test($('#tToken', el).value);
     $('#tResult', el).textContent = res && res.ok

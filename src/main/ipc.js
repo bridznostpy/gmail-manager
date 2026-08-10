@@ -9,6 +9,7 @@ const logger = require('./logger');
 const i18n = require('./i18n');
 const { t } = i18n;
 const telegram = require('./telegram/telegram');
+const { DEFAULTS } = require('./store');
 const { resolveChrome } = require('./cdp/chromeManager');
 const { scanAndPersist } = require('./profiles/autoScan');
 const appearance = require('./appearance');
@@ -42,6 +43,9 @@ function register(ctx) {
 
   // ── settings ──────────────────────────────────────────────────────
   ipcMain.handle('settings:getAll', () => store.all());
+  // Значения по умолчанию отдаём из store.js, а не держим вторую копию в
+  // рендере: иначе кнопка сброса возвращала бы устаревшие числа.
+  ipcMain.handle('settings:defaults', () => DEFAULTS);
   ipcMain.handle('settings:setSection', (_e, { key, value }) => {
     const saved = store.set(key, value);
     // Язык логов переключаем сразу, чтобы новые записи шли на выбранном

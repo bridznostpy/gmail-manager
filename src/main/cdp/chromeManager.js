@@ -40,6 +40,10 @@ try { chromium = require('playwright-core').chromium; } catch (_e) { chromium = 
 // Бюджеты ожидания. Взяты один в один с прежних циклов опроса
 // (40 x 250 мс, 24 x 250 мс, 12 x 250 мс), чтобы поведение на живом Gmail
 // не поехало после переноса.
+//
+// Это ПРЕДЕЛ, а не пауза: ждём мы появления самого элемента, а бюджет нужен
+// только чтобы не висеть навечно, когда элемента нет. Растягивается настройкой
+// system.waitScale, см. _t.
 const T_LONG = 10000;
 const T_MED = 6000;
 const T_SHORT = 3000;
@@ -337,6 +341,110 @@ function gmailRowsFn(arg) {
   return out;
 }
 
+// ── Условия ожидания, выполняются В СТРАНИЦЕ ─────────────────────────
+// Все они отвечают на вопрос "нужный элемент уже на месте?". Ожидание по такому
+// условию заменяет ожидание по времени: как только Gmail дорисовал нужное,
+// работа продолжается, а не через фиксированную паузу.
+
+/**
+ * Первый ВИДИМЫЙ элемент из упорядоченного списка селекторов.
+ *
+ * Порядок именно списком, а не одной строкой через запятую: querySelectorAll
+ * отдаёт элементы в порядке документа, а не в порядке селекторов (см.
+ * SEL_ORDERED). Видимость обязательна - Gmail держит неприменимые пункты меню в
+ * разметке со style="display:none", и проверка "элемент есть в DOM" на них
+ * проходит.
+ *
+ * Возвращает НОМЕР селектора плюс единица: waitForFunction ждёт правдивого
+ * значения, а ноль правдивым не является.
+ */
+function anyVisibleFn(list) {
+  for (var i = 0; i < list.length; i++) {
+    var nodes = document.querySelectorAll(list[i]);
+    for (var j = 0; j < nodes.length; j++) {
+      var r = nodes[j].getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) return i + 1;
+    }
+  }
+  return 0;
+}
+
+/**
+ * Получатель закреплён плашкой?
+ *
+ * Набранный в поле текст получателем не считаем: именно его Gmail и не
+ * признаёт, а при отправке отвечает, что адрес не указан. Текст блока
+ * получателей значение input не включает, так что попадание в него - это уже
+ * плашка. Плашка известного контакта показывает имя, а не адрес, поэтому
+ * дополнительно смотрим атрибуты.
+ *
+ * Своё мини-окно ищем так же, как _widget: диалог-предок якоря, а при его
+ * отсутствии сам якорь. Вспомогательную функцию вынести нельзя - в страницу
+ * уходит только сама эта функция.
+ */
+function gmailRecipientFn(arg) {
+  var anchor = document.querySelector('[data-compose-id="' + arg.cid + '"]');
+  if (!anchor) return false;
+  var w = (anchor.closest && anchor.closest('div[role="dialog"]')) || anchor;
+  var box = w.querySelector('[name="to"]');
+  if (!box) return false;
+  if ((box.innerText || box.textContent || '').toLowerCase().indexOf(arg.needle) >= 0) return true;
+  var nodes = box.querySelectorAll('[data-hovercard-id],[email],[title],[aria-label]');
+  for (var i = 0; i < nodes.length; i++) {
+    var n = nodes[i];
+    if (n.tagName === 'INPUT') continue;
+    var s = ((n.getAttribute('data-hovercard-id') || '') + ' ' + (n.getAttribute('email') || '')
+          + ' ' + (n.getAttribute('title') || '') + ' ' + (n.getAttribute('aria-label') || '')).toLowerCase();
+    if (s.indexOf(arg.needle) >= 0) return true;
+  }
+  return false;
+}
+
+/**
+ * Идентификатор последнего письма треда в строке списка, если он ИЗМЕНИЛСЯ.
+ *
+ * После нашего ответа он меняется на наш ответ - по нему автоответчик и
+ * понимает, что изменение принесли мы сами, а не продавец. Строку ищем так же,
+ * как _rowLocator: по своему id, при промахе (список перерисовался) по адресу
+ * отправителя.
+ */
+function gmailRowMessageFn(arg) {
+  var r = arg.rowId ? document.getElementById(arg.rowId) : null;
+  if (r && !(r.matches && r.matches(arg.row))) r = null;
+  if (!r && arg.from) {
+    var rows = document.querySelectorAll(arg.row);
+    for (var i = 0; i < rows.length && !r; i++) {
+      var s = rows[i].querySelectorAll('span[email]');
+      for (var j = 0; j < s.length; j++) {
+        if ((s[j].getAttribute('email') || '').toLowerCase() === arg.from) { r = rows[i]; break; }
+      }
+    }
+  }
+  if (!r) return null;
+  var h = r.querySelector('[data-legacy-last-message-id]');
+  var id = r.getAttribute('data-legacy-last-message-id')
+    || (h ? h.getAttribute('data-legacy-last-message-id') : '') || '';
+  return id && id !== arg.was ? id : null;
+}
+
+/**
+ * Список писем дорисован и с ним можно работать: строки есть, а полоса загрузки
+ * Gmail ушла.
+ *
+ * TODO(gmail-dom): #loading - блок "Загрузка..." самого Gmail. Он скрывается
+ * стилем, поэтому смотрим на размеры, а не на наличие в разметке.
+ */
+function gmailListReadyFn(arg) {
+  var rows = document.querySelectorAll(arg.row);
+  if (!rows.length) return false;
+  var loading = document.getElementById('loading');
+  if (loading) {
+    var r = loading.getBoundingClientRect();
+    if (r.width > 0 && r.height > 0) return false;
+  }
+  return true;
+}
+
 /** Вход в аккаунт приоритетнее страницы входа: инбокс может нести оба признака. */
 function probeStatus(parsed) {
   if (parsed && parsed.signedIn) return 'ready';
@@ -514,7 +622,7 @@ class PlaywrightManager {
     const browser = await chromium.connectOverCDP(`http://127.0.0.1:${inst.port}`);
     const context = browser.contexts()[0];
     if (!context) throw new Error(t('err.profileNotRunning'));
-    context.setDefaultTimeout(T_LONG);
+    context.setDefaultTimeout(this._t(T_LONG));
     inst.browser = browser;
     inst.context = context;
     // Фингерпринт ставим здесь: до подключения его поставить нечем. На уже
@@ -541,42 +649,97 @@ class PlaywrightManager {
 
   // ── Общие помощники по странице ──────────────────────────────────────
 
-  /** Есть ли элемент прямо сейчас (без ожидания). */
+  /**
+   * Множитель бюджетов ожидания из настроек. Перечитываем на каждом ожидании,
+   * чтобы правка настройки применялась без перезапуска приложения - так же, как
+   * это сделано с интервалом автоскана.
+   */
+  _waitScale() {
+    const sys = this.store.get('system') || {};
+    const n = Number(sys.waitScale);
+    if (!Number.isFinite(n) || n <= 0) return 1;
+    // Границы обязательны: ноль превратил бы любое ожидание в мгновенный отказ,
+    // а слишком большое значение подвесило бы прогон на минуты.
+    return Math.min(10, Math.max(0.5, n));
+  }
+
+  /** Бюджет ожидания с поправкой на настройку "терпение". */
+  _t(base) {
+    return Math.round(base * this._waitScale());
+  }
+
+  /**
+   * Локатор первого ВИДИМОГО совпадения.
+   *
+   * Обычный `.first()` берёт первый элемент в порядке документа, и если он
+   * скрыт, ожидание видимости на нём проваливается, хотя ниже на странице есть
+   * подходящий. У Gmail так бывает постоянно: неприменимые пункты меню и
+   * свёрнутые окна остаются в разметке скрытыми.
+   */
+  _visible(page, selector) {
+    return page.locator(selector).filter({ visible: true }).first();
+  }
+
+  /** То же внутри своего мини-окна письма, а не по всей странице. */
+  _visibleIn(scope, selector) {
+    return scope.locator(selector).filter({ visible: true }).first();
+  }
+
+  /** Есть ли видимый элемент прямо сейчас (без ожидания). */
   async _exists(page, selector) {
-    try { return (await page.locator(selector).first().count()) > 0; } catch (_e) { return false; }
+    try { return (await this._visible(page, selector).count()) > 0; } catch (_e) { return false; }
   }
 
-  /** Дождаться появления элемента. Как прежний _waitFor - по факту наличия в DOM. */
-  async _wait(page, selector, timeout = T_LONG) {
+  /**
+   * Дождаться элемента. По умолчанию именно видимого: почти всё, чего мы ждём,
+   * дальше нажимается или читается, а скрытый элемент для этого не годится.
+   */
+  async _wait(page, selector, timeout = this._t(T_LONG), { visible = true } = {}) {
     try {
-      await page.locator(selector).first().waitFor({ state: 'attached', timeout });
-      return true;
-    } catch (_e) { return false; }
-  }
-
-  /** Дождаться выполнения предиката в странице. */
-  async _waitFn(page, fn, arg, timeout = T_LONG) {
-    try {
-      await page.waitForFunction(fn, arg, { timeout, polling: 250 });
-      return true;
-    } catch (_e) { return false; }
-  }
-
-  /** Кликнуть, если элемент есть. Возвращает, случился ли клик. */
-  async _clickIf(page, selector, timeout = T_SHORT) {
-    try {
-      await page.locator(selector).first().click({ timeout });
+      const locator = visible ? this._visible(page, selector) : page.locator(selector).first();
+      // Локатор уже отфильтрован по видимости, поэтому ждать нужно факт
+      // совпадения: "attached" на нём означает "видимый элемент появился".
+      await locator.waitFor({ state: 'attached', timeout });
       return true;
     } catch (_e) { return false; }
   }
 
   /**
-   * Кликнуть по первому селектору из списка, который сработал. Именно перебором
-   * по очереди, а не одним селектором через запятую, - см. SEL_ORDERED.
+   * Дождаться выполнения условия в странице. Проверка идёт на каждый кадр
+   * отрисовки, а не по таймеру: условия дешёвые, а реакция получается
+   * мгновенной.
    */
-  async _clickOrdered(page, selectors, timeout = T_SHORT) {
-    for (const selector of selectors) {
-      if (await this._clickIf(page, selector, timeout)) return selector;
+  async _waitFn(page, fn, arg, timeout = this._t(T_LONG)) {
+    try {
+      const handle = await page.waitForFunction(fn, arg, { timeout, polling: 'raf' });
+      return handle ? await handle.jsonValue() : true;
+    } catch (_e) { return false; }
+  }
+
+  /** Кликнуть, если видимый элемент есть. Возвращает, случился ли клик. */
+  async _clickIf(page, selector, timeout = this._t(T_SHORT)) {
+    try {
+      await this._visible(page, selector).click({ timeout });
+      return true;
+    } catch (_e) { return false; }
+  }
+
+  /**
+   * Кликнуть по первому селектору из списка, который виден. Именно перебором по
+   * очереди, а не одним селектором через запятую, - см. SEL_ORDERED.
+   *
+   * Сначала ОДНО ожидание на весь список, и только потом клик по тому, что
+   * нашлось. Прежний перебор кликами тратил на каждый селектор полный таймаут,
+   * то есть до трёх бюджетов подряд там, где элемента просто нет.
+   */
+  async _clickOrdered(page, selectors, timeout = this._t(T_SHORT)) {
+    const hit = await this._waitFn(page, anyVisibleFn, selectors, timeout);
+    if (!hit) return null;
+    // Начинаем с найденного, остальные остаются запасным путём: между
+    // ожиданием и кликом Gmail мог перерисовать окно.
+    const order = [selectors[hit - 1], ...selectors.filter((_s, i) => i !== hit - 1)];
+    for (const selector of order) {
+      if (await this._clickIf(page, selector, this._t(T_SHORT))) return selector;
     }
     return null;
   }
@@ -717,9 +880,9 @@ class PlaywrightManager {
    */
   async _refreshInbox(page) {
     if (await this._clickIf(page, SEL.refreshBtn)) {
-      // Список перерисовывается не мгновенно; ждём появления строк.
-      await this._wait(page, SEL.row, T_SHORT);
-      return true;
+      // Ждём не "какое-то время", а состояние: строки на месте, полоса загрузки
+      // Gmail ушла. Пока она висит, список дорисовывается, и читать его рано.
+      return !!(await this._waitFn(page, gmailListReadyFn, { row: SEL.row }, this._t(T_MED)));
     }
     // Кнопку не нашли или она не нажалась. Читать список "как есть" НЕЛЬЗЯ:
     // он может быть протухшим, и тогда уже отвеченная переписка снова выглядит
@@ -731,7 +894,7 @@ class PlaywrightManager {
     } catch (_e) {
       return false;
     }
-    return this._wait(page, SEL.row, T_MED);
+    return !!(await this._waitFn(page, gmailListReadyFn, { row: SEL.row }, this._t(T_LONG)));
   }
 
   /**
@@ -773,14 +936,14 @@ class PlaywrightManager {
    */
   async _openCompose(page) {
     const before = await this._composeIds(page);
-    if (!(await this._clickIf(page, SEL.composeBtn, T_MED))) return null;
+    if (!(await this._clickIf(page, SEL.composeBtn, this._t(T_MED)))) return null;
     const appeared = await this._waitFn(page, (known) => {
       var n = document.querySelectorAll('[data-compose-id]');
       for (var i = 0; i < n.length; i++) {
         if (known.indexOf(n[i].getAttribute('data-compose-id')) < 0) return true;
       }
       return false;
-    }, before, T_LONG);
+    }, before, this._t(T_LONG));
     if (!appeared) return null;
     const fresh = (await this._composeIds(page)).filter((id) => before.indexOf(id) < 0);
     return fresh.length ? fresh[fresh.length - 1] : null;
@@ -788,7 +951,7 @@ class PlaywrightManager {
 
   /** Прочитать значение поля внутри своего мини-окна. */
   async _readField(widget, selector) {
-    const el = widget.locator(selector).first();
+    const el = this._visibleIn(widget, selector);
     if (!(await el.count())) return null;
     return el.evaluate((node) => String(node.value == null ? (node.innerText || '') : node.value))
       .catch(() => null);
@@ -802,8 +965,8 @@ class PlaywrightManager {
    */
   async _typeInto(page, widget, selector, text) {
     const value = String(text == null ? '' : text);
-    const el = widget.locator(selector).first();
-    if (!(await this._waitLocator(el, T_MED))) return false;
+    const el = this._visibleIn(widget, selector);
+    if (!(await this._waitLocator(el, this._t(T_MED)))) return false;
     const focused = await el.evaluate((node) => {
       node.focus();
       if (node.select) { try { node.select(); } catch (e) {} }
@@ -823,36 +986,26 @@ class PlaywrightManager {
     return (await this._readField(widget, selector)) === value;
   }
 
-  /** Дождаться конкретного локатора (без бросания исключения). */
-  async _waitLocator(locator, timeout = T_LONG) {
+  /**
+   * Дождаться конкретного локатора (без бросания исключения). Ждём видимости:
+   * поля скрытого окна письма ни прочитать, ни заполнить нельзя.
+   */
+  async _waitLocator(locator, timeout = this._t(T_LONG)) {
     try {
-      await locator.waitFor({ state: 'attached', timeout });
+      await locator.waitFor({ state: 'visible', timeout });
       return true;
     } catch (_e) { return false; }
   }
 
   /**
-   * Получатель есть только тогда, когда адрес закреплён плашкой. Набранный в
-   * поле текст не считаем: именно его Gmail и не признаёт получателем. Текст
-   * блока получателей значение input не включает, так что попадание в него -
-   * это уже плашка. Плашка известного контакта показывает имя, а не адрес,
-   * поэтому дополнительно смотрим атрибуты.
+   * Дождаться, пока адрес закрепится плашкой получателя. Условие целиком
+   * живёт в странице (gmailRecipientFn), поэтому ждём именно появления плашки,
+   * а не отмеряем паузу после нажатия.
    */
-  async _hasRecipient(widget, address) {
-    const box = widget.locator('[name="to"]').first();
-    if (!(await box.count())) return false;
-    return box.evaluate((node, needle) => {
-      if ((node.innerText || node.textContent || '').toLowerCase().indexOf(needle) >= 0) return true;
-      var nodes = node.querySelectorAll('[data-hovercard-id],[email],[title],[aria-label]');
-      for (var i = 0; i < nodes.length; i++) {
-        var n = nodes[i];
-        if (n.tagName === 'INPUT') continue;
-        var s = ((n.getAttribute('data-hovercard-id') || '') + ' ' + (n.getAttribute('email') || '')
-              + ' ' + (n.getAttribute('title') || '') + ' ' + (n.getAttribute('aria-label') || '')).toLowerCase();
-        if (s.indexOf(needle) >= 0) return true;
-      }
-      return false;
-    }, String(address || '').toLowerCase()).catch(() => false);
+  async _waitRecipient(page, cid, address, timeout = this._t(T_SHORT)) {
+    return !!(await this._waitFn(page, gmailRecipientFn, {
+      cid: String(cid), needle: String(address || '').toLowerCase(),
+    }, timeout));
   }
 
   /**
@@ -861,26 +1014,24 @@ class PlaywrightManager {
    * Закрепляем Tab, при осечке повторяем с запятой; Enter не годится - он
    * выберет подсказку из списка контактов, а это может быть чужой адрес.
    */
-  async _setRecipient(page, widget, to) {
+  async _setRecipient(page, widget, cid, to) {
     const commits = [
       () => page.keyboard.press('Tab'),
       () => page.keyboard.insertText(','),
     ];
     for (const commit of commits) {
       const typed = await this._typeInto(page, widget, SEL.to, to);
-      if (typed) {
-        await commit();
-        if (await this._hasRecipient(widget, to)) return true;
-      }
-      await page.waitForTimeout(400);
+      if (!typed) continue;
+      await commit();
+      if (await this._waitRecipient(page, cid, to)) return true;
     }
     return false;
   }
 
   /** Тело письма - contenteditable, перевод строки нужен настоящий. */
   async _fillBody(widget, text) {
-    const el = widget.locator(SEL.body).first();
-    if (!(await this._waitLocator(el, T_MED))) return false;
+    const el = this._visibleIn(widget, SEL.body);
+    if (!(await this._waitLocator(el, this._t(T_MED)))) return false;
     return el.evaluate((node, put) => {
       node.focus();
       try { document.execCommand('insertText', false, put); }
@@ -907,7 +1058,7 @@ class PlaywrightManager {
       await page.goto(INBOX_URL, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
     }
 
-    if (!(await this._wait(page, SEL.composeBtn, T_LONG))) {
+    if (!(await this._wait(page, SEL.composeBtn, this._t(T_LONG)))) {
       logger.warn('gmail', t('gmail.composeBtnMissing'));
       return this._composeViaWindow(inst, { to, subject, body });
     }
@@ -920,7 +1071,7 @@ class PlaywrightManager {
     try {
       // Не жмём "Отправить" вслепую: без закреплённого получателя Gmail выдаёт
       // свой алерт, окно остаётся висеть, а в логе - невнятное "не подтверждено".
-      if (!(await this._setRecipient(page, widget, to))) {
+      if (!(await this._setRecipient(page, widget, cid, to))) {
         throw new Error(t('err.recipientNotSet', { to }));
       }
       if (subject) await this._typeInto(page, widget, SEL.subject, subject);
@@ -928,11 +1079,11 @@ class PlaywrightManager {
 
       let clicked = false;
       try {
-        await widget.locator(SEL.send).first().click({ timeout: T_SHORT });
+        await this._visibleIn(widget, SEL.send).click({ timeout: this._t(T_SHORT) });
         clicked = true;
       } catch (_e) { clicked = false; }
       if (!clicked) {
-        await this._sendShortcut(page, inst, widget.locator(SEL.body).first());
+        await this._sendShortcut(page, inst, this._visibleIn(widget, SEL.body));
       }
 
       // Отправленное окно закрывается само. Отдельно ловим подтверждение Gmail
@@ -940,7 +1091,7 @@ class PlaywrightManager {
       sent = await this._waitFn(page, (id) => {
         if (!document.querySelector('[data-compose-id="' + id + '"]')) return true;
         return !!document.getElementById('link_undo');
-      }, String(cid), T_MED);
+      }, String(cid), this._t(T_MED));
       if (sent) logger.success('gmail', t('gmail.sent', { to }));
       else logger.warn('gmail', t('gmail.sendUnconfirmed', { to }));
       return { ok: !!sent };
@@ -948,7 +1099,7 @@ class PlaywrightManager {
       // Своё окно за собой закрываем, иначе неудачные попытки копятся на
       // странице стопкой черновиков.
       if (!sent) {
-        await widget.locator(SEL.close).first().click({ timeout: T_SHORT }).catch(() => {});
+        await this._visibleIn(widget, SEL.close).click({ timeout: this._t(T_SHORT) }).catch(() => {});
       }
     }
   }
@@ -962,16 +1113,16 @@ class PlaywrightManager {
     const page = await inst.context.newPage();
     try {
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
-      if (!(await this._wait(page, SEL.send, T_LONG))) {
+      if (!(await this._wait(page, SEL.send, this._t(T_LONG)))) {
         throw new Error(t('err.composeNotRendered'));
       }
-      if (!(await this._clickIf(page, SEL.send, T_SHORT))) {
+      if (!(await this._clickIf(page, SEL.send, this._t(T_SHORT)))) {
         await this._sendShortcut(page, inst);
       }
       const sent = await this._waitFn(page, (sel) => {
         if (!document.querySelector(sel)) return true;
         return !!document.getElementById('link_undo');
-      }, SEL.send, T_MED);
+      }, SEL.send, this._t(T_MED));
       if (sent) logger.success('gmail', t('gmail.sent', { to }));
       else logger.warn('gmail', t('gmail.sendUnconfirmed', { to }));
       return { ok: !!sent };
@@ -1026,12 +1177,12 @@ class PlaywrightManager {
       // Из открытой переписки возвращаемся стрелкой "Назад", как это сделал бы
       // человек: Gmail тут одностраничный, и перезагрузка ради возврата в
       // список - лишние секунды на каждом ответе.
-      if (await this._clickOrdered(page, SEL_ORDERED.backToInbox, T_SHORT)) {
-        if (await this._wait(page, SEL.row, T_MED)) return true;
+      if (await this._clickOrdered(page, SEL_ORDERED.backToInbox, this._t(T_SHORT))) {
+        if (await this._wait(page, SEL.row, this._t(T_MED))) return true;
       }
     }
     await page.goto(INBOX_URL, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
-    return this._wait(page, SEL.row, T_MED);
+    return this._wait(page, SEL.row, this._t(T_MED));
   }
 
   /**
@@ -1076,10 +1227,11 @@ class PlaywrightManager {
    */
   async _clickReplyMenuItem(page) {
     const menu = page.locator('div[role="menu"]:visible').first();
-    if (!(await this._waitLocator(menu, T_MED))) return false;
+    if (!(await this._waitLocator(menu, this._t(T_MED)))) return false;
     const items = menu.locator('div[role="menuitem"]:visible');
     try {
-      await items.filter({ has: page.locator('div.J-N-JX.BS') }).first().click({ timeout: T_SHORT });
+      await items.filter({ has: page.locator('div.J-N-JX.BS') }).first()
+        .click({ timeout: this._t(T_SHORT) });
       return true;
     } catch (_e) { /* вёрстка поменялась - идём по подписи */ }
     // Запасной путь по подписи, строго целиком: рядом стоит "Ответить всем".
@@ -1087,7 +1239,7 @@ class PlaywrightManager {
     // подписи и альтернативного текста иконки.
     for (const label of [/^Reply$/i, /^Ответить$/i]) {
       try {
-        await items.filter({ hasText: label }).first().click({ timeout: T_SHORT });
+        await items.filter({ hasText: label }).first().click({ timeout: this._t(T_SHORT) });
         return true;
       } catch (_e) { /* следующий язык */ }
     }
@@ -1110,7 +1262,7 @@ class PlaywrightManager {
     if (!row) return null;
     const before = await this._composeIds(page);
     try {
-      await row.click({ button: 'right', timeout: T_MED });
+      await row.click({ button: 'right', timeout: this._t(T_MED) });
     } catch (_e) { return null; }
     if (!(await this._clickReplyMenuItem(page))) {
       // Меню могло открыться, но нужного пункта мы не нашли - закрываем его,
@@ -1124,7 +1276,7 @@ class PlaywrightManager {
         if (known.indexOf(n[i].getAttribute('data-compose-id')) < 0) return true;
       }
       return false;
-    }, before, T_LONG);
+    }, before, this._t(T_LONG));
     if (!appeared) return null;
     const fresh = (await this._composeIds(page)).filter((id) => before.indexOf(id) < 0);
     return fresh.length ? fresh[fresh.length - 1] : null;
@@ -1161,14 +1313,14 @@ class PlaywrightManager {
       row: SEL.row,
     }).catch(() => false);
 
-    if (clicked && (await this._wait(page, SEL.thread, T_LONG))) return true;
+    if (clicked && (await this._wait(page, SEL.thread, this._t(T_LONG)))) return true;
 
     // Запасной путь - адрес треда, но только если это настоящий id, а не id
     // строки: иначе получится заведомо мёртвая ссылка.
     if (!item.legacyId) return false;
     await page.goto('https://mail.google.com/mail/u/0/#inbox/' + encodeURIComponent(item.legacyId),
       { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
-    return this._wait(page, SEL.thread, T_LONG);
+    return this._wait(page, SEL.thread, this._t(T_LONG));
   }
 
   /**
@@ -1186,51 +1338,48 @@ class PlaywrightManager {
 
       let clicked = false;
       try {
-        await widget.locator(SEL.send).first().click({ timeout: T_SHORT });
+        await this._visibleIn(widget, SEL.send).click({ timeout: this._t(T_SHORT) });
         clicked = true;
       } catch (_e) { clicked = false; }
       if (!clicked) {
-        await this._sendShortcut(page, inst, widget.locator(SEL.body).first());
+        await this._sendShortcut(page, inst, this._visibleIn(widget, SEL.body));
       }
 
       sent = await this._waitFn(page, (id) => {
         if (!document.querySelector('[data-compose-id="' + id + '"]')) return true;
         return !!document.getElementById('link_undo');
-      }, String(cid), T_MED);
+      }, String(cid), this._t(T_MED));
       if (sent) logger.success('gmail', t('gmail.replySent', { tid }));
       else logger.warn('gmail', t('gmail.replyUnconfirmed', { tid }));
       // Своё письмо стало последним в треде. Отдаём его идентификатор наверх,
       // чтобы учёт диалогов не принял наш же ответ за новое письмо продавца.
       const lastMessageId = sent
-        ? await this._waitRowMessageChanged(page, item, item.lastMessageId || '', T_MED)
+        ? await this._waitRowMessageChanged(page, item, item.lastMessageId || '')
         : '';
       return { ok: !!sent, lastMessageId };
     } finally {
       // Неудачную попытку за собой убираем, иначе копятся черновики.
-      if (!sent) await this._clickOrdered(page, SEL_ORDERED.discard, T_SHORT);
+      if (!sent) await this._clickOrdered(page, SEL_ORDERED.discard, this._t(T_SHORT));
     }
   }
 
   /**
    * Идентификатор последнего письма треда в строке списка. После нашего ответа
    * он меняется на наш ответ - по нему автоответчик и понимает, что изменение
-   * принесли мы сами, а не продавец. Ждём смены: строка обновляется не сразу.
+   * принесли мы сами, а не продавец.
+   *
+   * Ждём именно смены идентификатора, условием в самой странице: прежний цикл
+   * перечитывал строку раз в 400 мс и в лучшем случае терял на этом почти
+   * полсекунды на каждом ответе.
    */
-  async _waitRowMessageChanged(page, item, was, timeout = T_MED) {
-    const until = Date.now() + timeout;
-    while (Date.now() < until) {
-      const row = await this._rowLocator(page, item).catch(() => null);
-      if (row) {
-        const id = await row.evaluate((n) => {
-          var h = n.querySelector('[data-legacy-last-message-id]');
-          return n.getAttribute('data-legacy-last-message-id')
-            || (h ? h.getAttribute('data-legacy-last-message-id') : '') || '';
-        }).catch(() => '');
-        if (id && id !== was) return id;
-      }
-      await page.waitForTimeout(400);
-    }
-    return '';
+  async _waitRowMessageChanged(page, item, was, timeout = this._t(T_MED)) {
+    const id = await this._waitFn(page, gmailRowMessageFn, {
+      rowId: String(item.rowId || ''),
+      from: String(item.from || '').toLowerCase(),
+      row: SEL.row,
+      was: String(was || ''),
+    }, timeout);
+    return typeof id === 'string' ? id : '';
   }
 
   async _gmailReply(profileId, thread, text) {
@@ -1257,15 +1406,17 @@ class PlaywrightManager {
       // Форма ответа может быть уже раскрыта - тогда кнопки "Ответить" нет и
       // жать нечего. Ошибкой это не считаем, проверяем по самому полю ввода.
       if (!(await this._exists(page, SEL.replyBox))) {
-        if (!(await this._clickOrdered(page, SEL_ORDERED.replyBtn, T_MED))) {
+        if (!(await this._clickOrdered(page, SEL_ORDERED.replyBtn, this._t(T_MED)))) {
           logger.warn('gmail', t('gmail.replyBtnMissing'));
         }
       }
-      if (!(await this._wait(page, SEL.replyBox, T_LONG))) {
+      if (!(await this._wait(page, SEL.replyBox, this._t(T_LONG)))) {
         throw new Error(t('err.replyBoxNotOpened'));
       }
 
-      const box = page.locator(SEL.replyBox).first();
+      // Поле ответа берём видимое: SEL.replyBox это список селекторов через
+      // запятую, и первым в документе может оказаться скрытый textbox.
+      const box = this._visible(page, SEL.replyBox);
       await box.evaluate((node, put) => {
         node.focus();
         try { document.execCommand('insertText', false, put); }
@@ -1276,12 +1427,12 @@ class PlaywrightManager {
       // Сначала настоящая кнопка "Отправить" - она в форме ответа есть
       // (div[role=button].aoO). Горячая клавиша остаётся запасным путём, с
       // поправкой на mac-фингерпринт профиля.
-      if (!(await this._clickOrdered(page, SEL_ORDERED.replySend, T_SHORT))) {
+      if (!(await this._clickOrdered(page, SEL_ORDERED.replySend, this._t(T_SHORT)))) {
         await this._sendShortcut(page, inst, box);
       }
 
       const sent = await this._waitFn(page,
-        () => !document.querySelector('div[role=textbox][aria-label*=Body]'), null, T_MED);
+        () => !document.querySelector('div[role=textbox][aria-label*=Body]'), null, this._t(T_MED));
       if (sent) logger.success('gmail', t('gmail.replySent', { tid }));
       else logger.warn('gmail', t('gmail.replyUnconfirmed', { tid }));
       return { ok: !!sent };

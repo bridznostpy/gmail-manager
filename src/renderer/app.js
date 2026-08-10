@@ -103,6 +103,11 @@ const BG_PRESETS = {
   },
 };
 
+// Ступени "терпения" при ожидании элементов Gmail: множитель бюджетов в
+// chromeManager. Ступенями, а не полем ввода - значение влияет на все ожидания
+// сразу, и промах в нём виден только по сорванному прогону.
+const WAIT_SCALES = [1, 2, 3];
+
 const LOG_LEVELS = ['all', 'info', 'success', 'warn', 'error'];
 // Сколько строк держим в разметке. Буфер state.logs больше - он нужен фильтру
 // и поиску, но рисовать всю историю разом незачем.
@@ -2347,7 +2352,14 @@ function buildSetLimits() {
       <div class="field"><label>${esc(t('set.batch'))}</label><input type="number" id="mBatch" min="1" value="${s.parserBatchSize}"/></div>
       <div class="field"><label>${esc(t('set.threshold'))}</label><input type="number" id="mThresh" min="0" value="${s.queueRefillThreshold}"/></div>
     </div>
-    <div class="hint">${esc(t('set.limitsHint'))}</div>`));
+    <div class="field" style="max-width:260px">
+      <label>${esc(t('set.waitScale'))}</label>
+      <div class="seg" id="mWait">
+        ${WAIT_SCALES.map((v) => `<button data-v="${v}" class="${Number(s.waitScale || 1) === v ? 'active' : ''}">${v}x</button>`).join('')}
+      </div>
+    </div>
+    <div class="hint">${esc(t('set.waitScaleHint'))}</div>
+    <div class="hint" style="margin-top:8px">${esc(t('set.limitsHint'))}</div>`));
   // Минимумы обязательны. Пустое поле или ноль в "Писем на аккаунт" делали
   // прогон бессмысленным: движок не находил ни одного аккаунта под лимитом,
   // ничего не отправлял и писал в лог "все лимиты достигнуты".
@@ -2356,6 +2368,12 @@ function buildSetLimits() {
   bindNumber($('#mCheck', el), 'system', 'checkIntervalSec', 3);
   bindNumber($('#mBatch', el), 'system', 'parserBatchSize', 1);
   bindNumber($('#mThresh', el), 'system', 'queueRefillThreshold', 1);
+  // Терпение - готовые ступени, а не поле ввода: значение дробное, и вписать
+  // туда ноль значило бы отменить все ожидания сразу.
+  $$('#mWait button', el).forEach((b) => b.addEventListener('click', () => {
+    $$('#mWait button', el).forEach((x) => x.classList.toggle('active', x === b));
+    saveSection('system', { waitScale: Number(b.dataset.v) });
+  }));
   return el;
 }
 

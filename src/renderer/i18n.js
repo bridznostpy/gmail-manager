@@ -203,6 +203,8 @@ const DICT = {
     'set.h.texts': 'Тексты писем и языки рассылки',
 
     'set.limitsHint': 'Лимит писем на аккаунт считается по каждому профилю отдельно. Интервал проверки задаёт, как часто автоответчик заглядывает в почту.',
+    'set.sendDelayHint': 'Столько приложение ждёт между двумя первыми письмами. Меньше - быстрее рассылка, больше - спокойнее для аккаунта.',
+    'set.waitScaleHint': 'Приложение ждёт появления самих элементов Gmail, а не отмеряет паузы. Множитель растягивает предел ожидания: 2x и 3x нужны на медленном интернете, когда почта дорисовывается долго.',
     'parser.platformsHint': 'Площадки настраиваются в группе',
 
     // ── Рассылка ────────────────────────────────────────────
@@ -386,6 +388,8 @@ const DICT = {
     'set.mails': 'Писем на аккаунт',
     'set.replies': 'Максимум ответов в диалоге',
     'set.checkInterval': 'Интервал проверки (сек)',
+    'set.sendDelay': 'Пауза между письмами (сек)',
+    'set.waitScale': 'Терпение при ожидании Gmail',
     'set.batch': 'Размер пачки парсера',
     'set.threshold': 'Порог пополнения очереди',
     'set.texts': 'Тексты рассылки',
@@ -693,6 +697,8 @@ const DICT = {
     'set.h.texts': 'Message texts and outreach languages',
 
     'set.limitsHint': 'The per-account send limit is counted for each profile separately. The check interval sets how often the auto-responder looks into the mailbox.',
+    'set.sendDelayHint': 'How long the app waits between two first-messages. Less means a faster run, more is calmer for the account.',
+    'set.waitScaleHint': 'The app waits for the Gmail elements themselves instead of counting seconds. This multiplier stretches the waiting limit: 2x and 3x help on a slow connection, when the mailbox takes long to render.',
     'parser.platformsHint': 'Platforms are configured in the group',
 
     'run.title': 'Outreach',
@@ -867,6 +873,8 @@ const DICT = {
     'set.mails': 'Mails per account',
     'set.replies': 'Max replies per dialog',
     'set.checkInterval': 'Check interval (sec)',
+    'set.sendDelay': 'Pause between mails (sec)',
+    'set.waitScale': 'Patience when waiting for Gmail',
     'set.batch': 'Parser batch size',
     'set.threshold': 'Queue refill threshold',
     'set.texts': 'Broadcast texts',

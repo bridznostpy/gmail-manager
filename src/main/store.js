@@ -41,6 +41,14 @@ const DEFAULTS = {
     mailsPerAccount: 50, // limit of first-messages per Gmail account
     maxRepliesPerDialog: 3, // cap on auto-replies in one conversation
     checkIntervalSec: 20, // how often the auto-responder polls for replies
+    // Пауза между первыми письмами, секунды. Раньше была зашита в движок
+    // (1500 мс) и не настраивалась.
+    sendDelaySec: 2,
+    // Множитель бюджетов ожидания Gmail (см. chromeManager). Сами ожидания
+    // идут по появлению элемента, а бюджет - только предел, за которым
+    // считаем, что элемент не появился. На медленном интернете растягивается
+    // одним числом.
+    waitScale: 1,
     autoScanSec: 15, // how often running profiles are re-scanned for Gmail status
     outreachLang: 'en', // language of outreach texts (MESSAGES/PASTE/CONFIRM dicts)
     parserBatchSize: 40, // items pulled per parser batch

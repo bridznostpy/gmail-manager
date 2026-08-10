@@ -45,7 +45,9 @@ contextBridge.exposeInMainWorld('api', {
     pause: () => ipcRenderer.invoke('run:pause'),
     resume: () => ipcRenderer.invoke('run:resume'),
     status: () => ipcRenderer.invoke('run:status'),
-    testLead: (email) => ipcRenderer.invoke('run:testLead', { email }),
+    // Название и цену обработчик принимает и кладёт в ссылку Haron, поэтому
+    // передаём их дальше, а не теряем на мосту.
+    testLead: (email, title, price) => ipcRenderer.invoke('run:testLead', { email, title, price }),
   },
   logs: {
     recent: (n) => ipcRenderer.invoke('logs:recent', n),

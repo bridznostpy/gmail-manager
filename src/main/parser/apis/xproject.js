@@ -103,6 +103,18 @@ async function fetchBatch({ apiKey, platforms, limit }) {
   }
 }
 
+/**
+ * Дата публикации приходит полной отметкой времени ("2026-08-10T18:20:42.907Z").
+ * В письме и в карточке объявления нужен день, а не миллисекунды, поэтому
+ * берём часть до "T". Разбирать строку датой незачем: формат в документации
+ * фиксированный, а Date добавил бы сдвиг часового пояса.
+ */
+function _day(value) {
+  const s = String(value == null ? '' : value);
+  const at = s.indexOf('T');
+  return at > 0 ? s.slice(0, at) : s;
+}
+
 /** Map an API listing to the app's internal lead shape. */
 function normalizeLead(raw) {
   raw = raw || {};
@@ -118,6 +130,10 @@ function normalizeLead(raw) {
       currency: raw.currency || '',
       sellerUrl: raw.seller_url || '',
       sellerChatUrl: raw.seller_chat_url || '',
+      // Поля объявления для плейсхолдеров и карточки в чатах. В ответе они
+      // называются image и created_at (см. схему в документации).
+      imageUrl: raw.image || '',
+      datePublication: _day(raw.created_at),
     },
   };
 }

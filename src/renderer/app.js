@@ -1519,6 +1519,18 @@ function renderChatGroups() {
     // каждый раз.
     box.dataset.wired = '1';
     box.addEventListener('click', onChatListClick);
+    // Осечку загрузки фото ловим на контейнере в фазе перехвата: событие error
+    // у картинки не всплывает, а вешать обработчик на каждую строку значит
+    // платить за это на каждый ввод в поиске.
+    box.addEventListener('error', (e) => {
+      const img = e.target;
+      if (!img || img.tagName !== 'IMG') return;
+      const holder = img.closest('[data-photo]');
+      if (!holder) return;
+      holder.classList.add('empty-photo');
+      holder.removeAttribute('data-photo');
+      holder.innerHTML = ICONS.image;
+    }, true);
     box.addEventListener('keydown', (e) => {
       if (e.key !== 'Enter' && e.key !== ' ') return;
       // Нажатие на кнопке действия внутри строки - её дело, переписку не
@@ -1544,6 +1556,14 @@ function onChatListClick(e) {
     else toast(t('chat.openTodo'));
     return;
   }
+  // Клик по фото - показать его крупно, а не открыть переписку: миниатюра
+  // маленькая, и разглядеть товар в ней нельзя.
+  const photo = e.target.closest('[data-photo]');
+  if (photo) {
+    e.stopPropagation();
+    openPhoto(photo.dataset.photo);
+    return;
+  }
   const row = e.target.closest('.cl-row');
   if (row) openChat(row.dataset.key);
 }
@@ -1558,9 +1578,14 @@ function chatRowHtml(c, showProfile) {
   const title = (c.contact && c.contact.title) || '';
   const last = c.lastText ? shorten(c.lastText, 60) : '';
   const listing = (c.contact && c.contact.listingUrl) || '';
+  // Фото товара вместо буквы адресата: про какое объявление переписка, по
+  // строке иначе не понять, а сам адрес стоит тут же справа.
+  const photo = (c.contact && c.contact.imageUrl) || '';
   return `<div class="cl-row ${state.openChat === c.chatKey ? 'on' : ''}" data-key="${esc(c.chatKey)}"
     role="button" tabindex="0">
-    <span class="pc-avatar" style="--av:${avatarColor({ email: c.email })}">${esc((c.email || '?').charAt(0).toUpperCase())}</span>
+    ${photo
+      ? photoHtml(photo, 'cl-photo')
+      : `<span class="pc-avatar" style="--av:${avatarColor({ email: c.email })}">${esc((c.email || '?').charAt(0).toUpperCase())}</span>`}
     <span class="clr-id">
       <span class="clr-top">
         <span class="clr-name">${markMatch(c.email || dash, q)}</span>
@@ -1727,6 +1752,54 @@ function chatBubbleHtml(m, c, same) {
   </div>`;
 }
 
+/**
+ * Фото товара из парсера (`imageUrl` лида).
+ *
+ * Картинка живёт на CDN площадки и пропадает вместе с объявлением, поэтому
+ * разметка всегда одна и та же: контейнер с заглушкой, а `img` внутри. Не
+ * загрузилась - `wirePhotos` возвращает контейнер к заглушке, вместо рамки с
+ * крестом. Пустой адрес - сразу заглушка.
+ */
+function photoHtml(url, cls) {
+  const src = String(url == null ? '' : url).trim();
+  if (!src) return `<div class="photo ${cls} empty-photo">${ICONS.image}</div>`;
+  return `<div class="photo ${cls}" data-photo="${esc(src)}" title="${esc(t('chat.photoOpen'))}">
+    <img src="${esc(src)}" alt="" loading="lazy"/></div>`;
+}
+
+/** Заглушка при осечке загрузки и открытие фото крупно по клику. */
+function wirePhotos(root) {
+  $$('[data-photo]', root).forEach((box) => {
+    if (box.dataset.wired) return;
+    box.dataset.wired = '1';
+    const img = box.querySelector('img');
+    if (img) {
+      img.addEventListener('error', () => {
+        box.classList.add('empty-photo');
+        box.removeAttribute('data-photo');
+        box.innerHTML = ICONS.image;
+      });
+    }
+    box.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (box.dataset.photo) openPhoto(box.dataset.photo);
+    });
+  });
+}
+
+/** Фото объявления во весь экран - в списке и в карточке оно слишком мелкое. */
+function openPhoto(url) {
+  return modal(
+    `<div class="photo-full"><img src="${esc(url)}" alt=""/></div>
+     <div class="modal-actions">
+       <button class="btn" id="phClose">${esc(t('common.close'))}</button>
+     </div>`,
+    (overlay, done) => {
+      $('#phClose', overlay).addEventListener('click', () => done(null));
+    },
+  );
+}
+
 /** Правая колонка: карточка объявления. Пустых строк не рисуем. */
 function renderChatSide(c) {
   const side = $('#chatSide');
@@ -1748,9 +1821,7 @@ function renderChatSide(c) {
 
   setOnce(side, `
     <div class="cs-head"><span class="section-label">${esc(t('chat.listing'))}</span></div>
-    ${info.imageUrl
-      ? `<div class="cs-photo"><img src="${esc(info.imageUrl)}" alt="" loading="lazy"/></div>`
-      : `<div class="cs-photo empty-photo">${ICONS.image}</div>`}
+    ${photoHtml(info.imageUrl, 'cs-photo')}
     <div class="cs-title">${esc(info.title || t('chat.noTitle'))}</div>
     <div class="cs-rows">
       ${rows.map(([k, v]) => `<div class="kv"><span class="k">${esc(k)}</span><span class="v">${esc(v)}</span></div>`).join('')}
@@ -1768,6 +1839,7 @@ function renderChatSide(c) {
   if (openBtn) openBtn.addEventListener('click', () => toast(t('chat.openTodo')));
   const nudgeBtn = $('[data-nudge]', side);
   if (nudgeBtn) nudgeBtn.addEventListener('click', () => nudgeChat(nudgeBtn.dataset.nudge));
+  wirePhotos(side);
   wireRipples(side);
 }
 

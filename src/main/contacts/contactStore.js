@@ -89,8 +89,9 @@ class ContactStore {
       title: meta.title || prev.title || '',
       price: meta.price != null ? meta.price : (prev.price != null ? prev.price : ''),
       currency: meta.currency || prev.currency || '',
-      // Данные товара для плейсхолдеров автоответа. VVS отдаёт их сам, у
-      // XProject таких полей в документации нет - там останется пусто.
+      // Данные товара для плейсхолдеров автоответа и карточки объявления в
+      // чатах. Оба клиента парсера их отдают: у VVS это image_url и
+      // date_publication, у XProject - image и created_at.
       imageUrl: meta.imageUrl || prev.imageUrl || '',
       datePublication: meta.datePublication || prev.datePublication || '',
       sellerUrl: meta.sellerUrl || prev.sellerUrl || '',

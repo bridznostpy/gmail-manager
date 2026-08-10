@@ -11,6 +11,7 @@ const DICT = {
     'app.theme': 'Тема',
     'common.ok': 'ОК',
     'common.cancel': 'Отмена',
+    'common.close': 'Закрыть',
     'common.yes': 'да',
     'common.no': 'нет',
 
@@ -167,6 +168,7 @@ const DICT = {
     'chat.noContact': 'Данных объявления нет - парсер их не передал.',
     'chat.noTitle': 'Без названия',
     'chat.openListing': 'Открыть объявление',
+    'chat.photoOpen': 'Показать фото крупно',
     'chat.i.price': 'Цена',
     'chat.i.seller': 'Продавец',
     'chat.i.platform': 'Площадка',
@@ -508,6 +510,7 @@ const DICT = {
     'app.theme': 'Theme',
     'common.ok': 'OK',
     'common.cancel': 'Cancel',
+    'common.close': 'Close',
     'common.yes': 'yes',
     'common.no': 'no',
 
@@ -657,6 +660,7 @@ const DICT = {
     'chat.noContact': 'No listing data - the parser did not provide it.',
     'chat.noTitle': 'Untitled',
     'chat.openListing': 'Open the listing',
+    'chat.photoOpen': 'Show the photo full size',
     'chat.i.price': 'Price',
     'chat.i.seller': 'Seller',
     'chat.i.platform': 'Platform',

@@ -3,8 +3,10 @@
 <head>
   <meta charset="UTF-8" />
   <!-- appbg: - своя схема для пользовательской картинки фона (см. main/appearance.js).
-       data: нужен превью-градиентам в панели оформления. -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self'; img-src 'self' data: appbg:;" />
+       data: нужен превью-градиентам в панели оформления.
+       https: - фото товара из парсера (imageUrl лида). Без него браузер молча
+       блокировал картинку объявления в чатах и в превью HTML-письма. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self'; img-src 'self' data: https: appbg:;" />
   <title>Gmail Manager</title>
   <link rel="stylesheet" href="styles/theme.css" />
   <link rel="stylesheet" href="styles/glass.css" />

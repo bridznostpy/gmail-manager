@@ -157,8 +157,19 @@ class SenderEngine {
       if (this.statsStore) this.statsStore.note('errors');
       logger.error('sender', t('send.failed', { label: account.label, error: e.message }));
     }
-    // Small spacing between sends; the real cadence is bounded by Gmail itself.
-    this._sendTimer = setTimeout(() => this._sendLoop(), 1500);
+    // Пауза между письмами - из настроек. Ждём именно здесь, после отправки:
+    // очередь и лимиты уже сошлись, и следующий заход начнётся с чистого места.
+    this._sendTimer = setTimeout(() => this._sendLoop(), this._sendDelayMs());
+  }
+
+  /**
+   * Пауза между двумя первыми письмами, мс. Минимум секунда: ноль в настройках
+   * означал бы отправку в упор, а это самый быстрый способ схватить ограничение
+   * от самого Gmail.
+   */
+  _sendDelayMs() {
+    const sec = Number((this.store.get('system') || {}).sendDelaySec);
+    return Math.max(1, Number.isFinite(sec) ? sec : 2) * 1000;
   }
 
   async _sendFirstMessage(account, lead) {

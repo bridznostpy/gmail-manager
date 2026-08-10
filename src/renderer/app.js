@@ -2348,7 +2348,11 @@ function buildSetLimits() {
       <div class="field"><label>${esc(t('set.replies'))}</label><input type="number" id="mReplies" min="0" value="${s.maxRepliesPerDialog}"/></div>
     </div>
     <div class="row">
+      <div class="field"><label>${esc(t('set.sendDelay'))}</label><input type="number" id="mDelay" min="1" value="${s.sendDelaySec}"/></div>
       <div class="field"><label>${esc(t('set.checkInterval'))}</label><input type="number" id="mCheck" min="3" value="${s.checkIntervalSec}"/></div>
+    </div>
+    <div class="hint">${esc(t('set.sendDelayHint'))}</div>
+    <div class="row" style="margin-top:14px">
       <div class="field"><label>${esc(t('set.batch'))}</label><input type="number" id="mBatch" min="1" value="${s.parserBatchSize}"/></div>
       <div class="field"><label>${esc(t('set.threshold'))}</label><input type="number" id="mThresh" min="0" value="${s.queueRefillThreshold}"/></div>
     </div>
@@ -2365,6 +2369,7 @@ function buildSetLimits() {
   // ничего не отправлял и писал в лог "все лимиты достигнуты".
   bindNumber($('#mMails', el), 'system', 'mailsPerAccount', 1);
   bindNumber($('#mReplies', el), 'system', 'maxRepliesPerDialog', 0);
+  bindNumber($('#mDelay', el), 'system', 'sendDelaySec', 1);
   bindNumber($('#mCheck', el), 'system', 'checkIntervalSec', 3);
   bindNumber($('#mBatch', el), 'system', 'parserBatchSize', 1);
   bindNumber($('#mThresh', el), 'system', 'queueRefillThreshold', 1);

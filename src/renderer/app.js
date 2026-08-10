@@ -1669,34 +1669,60 @@ function renderChatFeed() {
   }
   // Разделитель дня перед первым письмом каждой даты: у пузыря есть только
   // время, и в переписке на две недели непонятно, когда что было.
+  const chat = chatById(state.openChat) || {};
   let day = '';
-  setOnce(feed, rows.map((m) => {
+  setOnce(feed, rows.map((m, i) => {
     const key = m.ts ? new Date(m.ts).toDateString() : '';
-    const head = key && key !== day ? `<div class="cm-day"><span>${esc(fmtDayLabel(m.ts))}</span></div>` : '';
+    const newDay = key && key !== day;
+    const head = newDay ? `<div class="cm-day"><span>${esc(fmtDayLabel(m.ts))}</span></div>` : '';
     day = key || day;
-    return head + chatBubbleHtml(m);
+    return head + chatBubbleHtml(m, chat, !newDay && sameSpeaker(rows[i - 1], m));
   }).join(''));
   // К последнему письму - в кадре, чтобы не считать раскладку сразу после
   // вставки всей ленты.
   requestAnimationFrame(() => { feed.scrollTop = feed.scrollHeight; });
 }
 
-function chatBubbleHtml(m) {
+/**
+ * Письма подряд от одного и того же - одна группа: подпись у них общая, второй
+ * раз называть автора незачем. Через шесть часов считаем разговор возобновлён -
+ * там подпись снова нужна.
+ */
+function sameSpeaker(prev, m) {
+  if (!prev) return false;
+  return prev.dir === m.dir && (prev.kind || 'first') === (m.kind || 'first')
+    && (m.ts - prev.ts) < 6 * 3600 * 1000;
+}
+
+/** Кто написал: наш профиль или продавец. */
+function chatAuthor(m, c) {
+  if (m.dir === 'out') return c.profileLabel || t('chat.you');
+  const name = (c.contact && c.contact.name) || '';
+  return name || String(c.email || dash).split('@')[0];
+}
+
+/**
+ * Письмо в ленте. Подпись вынесена НАД пузырём: внутри она читалась как
+ * отладочная строка и отъедала высоту у самого текста. Исходящее не заливаем
+ * акцентом целиком - на тёмном фоне это была самая яркая плита на экране;
+ * хватает мягкой подложки и кромки.
+ */
+function chatBubbleHtml(m, c, same) {
   const out = m.dir === 'out';
-  const kind = t('chat.kind.' + (m.kind || 'first'));
   // Тексты рассылки заканчиваются переносом строки - в письме он не виден, а в
   // пузыре рисовался бы пустой строкой. Внутренние абзацы сохраняем: они
   // осмысленные, ими текст и разбит.
   const body = String(m.body || '').trim();
-  return `<div class="bubble ${out ? 'out' : 'in'}">
+  return `<div class="bubble ${out ? 'out' : 'in'} ${same ? 'same' : ''}">
+    <div class="bb-meta">
+      ${same ? '' : `<span class="bb-who">${esc(chatAuthor(m, c))}</span>
+      <span class="bb-kind">${esc(t('chat.kind.' + (m.kind || 'first')))}</span>`}
+      ${m.partial ? `<span class="bb-partial" title="${esc(t('chat.partialHint'))}">${esc(t('chat.partial'))}</span>` : ''}
+      <span class="bb-time">${esc(fmtClock(m.ts))}</span>
+    </div>
     <div class="bb-body">
       ${m.subject && m.kind === 'first' ? `<div class="bb-subj">${esc(m.subject)}</div>` : ''}
       <div class="bb-text">${esc(body)}</div>
-      <div class="bb-foot">
-        <span class="bb-kind">${esc(kind)}</span>
-        ${m.partial ? `<span class="bb-partial" title="${esc(t('chat.partialHint'))}">${esc(t('chat.partial'))}</span>` : ''}
-        <span class="bb-time">${esc(fmtShortTime(m.ts))}</span>
-      </div>
     </div>
   </div>`;
 }
@@ -1755,6 +1781,12 @@ async function nudgeChat(email) {
       res && res.ok ? 'success' : 'error');
     if (res && res.ok) refreshChats(true);
   } catch (e) { toast(t('nudge.error', { error: e.message }), 'error'); }
+}
+
+/** Часы и минуты. В ленте дату писать незачем - её держит разделитель дня. */
+function fmtClock(ts) {
+  if (!ts) return '';
+  return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
 /** Подпись дня для разделителя в ленте. */

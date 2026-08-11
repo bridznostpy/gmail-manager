@@ -985,14 +985,27 @@ VIEWS.run = () => {
         <div class="sub">${esc(t('dash.heroSub'))}</div>
         <div class="control-actions" id="runControls"></div>
         <div class="control-note" id="runNote"></div>
+        <div class="ready-list" id="dReady"></div>
       </div>
-      <div class="gauge">
-        <svg viewBox="0 0 120 120">
-          <circle class="bg" cx="60" cy="60" r="52"/>
-          <circle class="fg" id="gaugeArc" cx="60" cy="60" r="52"
-            stroke-dasharray="326.7" stroke-dashoffset="326.7"/>
-        </svg>
-        <div class="mid"><b id="gaugePct">0%</b><span id="gaugeSub">0 / 0</span></div>
+      <div class="control-side">
+        <div class="gauge">
+          <svg viewBox="0 0 120 120">
+            <circle class="bg" cx="60" cy="60" r="52"/>
+            <circle class="fg" id="gaugeArc" cx="60" cy="60" r="52"
+              stroke-dasharray="326.7" stroke-dashoffset="326.7"/>
+          </svg>
+          <div class="mid"><b id="gaugePct">0%</b><span id="gaugeSub">0 / 0</span></div>
+        </div>
+        <div class="pace">
+          <div class="pace-row">
+            <span class="k">${esc(t('dash.pace'))}</span>
+            <b id="paceRate">${dash}</b>
+          </div>
+          <div class="pace-row">
+            <span class="k">${esc(t('dash.eta'))}</span>
+            <b id="paceEta">${dash}</b>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -1211,11 +1224,73 @@ function paintRun() {
     $('#gaugeSub').textContent = plan.done + ' / ' + plan.total;
   }
 
+  paintPace(plan);
+  paintReadyList(ready, noTab);
   paintAccountRows(plan);
   paintRunControls();
   paintQuickRun();
   paintSpark();
   if (state.route === 'home') paintHome();
+}
+
+/**
+ * Темп и прогноз рядом с кольцом.
+ *
+ * Считаем по сессионному счётчику из движка: sentCount профиля накопительный и
+ * переживает перезапуски, темп по нему получился бы бессмысленным. Пока прогон
+ * идёт меньше минуты или ушло меньше двух писем, показываем прочерк - на таких
+ * данных любое число будет выдумкой.
+ */
+function paintPace(plan) {
+  const rateEl = $('#paceRate');
+  const etaEl = $('#paceEta');
+  if (!rateEl || !etaEl) return;
+  const r = state.runStatus;
+  const sent = r.sentThisSession || 0;
+  const perHour = (r.uptimeSec >= 60 && sent >= 2) ? (sent / r.uptimeSec) * 3600 : 0;
+  rateEl.textContent = perHour ? t('dash.perHour', { n: Math.round(perHour) }) : dash;
+
+  const left = Math.max(0, plan.total - plan.done);
+  etaEl.textContent = perHour && left
+    ? fmtUptime(Math.round(left / (perHour / 3600)))
+    : dash;
+}
+
+/**
+ * Чеклист готовности.
+ *
+ * Раньше о причине, по которой прогон не поедет, говорила одна плашка - и
+ * только о самой первой. Причин обычно несколько, и до каждой надо было
+ * догадаться самому. Здесь они все и с переходом туда, где закрываются.
+ */
+function paintReadyList(ready, noTab) {
+  const box = $('#dReady');
+  if (!box) return;
+  const s = state.settings;
+  const rows = [
+    { ok: ready > 0, key: 'dash.chk.ready', go: () => go('profiles') },
+    { ok: !noTab, key: 'dash.chk.tabs', go: () => go('profiles') },
+    { ok: !!s.texts, key: 'dash.chk.texts', go: () => goSettings('texts') },
+    { ok: !!(s.parser.platforms || []).length, key: 'dash.chk.targets', go: () => goSettings('targets') },
+    { ok: !!s.parser.apiKey, key: 'dash.chk.parser', go: () => goSettings('parser') },
+    { ok: !!s.link.apiKey, key: 'dash.chk.link', go: () => goSettings('link') },
+  ];
+  // Подпись меняется реже, чем идёт опрос: пересобираем, только если что-то
+  // из шести пунктов перещёлкнулось.
+  const sign = rows.map((x) => (x.ok ? 1 : 0)).join('');
+  if (box.dataset.sign === sign) return;
+  box.dataset.sign = sign;
+
+  box.innerHTML = rows.map((x, i) => `<div class="chk ${x.ok ? 'ok' : 'bad'}" data-i="${i}">
+    <span class="chk-mark">${x.ok ? ICONS.check : ICONS.alert}</span>
+    <span class="chk-text">${esc(t(x.key))}</span>
+    ${x.ok ? '' : `<span class="chk-go">${esc(t('dash.chkGo'))}${ICONS.chevron}</span>`}
+  </div>`).join('');
+
+  $$('.chk', box).forEach((el) => el.addEventListener('click', () => {
+    const row = rows[Number(el.dataset.i)];
+    if (row && !row.ok) row.go();
+  }));
 }
 
 function notePlate(kind, text) {

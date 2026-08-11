@@ -2254,8 +2254,11 @@ async function refreshChats(force) {
 // Фильтры карточек профилей. Считаются по тем же полям, что рисует карточка.
 const PROFILE_FILTERS = [
   { id: 'all', match: () => true },
-  { id: 'ready', match: (p) => p.gmailStatus === 'ready' },
+  // "Готовы" - те, с кого рассылка ещё пойдёт. Профиль, выбравший лимит,
+  // уезжает в свой фильтр: он готов, но писем с него больше не будет.
+  { id: 'ready', match: (p) => profileUiState(p) === 'ready' },
   { id: 'running', match: (p) => p.running },
+  { id: 'autoreply', match: (p) => profileUiState(p) === 'autoreply' },
   { id: 'problems', match: (p) => p.gmailStatus === 'needs_login' || p.gmailStatus === 'error' },
 ];
 
@@ -2278,8 +2281,9 @@ VIEWS.profiles = () => {
         <div class="ph-sub" id="phSub"></div>
         <div class="ph-nums">
           <div class="stat-cell"><div class="num" id="sOnline">0/0</div><div class="cap">${esc(t('prof.runningCount'))}</div></div>
-          <div class="stat-cell" id="cWritten"><div class="num" id="sWritten">0</div><div class="cap">${esc(t('prof.written'))}</div></div>
-          <div class="stat-cell" id="cDialogs"><div class="num" id="sDialogs">0</div><div class="cap">${esc(t('prof.dialogs'))}</div></div>
+          <div class="stat-cell" id="cWritten"><div class="num" id="sWritten">0</div><div class="cap">${esc(t('prof.capSent'))}</div></div>
+          <div class="stat-cell" id="cReplies"><div class="num" id="sReplies">0</div><div class="cap">${esc(t('prof.capReplies'))}</div></div>
+          <div class="stat-cell" id="cLinks"><div class="num" id="sLinks">0</div><div class="cap">${esc(t('prof.capLinks'))}</div></div>
           <div class="stat-cell" id="cProblems"><div class="num" id="sProblems">0</div><div class="cap">${esc(t('prof.problems'))}</div></div>
         </div>
       </div>
@@ -2371,8 +2375,15 @@ function sortProfiles(list) {
   const m = state.profileMetrics || {};
   const written = (p) => ((m[p.id] || {}).written || 0);
   // Порядок состояний от худшего к лучшему: список открывают, чтобы чинить.
-  const rank = { error: 0, needs_login: 1, new: 2, unknown: 2, ready: 3 };
-  const at = (p) => (rank[p.gmailStatus] === undefined ? 9 : rank[p.gmailStatus]);
+  // Профиль на авто-ответе стоит выше готового: чинить в нём нечего, но и
+  // писем с него уже не будет.
+  const rank = {
+    error: 0, needs_login: 1, new: 2, unknown: 2, autoreply: 3, ready: 4,
+  };
+  const at = (p) => {
+    const r = rank[profileUiState(p)];
+    return r === undefined ? 9 : r;
+  };
   const by = {
     created: (a, b) => (a.createdAt || 0) - (b.createdAt || 0),
     written: (a, b) => written(b) - written(a),
@@ -2405,15 +2416,20 @@ function paintProfileStats(s) {
   const online = $('#sOnline');
   if (online) online.textContent = s.running + '/' + s.total;
   const m = state.profileMetrics || {};
-  const written = Object.values(m).reduce((n, x) => n + x.written, 0);
-  const dialogs = Object.values(m).reduce((n, x) => n + x.dialogs, 0);
+  // Письма считаем по счётчику самого профиля, а не по числу контактов:
+  // контакт один на адресата, а писем ему могло уйти несколько.
+  const written = state.profiles.reduce((n, p) => n + (p.sentCount || 0), 0);
+  const replies = Object.values(m).reduce((n, x) => n + (x.replies || 0), 0);
+  const links = Object.values(m).reduce((n, x) => n + (x.links || 0), 0);
   const problems = state.profiles.filter((p) => p.gmailStatus === 'needs_login' || p.gmailStatus === 'error').length;
   setNumber($('#sWritten'), written);
-  setNumber($('#sDialogs'), dialogs);
+  setNumber($('#sReplies'), replies);
+  setNumber($('#sLinks'), links);
   setNumber($('#sProblems'), problems);
   // Ноль не подсвечиваем: цвет должен означать "тут есть что смотреть".
   setTone($('#cWritten'), written > 0 ? 'ok' : '');
-  setTone($('#cDialogs'), dialogs > 0 ? 'accent' : '');
+  setTone($('#cReplies'), replies > 0 ? 'ok' : '');
+  setTone($('#cLinks'), links > 0 ? 'accent' : '');
   setTone($('#cProblems'), problems > 0 ? 'bad' : '');
   const plate = $('#pNote');
   if (plate) plate.innerHTML = problems ? notePlate('warn', t('prof.plateProblems', { n: problems })) : '';
@@ -2531,28 +2547,62 @@ function profileInfo(p, limit, current) {
   const sent = boxes.length
     ? boxes.reduce((n, m) => n + Math.min(m.sentCount || 0, limit), 0)
     : (p.sentCount || 0);
+  // Лимит профиля выбран, только когда его добрали ВСЕ почты: пока хоть одна
+  // под лимитом, с профиля продолжают уходить письма.
+  const capped = boxes.length
+    ? boxes.every((b) => limit > 0 && (b.sentCount || 0) >= limit)
+    : (limit > 0 && (p.sentCount || 0) >= limit);
   return {
     boxes,
     cap,
     sent,
+    capped,
+    total: p.sentCount || 0,
     done: cap > 0 ? clamp(sent / cap, 0, 1) : 0,
     isCurrent: !!(current && current.profileId === p.id && state.runStatus.running),
-    m: (state.profileMetrics || {})[p.id] || { written: 0, dialogs: 0, replies: 0 },
+    m: (state.profileMetrics || {})[p.id] || { written: 0, dialogs: 0, replies: 0, links: 0 },
     bad: p.gmailStatus === 'error' || p.gmailStatus === 'needs_login',
   };
 }
 
+/**
+ * Состояние профиля для интерфейса.
+ *
+ * Считается отдельно от p.gmailStatus нарочно. Движок берёт в прогон профили
+ * со статусом ready (см. _readyProfiles в senderEngine), и записать туда своё
+ * значение значило бы выкинуть аккаунт из рассылки. "Авто-ответ" - это тот же
+ * готовый профиль, у которого кончился лимит писем: рассылка с него окончена,
+ * автоответчик работает дальше.
+ */
+function profileState(p, info) {
+  const status = p.gmailStatus || 'unknown';
+  if (status !== 'ready') return status;
+  return info && info.capped ? 'autoreply' : 'ready';
+}
+
+/** То же самое там, где готового info под рукой нет (фильтры, сортировка). */
+function profileUiState(p) {
+  const limit = (state.settings.system || {}).mailsPerAccount || 0;
+  return profileState(p, profileInfo(p, limit));
+}
+
+/** Одна плашка состояния вместо россыпи разноцветных ярлыков. */
+function statusChipHtml(kind) {
+  return `<span class="status-chip ${kind}" title="${esc(t('status.hint.' + kind))}">
+    <span class="dot ${kind}"></span>${esc(t('status.' + kind))}</span>`;
+}
+
 function profileCardHtml(p, info, limit, current) {
-  const { boxes, cap, sent, done, isCurrent, m, bad } = info;
+  const { boxes, cap, sent, total, done, isCurrent, m, bad } = info;
+  const kind = profileState(p, info);
   return `<div class="profile-card glass glass-sheen ${state.selectedProfile === p.id ? 'selected' : ''} ${isCurrent ? 'current' : ''} ${bad ? 'error' : ''} ${state.selectedProfiles.includes(p.id) ? 'picked' : ''}" data-id="${esc(p.id)}">
     <div class="pc-head">
       ${pickHtml(p)}
       <span class="pc-avatar" style="--av:${avatarColor(p)}">${esc(avatarLetter(p))}
-        <span class="mark ${p.gmailStatus}"></span></span>
+        <span class="mark ${kind}"></span></span>
       <span class="pc-id">
         <span class="pc-name">${esc(p.label)}</span>
         <div class="pc-email">${esc(p.email || t('prof.notSignedIn'))}</div>
-        <div class="pc-tags">${profileTags(p, m, isCurrent, limit)}</div>
       </span>
 
       <span class="pc-head-actions">
@@ -2562,24 +2612,28 @@ function profileCardHtml(p, info, limit, current) {
       </span>
     </div>
 
+    <div class="pc-tags">${statusChipHtml(kind)}${profileTags(p, info, isCurrent)}</div>
+
     <div class="pc-nums">
-      <span class="n"><b>${m.written}</b><span>${esc(t('prof.written'))}</span></span>
-      <span class="n" ${m.dialogs ? 'data-tone="accent"' : ''}><b>${m.dialogs}</b><span>${esc(t('prof.dialogs'))}</span></span>
-      <span class="n" ${m.replies ? 'data-tone="ok"' : ''}><b>${m.replies}</b><span>${esc(t('prof.replies'))}</span></span>
+      <span class="n"><b>${total}</b><span>${esc(t('prof.numSent'))}</span></span>
+      <span class="n" ${m.replies ? 'data-tone="ok"' : ''}><b>${m.replies}</b><span>${esc(t('prof.numReplies'))}</span></span>
+      <span class="n" ${m.links ? 'data-tone="accent"' : ''}><b>${m.links || 0}</b><span>${esc(t('prof.numLinks'))}</span></span>
     </div>
 
     ${profileLiveHtml(p, info)}
 
     ${mailboxListHtml(p, limit, current)}
 
-    <div class="pc-meta">
-      <span><span class="dot ${p.running ? 'running' : 'new'}"></span> ${esc(p.running ? t('prof.running') : t('prof.stopped'))}</span>
-      <span>${esc(t('prof.port'))}: ${p.port || dash}</span>
-      <span class="chip-mini" title="${esc(t('prof.sentHint'))}">${boxes.length ? sent + ' / ' + cap : sent}</span>
-    </div>
-
     <div class="pc-foot">
-      <span>${esc(fmtDate(p.createdAt))}</span>
+      <span class="pc-foot-line">
+        <span class="dot ${p.running ? 'running' : 'new'}"></span>
+        <span>${esc(p.running ? t('prof.running') : t('prof.stopped'))}</span>
+        <span class="pc-sep"></span>
+        <span>${esc(t('prof.port'))} ${p.port || dash}</span>
+        <span class="pc-sep"></span>
+        <span>${esc(fmtDate(p.createdAt))}</span>
+      </span>
+      <span class="chip-mini" title="${esc(t('prof.sentHint'))}">${boxes.length ? sent + ' / ' + cap : sent}</span>
       <span class="acts">
         <button class="mini" data-act="open" title="${esc(t('prof.details'))}">${ICONS.settings}</button>
         <button class="mini" data-act="test" title="${esc(t('prof.testSend'))}">${ICONS.send}</button>
@@ -2597,18 +2651,19 @@ function profileCardHtml(p, info, limit, current) {
  * Здесь только то, по чему их сравнивают: состояние, написано, прогресс.
  */
 function profileRowHtml(p, info, limit) {
-  const { boxes, cap, sent, done, isCurrent, m, bad } = info;
+  const { boxes, cap, sent, total, done, isCurrent, m, bad } = info;
+  const kind = profileState(p, info);
   return `<div class="prow glass ${state.selectedProfile === p.id ? 'selected' : ''} ${isCurrent ? 'current' : ''} ${bad ? 'error' : ''} ${state.selectedProfiles.includes(p.id) ? 'picked' : ''}" data-id="${esc(p.id)}">
     ${pickHtml(p)}
     <span class="pc-avatar" style="--av:${avatarColor(p)}">${esc(avatarLetter(p))}
-      <span class="mark ${p.gmailStatus}"></span></span>
+      <span class="mark ${kind}"></span></span>
     <span class="prow-id">
       <span class="pc-name">${esc(p.label)}</span>
       <span class="pc-email">${esc(p.email || t('prof.notSignedIn'))}</span>
     </span>
-    <span class="prow-tags">${profileTags(p, m, isCurrent, limit)}</span>
-    <span class="prow-num"><b>${m.written}</b><span>${esc(t('prof.written'))}</span></span>
-    <span class="prow-num"><b>${m.replies}</b><span>${esc(t('prof.replies'))}</span></span>
+    <span class="prow-tags">${statusChipHtml(kind)}${profileTags(p, info, isCurrent)}</span>
+    <span class="prow-num"><b>${total}</b><span>${esc(t('prof.numSent'))}</span></span>
+    <span class="prow-num"><b>${m.replies}</b><span>${esc(t('prof.numReplies'))}</span></span>
     <span class="prow-track" title="${esc(t('prof.sentHint'))}">
       <span class="track"><span style="width:${(done * 100).toFixed(1)}%"></span></span>
       <span class="cnt">${boxes.length ? sent + ' / ' + cap : sent}</span>
@@ -2845,23 +2900,14 @@ function mailboxListHtml(p, limit, current) {
 }
 
 /**
- * Теги карточки. Только то, что видно по данным: выдуманных ярлыков вроде
- * "надёжный" здесь быть не должно - они ничего не значат.
+ * Пометки рядом с плашкой состояния. Только то, чего в ней нет: само состояние
+ * рисует statusChipHtml, а числа стоят строкой ниже. Выдуманным ярлыкам вроде
+ * "надёжный" здесь места нет - они ничего не значат.
  */
-function profileTags(p, m, isCurrent, limit) {
+function profileTags(p, info, isCurrent) {
   const tags = [];
-  const boxes = p.mailboxes || [];
   if (isCurrent) tags.push(['live', t('prof.writingNow')]);
-  if (p.gmailStatus !== 'ready') tags.push([p.gmailStatus === 'error' ? 'bad' : 'warn', t('status.' + p.gmailStatus)]);
-  // Лимит профиля исчерпан, только когда его добрали ВСЕ почты: пока хоть одна
-  // под лимитом, с профиля продолжают уходить письма.
-  const capped = boxes.length
-    ? boxes.every((b) => limit > 0 && (b.sentCount || 0) >= limit)
-    : (limit > 0 && (p.sentCount || 0) >= limit);
-  if (capped) tags.push(['done', t('prof.tagLimit')]);
-  if (boxes.length > 1) tags.push(['', t('prof.tagMailboxes', { n: boxes.length })]);
-  if (m.replies > 0) tags.push(['ok', t('prof.tagReplies', { n: m.replies })]);
-  if (!tags.length) tags.push(['', t('status.ready')]);
+  if (info.boxes.length > 1) tags.push(['', t('prof.tagMailboxes', { n: info.boxes.length })]);
   return tags.map(([cls, text]) => `<span class="pc-tag ${cls}">${esc(text)}</span>`).join('');
 }
 

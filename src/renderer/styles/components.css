@@ -439,6 +439,7 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
   border: 2px solid var(--glass-bg);
 }
 .pc-avatar .mark.ready { background: var(--green); }
+.pc-avatar .mark.autoreply { background: var(--blue); }
 .pc-avatar .mark.needs_login { background: var(--amber); }
 .pc-avatar .mark.error { background: var(--red); }
 .pc-avatar .mark.new, .pc-avatar .mark.unknown { background: var(--text-faint); }
@@ -450,12 +451,30 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
   font-size: var(--fs-2xs); margin-top: 3px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.pc-tags { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 6px; }
+/* Пометки идут отдельной строкой под шапкой, а не внутри колонки с именем:
+   в колонке они утаскивали имя и почту влево и ломали ряд кнопок справа. */
+.pc-tags { display: flex; gap: 6px; flex-wrap: wrap; padding: 0 15px 12px; align-items: center; }
+.prow-tags .status-chip { flex-shrink: 0; }
 .pc-tag {
-  font-size: var(--fs-2xs); padding: 2px 7px; border-radius: 20px;
+  font-size: var(--fs-2xs); padding: 3px 9px; border-radius: 20px;
   background: var(--bg-input); border: 1px solid var(--border);
   color: var(--text-dim);
 }
+
+/* Плашка состояния. Одна на карточку: разноцветная россыпь ярлыков заставляла
+   вычитывать состояние из набора мелких слов вместо одного взгляда. */
+.status-chip {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 3px 11px 3px 9px; border-radius: 20px;
+  font-size: var(--fs-2xs); font-weight: 550;
+  background: var(--bg-input); border: 1px solid var(--border);
+  color: var(--text-dim); white-space: nowrap;
+}
+.status-chip .dot { width: 7px; height: 7px; box-shadow: none; }
+.status-chip.ready { background: var(--green-soft); border-color: rgba(61, 220, 132, 0.28); color: var(--green); }
+.status-chip.autoreply { background: var(--blue-soft); border-color: rgba(87, 166, 255, 0.3); color: var(--blue); }
+.status-chip.needs_login { background: var(--amber-soft); border-color: rgba(255, 180, 67, 0.28); color: var(--amber); }
+.status-chip.error { background: var(--red-soft); border-color: rgba(255, 95, 109, 0.28); color: var(--red); }
 .pc-tag.live {
   color: var(--accent); background: var(--accent-soft); border-color: var(--accent-line);
   animation: blink 2s var(--ease) infinite;
@@ -473,7 +492,12 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
   display: block; font-size: 19px; font-weight: 700; letter-spacing: -0.03em;
   color: var(--nt, var(--text));
 }
-.pc-nums .n span { font-size: var(--fs-2xs); color: var(--text-faint); }
+/* Подпись под числом занимает две строки всегда: "отправлено писем" в узкой
+   колонке переносится, и без резерва соседние числа съезжали по высоте. */
+.pc-nums .n span {
+  display: block; font-size: var(--fs-2xs); color: var(--text-faint);
+  line-height: 1.25; min-height: 2.5em; margin-top: 2px;
+}
 .pc-nums .n[data-tone="ok"] { --nt: var(--green); }
 .pc-nums .n[data-tone="accent"] { --nt: var(--accent); }
 
@@ -534,25 +558,27 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
   transition: width var(--dur) var(--ease);
 }
 
-.pc-meta {
-  display: flex; gap: 10px; align-items: center;
-  padding: 10px 15px; border-top: 1px solid var(--border);
-  font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--text-faint);
-}
-.pc-meta .chip-mini {
-  margin-left: auto;
-  padding: 2px 8px; border-radius: 20px;
-  background: var(--bg-input); border: 1px solid var(--border);
-}
+/* Подвал карточки один. Раньше их было два подряд - "мета" и "футер", - и они
+   различались только тем, что в одном лежала дата, а в другом порт: две почти
+   одинаковые серые строки на треть высоты карточки. */
 .pc-foot {
-  display: flex; align-items: center; gap: 8px;
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
   padding: 9px 12px 9px 15px;
   border-top: 1px solid var(--border);
   background: rgba(0, 0, 0, 0.14);
   font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--text-faint);
 }
+.pc-foot-line {
+  display: flex; align-items: center; gap: 7px; min-width: 0;
+  flex: 1 1 auto; flex-wrap: wrap;
+}
+.pc-sep { width: 3px; height: 3px; border-radius: 50%; background: currentColor; opacity: 0.45; }
+.pc-foot .chip-mini {
+  flex-shrink: 0; padding: 2px 9px; border-radius: 20px;
+  background: var(--bg-input); border: 1px solid var(--border);
+}
 .profile-card.error .pc-foot { background: var(--red-soft); color: var(--red); }
-.pc-foot .acts { margin-left: auto; display: flex; gap: 5px; }
+.pc-foot .acts { flex-shrink: 0; display: flex; gap: 5px; margin-left: auto; }
 
 /* Круглая мини-кнопка действия внутри карточки. */
 .mini {
@@ -620,8 +646,10 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
 
 /* Почты профиля в карточке. Каждая со своим счётчиком: лимит писем считается по
    почте, а не по профилю. */
+/* Отступы по бокам обязательны: без них строка почты упиралась в край
+   карточки и счётчик "2 / 2" обрезался ровно посередине. */
 .pc-boxes {
-  margin: 12px 0 4px; padding-top: 10px;
+  margin: 12px 0 4px; padding: 10px 15px 0;
   border-top: 1px solid var(--border);
 }
 .pc-boxes > .section-label { display: block; margin-bottom: 8px; }
@@ -675,6 +703,7 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
 
 .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
 .dot.ready { background: var(--green); box-shadow: 0 0 0 3px var(--green-soft); }
+.dot.autoreply { background: var(--blue); box-shadow: 0 0 0 3px var(--blue-soft); }
 .dot.needs_login { background: var(--amber); box-shadow: 0 0 0 3px var(--amber-soft); }
 .dot.new { background: var(--text-faint); }
 .dot.unknown { background: var(--text-faint); }
@@ -688,6 +717,7 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
   white-space: nowrap; flex-shrink: 0;
 }
 .badge.ready { background: var(--green-soft); color: var(--green); }
+.badge.autoreply { background: var(--blue-soft); color: var(--blue); }
 .badge.needs_login { background: var(--amber-soft); color: var(--amber); }
 .badge.new, .badge.unknown { background: var(--bg-input); color: var(--text-dim); }
 .badge.error { background: var(--red-soft); color: var(--red); }

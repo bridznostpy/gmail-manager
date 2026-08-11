@@ -71,6 +71,10 @@ class ContactStore {
       name: (lead && lead.name) || prev.name || '',
       leadId: (lead && lead.id) || prev.leadId || '',
       platform: (lead && lead.platform) || prev.platform || '',
+      // Страна объявления. По ней генератор собирает serviceCode ссылки, а
+      // подталкивание уходит позже первого письма - значит хранить её надо
+      // вместе с контактом, а не только в очереди лидов.
+      country: (lead && lead.country) || prev.country || '',
       listingUrl: (lead && lead.listingUrl) || prev.listingUrl || '',
       title: meta.title || prev.title || '',
       price: meta.price != null ? meta.price : (prev.price != null ? prev.price : ''),

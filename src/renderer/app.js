@@ -96,7 +96,7 @@ const PLATFORMS = [
     group: 'world',
     color: '#007782',
     countries: ['us', 'at', 'au', 'be', 'cz', 'de', 'dk', 'es', 'fr', 'gr',
-      'it', 'lv', 'nl', 'pl', 'pt', 'ro', 'se', 'gb'],
+      'it', 'lt', 'nl', 'pl', 'pt', 'ro', 'se', 'gb'],
   },
 ];
 

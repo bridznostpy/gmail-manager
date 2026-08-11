@@ -521,8 +521,16 @@ class SenderEngine {
   async _linkFor(email, fallbackLead) {
     const link = this.store.get('link');
     const contact = this.contactStore ? this.contactStore.get(email) : null;
+    // Площадка и страна нужны генератору: по ним собирается serviceCode, и
+    // ссылка обязана соответствовать объявлению, а не общей настройке.
     const lead = contact
-      ? { email: contact.email, name: contact.name, meta: { title: contact.title, price: contact.price, currency: contact.currency } }
+      ? {
+        email: contact.email,
+        name: contact.name,
+        platform: contact.platform,
+        country: contact.country,
+        meta: { title: contact.title, price: contact.price, currency: contact.currency },
+      }
       : (fallbackLead || {});
     const gen = await haron.generateLink({
       apiKey: link.apiKey, mode: link.mode, profileId: link.profileId,

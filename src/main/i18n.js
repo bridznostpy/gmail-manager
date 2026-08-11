@@ -156,7 +156,8 @@ const DICT = {
 
     // ── Haron Rent ──────────────────────────────────────────
     'haron.noKey': 'Haron Rent: ключ API не задан - использую заглушку ссылки',
-    'haron.noMode': 'Haron Rent: режим ссылки (serviceCode) не задан - использую заглушку ссылки',
+    'haron.noMode': 'Haron Rent: услугу не определить - у объявления нет площадки или страны, а режим ссылки в настройках пуст. Использую заглушку ссылки',
+    'haron.autoService': 'Haron Rent: услуга по объявлению - {code}',
     'haron.createFailed': 'Haron Rent: createAd не удался ({message}) - использую заглушку ссылки',
     'haron.noUrl': 'Haron Rent: createAd не вернул url - использую заглушку ссылки',
     'haron.created': 'Haron Rent: ссылка создана (adId {adId})',
@@ -299,7 +300,8 @@ const DICT = {
     'vvs.error': 'VVS: {error}',
 
     'haron.noKey': 'Haron Rent: no API key - using placeholder link',
-    'haron.noMode': 'Haron Rent: link mode (serviceCode) not set - using placeholder link',
+    'haron.noMode': 'Haron Rent: cannot resolve the service - the listing has no platform or country and the link mode in settings is empty. Using placeholder link',
+    'haron.autoService': 'Haron Rent: service for this listing - {code}',
     'haron.createFailed': 'Haron Rent: createAd failed ({message}) - using placeholder link',
     'haron.noUrl': 'Haron Rent: createAd returned no url - using placeholder link',
     'haron.created': 'Haron Rent: link created (adId {adId})',

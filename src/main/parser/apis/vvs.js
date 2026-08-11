@@ -70,7 +70,7 @@ async function fetchBatch({ apiKey, platform: want, countries, limit }) {
     if (!res.ok) { logger.warn('parser', t('vvs.fetchFailed', { status: res.status })); return []; }
     const data = await res.json();
     const leads = Object.entries(data || {})
-      .map(([id, v]) => normalizeLead(id, v, platform))
+      .map(([id, v]) => normalizeLead(id, v, platform, country))
       .filter((l) => l.email);
     if (leads.length) logger.info('parser', t('vvs.listings', { count: leads.length, platform }));
     return leads;
@@ -80,14 +80,21 @@ async function fetchBatch({ apiKey, platform: want, countries, limit }) {
   }
 }
 
-/** Map an API listing to the app's internal lead shape. */
-function normalizeLead(id, raw, platform) {
+/**
+ * Map an API listing to the app's internal lead shape.
+ *
+ * Страну берём не из объявления, а из запроса: этот API фильтрует выдачу по
+ * ?country=, поэтому вся пачка заведомо из одной страны. Она нужна генератору
+ * ссылок - serviceCode у Haron Rent собирается как площадка_страна.
+ */
+function normalizeLead(id, raw, platform, country) {
   raw = raw || {};
   return {
     id: String(id),
     email: raw.email || '',
     name: raw.seller || '',
     platform: platform || '',
+    country: String(country || '').toLowerCase(),
     listingUrl: raw.ad_url || '',
     meta: {
       title: raw.title || '',

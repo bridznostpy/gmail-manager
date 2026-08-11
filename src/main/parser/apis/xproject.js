@@ -139,6 +139,11 @@ function normalizeLead(raw) {
     email: raw.seller_email || '',
     name: raw.seller_name || '',
     platform: raw.platform || '',
+    // Страна объявления. Нужна генератору ссылок: serviceCode у Haron Rent
+    // собирается как площадка_страна, и ссылка немецкому продавцу должна
+    // отличаться от американской. В ответе поле обязательное (схема
+    // ParserListing), но подстраховываемся пустой строкой.
+    country: String(raw.country || '').toLowerCase(),
     listingUrl: raw.url || '',
     meta: {
       title: raw.title || '',

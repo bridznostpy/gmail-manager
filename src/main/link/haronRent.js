@@ -28,7 +28,32 @@ const CONFIG = {
   defaultVersion: '2', // 2 = Получение, 1 = Оплата, 0 = Верификация
   defaultTitle: 'Order',
   defaultPrice: '100',
+  /**
+   * serviceCode в этом API собран как площадка_страна нижним регистром
+   * (offerup_us, vinted_de, poshmark_us) - см. GET /getServices.
+   *
+   * Коды стран у Haron Rent местами расходятся с ISO, которым размечены
+   * объявления в парсере: Великобритания у него uk, а не gb. Разошедшиеся
+   * коды переводим здесь; совпадающие идут как есть.
+   */
+  serviceSep: '_',
+  countryAlias: { gb: 'uk' },
 };
+
+/**
+ * Код услуги под конкретное объявление.
+ *
+ * Ссылка обязана соответствовать площадке и стране продавца: одна на всю
+ * рассылку означала бы, что немец получает американскую страницу подтверждения.
+ * Возвращает пустую строку, если чего-то из пары не знаем - тогда вызывающий
+ * код падает на ручную настройку или на заглушку, но не шлёт заведомо чужой код.
+ */
+function serviceCodeFor(platform, country) {
+  const p = String(platform || '').trim().toLowerCase();
+  const c = String(country || '').trim().toLowerCase();
+  if (!p || !c) return '';
+  return p + CONFIG.serviceSep + (CONFIG.countryAlias[c] || c);
+}
 
 function headers(apiKey) {
   return {
@@ -45,10 +70,10 @@ function placeholder(profileId, country) {
 /**
  * @param {object} opts
  * @param {string} opts.apiKey
- * @param {string} opts.mode      link mode = serviceCode (see GET /getServices, e.g. offerup_us)
+ * @param {string} opts.mode      ручное переопределение serviceCode; пусто - собираем сами
  * @param {string} opts.profileId createAd profileId (from GET /getProfiles)
- * @param {string} opts.country   e.g. 'US'
- * @param {object} [opts.lead]    the recipient/listing context (title, price)
+ * @param {string} opts.country   страна из настроек - запасной вариант, если у лида её нет
+ * @param {object} [opts.lead]    the recipient/listing context (platform, country, title, price)
  */
 async function generateLink(opts) {
   const { apiKey, mode, profileId, country, lead } = opts || {};
@@ -56,12 +81,16 @@ async function generateLink(opts) {
     logger.warn('sender', t('haron.noKey'));
     return placeholder(profileId, country);
   }
-  // The app's "link mode" is the serviceCode required by createAd.
-  const serviceCode = mode || '';
+  // Код услуги идёт за объявлением: площадка и страна берутся у самого лида.
+  // Ручной режим из настроек остаётся переопределением - он нужен для услуг,
+  // которые из пары "площадка + страна" не выводятся (например custom_eu).
+  const auto = serviceCodeFor(lead && lead.platform, (lead && lead.country) || country);
+  const serviceCode = mode || auto;
   if (!serviceCode) {
     logger.warn('sender', t('haron.noMode'));
     return placeholder(profileId, country);
   }
+  if (!mode) logger.info('sender', t('haron.autoService', { code: serviceCode }));
 
   const leadTitle = (lead && ((lead.meta && lead.meta.title) || lead.title)) || CONFIG.defaultTitle;
   const leadPrice = (lead && ((lead.meta && lead.meta.price) || lead.price)) || CONFIG.defaultPrice;
@@ -100,4 +129,4 @@ async function generateLink(opts) {
   }
 }
 
-module.exports = { generateLink, CONFIG };
+module.exports = { generateLink, serviceCodeFor, CONFIG };

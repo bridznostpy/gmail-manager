@@ -434,18 +434,22 @@ function gmailRowMessageFn(arg) {
 
 /**
  * Положить письмо в поле ввода Gmail. Выполняется в странице.
+ * Возвращает признак того, что тело действительно оказалось в поле.
  *
- * Порядок попыток выстроен по живому разбору: письмо приходило продавцу одной
- * слипшейся простынёй без жирного, без ссылок и без картинки.
+ * Порядок попыток выстроен по живому разбору - каждая ветка тут не про запас,
+ * а закрывает случай, на котором письмо уже уходило испорченным:
  *
- * 1. execCommand('insertHTML') - тот же путь, каким Gmail вставляет из буфера.
- *    Он МОЛЧА вставляет пусто, если дать ему документ целиком (с doctype и
- *    head), и при этом не бросает исключение. Поэтому мало поймать ошибку -
- *    надо посмотреть, что реально оказалось в поле.
- * 2. Прямая запись innerHTML. Поле ввода это обычный contenteditable, и Gmail
- *    забирает его содержимое как есть.
- * 3. Текст. Переводы строк ОБЯЗАНЫ стать <br>: в разметке они схлопываются в
- *    пробел, и письмо приходит одним абзацем - ровно то, что и увидел продавец.
+ * 1. Разметка - execCommand('insertHTML'). Он МОЛЧА вставляет пусто, если дать
+ *    ему документ целиком (с doctype и head), и исключения не бросает; поэтому
+ *    результат проверяется по содержимому поля, а не по возврату команды.
+ * 2. Разметка не прошла - прямая вставка в начало поля. Именно в начало:
+ *    в ответе там уже лежит цитата, и переписывать поле целиком нельзя.
+ * 3. Обычный текст - execCommand('insertText'). Команды редактирования Gmail
+ *    отслеживает и забирает их результат в черновик, а правку DOM со стороны
+ *    считает чужой: письмо уходило с пустым телом при заполненной теме.
+ * 4. Последний рубеж - прямая вставка текста, где переводы строк становятся
+ *    <br>: в разметке они схлопываются в пробел, и письмо приходит одним
+ *    абзацем.
  */
 function putBodyFn(node, put) {
   // Поле ОТВЕТА не пустое: в нём уже лежит цитата исходного письма. Поэтому
@@ -512,17 +516,7 @@ function putBodyFn(node, put) {
     } catch (e5) { ok = false; }
   }
   node.dispatchEvent(new InputEvent('input', { bubbles: true }));
-  // Пробу содержимого возвращаем наружу: по журналу должно быть видно, что
-  // реально оказалось в поле, а не только "получилось или нет".
-  return {
-    ok: ok,
-    how: how,
-    sample: String(node.innerHTML || '').slice(0, 200),
-    before: before,
-    after: node.innerHTML.length,
-    hadHtml: !!put.html,
-    hadText: !!put.text,
-  };
+  return ok;
 }
 
 /**
@@ -1174,10 +1168,8 @@ class PlaywrightManager {
     const body = { html: String(html == null ? '' : html), text: String(text == null ? '' : text) };
     // Буфер обмена - основной путь для разметки: письмо разбирает сам Gmail,
     // ровно как при вставке руками. См. _pasteBody.
-    const pasted = page ? await this._pasteBody(page, inst, el, body) : null;
-    if (pasted) return this._notePut(pasted);
-    const res = await el.evaluate(putBodyFn, body).catch(() => null);
-    return this._notePut(res);
+    if (page && await this._pasteBody(page, inst, el, body)) return true;
+    return this._notePut(await el.evaluate(putBodyFn, body).catch(() => false));
   }
 
   /**
@@ -1188,11 +1180,11 @@ class PlaywrightManager {
    * пустым. Вставка из буфера идёт через собственный обработчик Gmail - тот
    * самый, которым письмо вставляет человек, - и разметка доезжает так же.
    *
-   * Возвращает null, если путь недоступен (нет разрешения на буфер, нечего
+   * Возвращает false, если путь недоступен (нет разрешения на буфер, нечего
    * вставлять, вставка не прижилась) - тогда работает запасной putBodyFn.
    */
   async _pasteBody(page, inst, locator, body) {
-    if (!body.html) return null;
+    if (!body.html) return false;
     // Без разрешения Chrome отклоняет запись в буфер из скрипта: жеста
     // пользователя здесь нет.
     try {
@@ -1213,7 +1205,7 @@ class PlaywrightManager {
         return true;
       } catch (e) { return false; }
     }, body).catch(() => false);
-    if (!wrote) return null;
+    if (!wrote) return false;
 
     // Курсор в начало поля: в ответе там уже лежит цитата, и письмо должно
     // встать перед ней.
@@ -1229,48 +1221,28 @@ class PlaywrightManager {
       } catch (e) { /* вставка пойдёт в текущую позицию */ }
       return node.innerHTML.length;
     }).catch(() => null);
-    if (before == null) return null;
+    if (before == null) return false;
 
     await page.keyboard.press(inst && inst.mac ? 'Meta+V' : 'Control+V');
 
     // Gmail разбирает вставку не мгновенно, поэтому ждём прирост, а не
     // проверяем сразу после нажатия.
     for (let i = 0; i < 20; i++) {
-      const now = await locator.evaluate((node) => ({
-        len: node.innerHTML.length,
-        sample: String(node.innerHTML || '').slice(0, 200),
-      })).catch(() => null);
-      if (now && now.len > before) return { ok: true, how: 'clipboard', sample: now.sample };
+      const len = await locator.evaluate((node) => node.innerHTML.length).catch(() => null);
+      if (len != null && len > before) return true;
       await page.waitForTimeout(100);
     }
-    return null;
+    return false;
   }
 
   /**
-   * Записать в журнал, чем и что легло в поле письма.
-   *
-   * Без этого осечку вставки нельзя было отличить от успеха: письмо уходило
-   * пустым или голым текстом, а в логах об этом не было ни слова.
+   * Тело не легло - письмо не отправляем. Пустое письмо продавцу хуже, чем
+   * неотправленное: оно занимает попытку в диалоге и выглядит поломкой.
    */
-  _notePut(res) {
-    if (!res) {
-      logger.error('gmail', t('gmail.bodyCrashed'));
-      return false;
-    }
-    if (!res.ok) {
-      // На осечке подробности обязательны: без них разбирать приходится по
-      // скриншотам из почты, а это стоит человеку живых писем.
-      logger.error('gmail', t('gmail.bodyFailed', {
-        html: res.hadHtml ? '+' : '-',
-        text: res.hadText ? '+' : '-',
-        before: res.before,
-        after: res.after,
-        sample: res.sample,
-      }));
-      return false;
-    }
-    logger.debug('gmail', t('gmail.bodyPut', { how: res.how, sample: res.sample }));
-    return true;
+  _notePut(ok) {
+    if (ok) return true;
+    logger.error('gmail', t('gmail.bodyFailed'));
+    return false;
   }
 
   /**
@@ -1672,9 +1644,7 @@ class PlaywrightManager {
         text: String((body && body.text) || ''),
       };
       const put = await this._pasteBody(page, inst, box, payload)
-        || await box.evaluate(putBodyFn, payload).catch(() => null);
-      // Пустое письмо продавцу хуже, чем неотправленное: оно занимает попытку
-      // в диалоге и выглядит поломкой. Не легло тело - не отправляем.
+        || await box.evaluate(putBodyFn, payload).catch(() => false);
       if (!this._notePut(put)) return { ok: false };
 
       // Сначала настоящая кнопка "Отправить" - она в форме ответа есть

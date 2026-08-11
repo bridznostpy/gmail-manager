@@ -37,6 +37,7 @@ const state = {
   // Выбранная группа на странице настроек - переживает уход на другой раздел.
   settingsGroup: 'limits',
   settingsQuery: '', // поиск по настройкам, тоже переживает уход со страницы
+  profileQuery: '', // поиск по профилям: имя, почта профиля и почты внутри него
   // Значения по умолчанию из main - по ним видно, какие разделы человек трогал.
   // Тянем один раз при первом заходе в настройки, они не меняются.
   settingsDefaults: null,
@@ -2031,25 +2032,74 @@ const PROFILE_FILTERS = [
   { id: 'problems', match: (p) => p.gmailStatus === 'needs_login' || p.gmailStatus === 'error' },
 ];
 
+const PROFILE_SORTS = ['created', 'written', 'status', 'label'];
+
 VIEWS.profiles = () => {
   const s = state.profileStats || { total: 0, running: 0, gmailReady: 0, portsOpen: 0 };
+  const ui = state.settings.ui || {};
   const wrap = h(`<div>
-    <div class="stats-strip card glass">
-      <div class="stat-cell"><div class="num" id="sOnline">0/0</div><div class="cap">${esc(t('prof.runningCount'))}</div></div>
-      <div class="stat-cell" id="cWritten"><div class="num" id="sWritten">0</div><div class="cap">${esc(t('prof.written'))}</div></div>
-      <div class="stat-cell" id="cDialogs"><div class="num" id="sDialogs">0</div><div class="cap">${esc(t('prof.dialogs'))}</div></div>
-      <div class="stat-cell" id="cProblems"><div class="num" id="sProblems">0</div><div class="cap">${esc(t('prof.problems'))}</div></div>
-      <div class="strip-note" id="pNote"></div>
+    <div class="prof-hero card glass glass-sheen">
+      <div class="ph-top">
+        <div class="ph-main">
+          <div class="section-label">${esc(t('prof.heroKicker'))}</div>
+          <div class="ph-big"><b id="phReady">0</b><span id="phReadyCap"></span></div>
+        </div>
+        <span id="viewActions" class="ph-acts"></span>
+      </div>
+      <div class="ph-track"><span id="phBar" style="width:0%"></span></div>
+      <div class="ph-foot">
+        <div class="ph-sub" id="phSub"></div>
+        <div class="ph-nums">
+          <div class="stat-cell"><div class="num" id="sOnline">0/0</div><div class="cap">${esc(t('prof.runningCount'))}</div></div>
+          <div class="stat-cell" id="cWritten"><div class="num" id="sWritten">0</div><div class="cap">${esc(t('prof.written'))}</div></div>
+          <div class="stat-cell" id="cDialogs"><div class="num" id="sDialogs">0</div><div class="cap">${esc(t('prof.dialogs'))}</div></div>
+          <div class="stat-cell" id="cProblems"><div class="num" id="sProblems">0</div><div class="cap">${esc(t('prof.problems'))}</div></div>
+        </div>
+      </div>
+      <div id="pNote"></div>
     </div>
 
     <div class="filter-row">
       <div class="seg filters" id="pFilters"></div>
+      <div class="prof-search">
+        ${ICONS.search}
+        <input type="search" id="pSearch" autocomplete="off" spellcheck="false"
+          placeholder="${esc(t('prof.searchPh'))}" aria-label="${esc(t('prof.searchPh'))}"/>
+      </div>
       <span class="spacer"></span>
-      <span id="viewActions" style="display:flex;gap:8px"></span>
+      <label class="prof-sort" title="${esc(t('prof.sort'))}">
+        ${ICONS.sort}
+        <select id="pSort" aria-label="${esc(t('prof.sort'))}">
+          ${PROFILE_SORTS.map((v) => `<option value="${v}" ${ui.profileSort === v ? 'selected' : ''}>${esc(t('prof.sort.' + v))}</option>`).join('')}
+        </select>
+      </label>
+      <div class="seg icons" id="pView">
+        <button data-v="grid" class="${ui.profileView === 'list' ? '' : 'active'}" title="${esc(t('prof.view.grid'))}">${ICONS.grid}</button>
+        <button data-v="list" class="${ui.profileView === 'list' ? 'active' : ''}" title="${esc(t('prof.view.list'))}">${ICONS.list}</button>
+      </div>
     </div>
 
     <div class="cards-grid cascade" id="cards"></div>
   </div>`);
+
+  const search = $('#pSearch', wrap);
+  search.value = state.profileQuery;
+  search.addEventListener('input', debounce(() => {
+    state.profileQuery = search.value;
+    renderProfileFilters(wrap);
+    renderProfileCards(wrap);
+  }, 180));
+
+  $('#pSort', wrap).addEventListener('change', async (e) => {
+    await saveSection('ui', { profileSort: e.target.value });
+    renderProfileCards(wrap);
+  });
+
+  $$('#pView button', wrap).forEach((b) => b.addEventListener('click', async () => {
+    $$('#pView button', wrap).forEach((x) => x.classList.toggle('active', x === b));
+    await saveSection('ui', { profileView: b.dataset.v });
+    renderProfileCards(wrap);
+  }));
 
   setTimeout(() => {
     paintProfileStats(s);
@@ -2059,11 +2109,47 @@ VIEWS.profiles = () => {
   return wrap;
 };
 
+/**
+ * Профили в том составе и порядке, в каком их показывает список.
+ *
+ * Фильтр, поиск и сортировка собраны в одном месте нарочно: счётчики на
+ * кнопках фильтров считаются тем же кодом, и разойтись с содержимым сетки они
+ * не могут.
+ */
+function visibleProfiles(skipFilter) {
+  const filter = PROFILE_FILTERS.find((f) => f.id === state.profileFilter) || PROFILE_FILTERS[0];
+  const q = state.profileQuery.trim().toLowerCase();
+  const hit = (p) => !q || [p.label, p.email]
+    .concat((p.mailboxes || []).map((m) => m.email))
+    .some((v) => String(v || '').toLowerCase().includes(q));
+  const out = state.profiles.filter((p) => hit(p) && (skipFilter || filter.match(p)));
+  return sortProfiles(out);
+}
+
+function sortProfiles(list) {
+  const m = state.profileMetrics || {};
+  const written = (p) => ((m[p.id] || {}).written || 0);
+  // Порядок состояний от худшего к лучшему: список открывают, чтобы чинить.
+  const rank = { error: 0, needs_login: 1, new: 2, unknown: 2, ready: 3 };
+  const at = (p) => (rank[p.gmailStatus] === undefined ? 9 : rank[p.gmailStatus]);
+  const by = {
+    created: (a, b) => (a.createdAt || 0) - (b.createdAt || 0),
+    written: (a, b) => written(b) - written(a),
+    status: (a, b) => at(a) - at(b),
+    label: (a, b) => String(a.label || '').localeCompare(String(b.label || '')),
+  };
+  const cmp = by[(state.settings.ui || {}).profileSort] || by.created;
+  return list.slice().sort(cmp);
+}
+
 function renderProfileFilters(root) {
   const box = root.querySelector('#pFilters') || $('#pFilters');
   if (!box) return;
+  // Счётчик считаем по тому же поиску, что и сетку: иначе "Готовы 3" при трёх
+  // отфильтрованных карточках и пустом списке выглядело бы поломкой.
+  const found = visibleProfiles(true);
   box.innerHTML = PROFILE_FILTERS.map((f) => {
-    const n = state.profiles.filter(f.match).length;
+    const n = found.filter(f.match).length;
     return `<button data-v="${f.id}" class="${state.profileFilter === f.id ? 'active' : ''}">
       ${esc(t('prof.filter.' + f.id))}<span class="count">${n}</span></button>`;
   }).join('');
@@ -2090,12 +2176,40 @@ function paintProfileStats(s) {
   setTone($('#cProblems'), problems > 0 ? 'bad' : '');
   const plate = $('#pNote');
   if (plate) plate.innerHTML = problems ? notePlate('warn', t('prof.plateProblems', { n: problems })) : '';
+
+  // Шапка: сколько профилей движок возьмёт в прогон и сколько писем по лимиту
+  // уже израсходовано. Готовым считаем то же, что и движок (_readyProfiles):
+  // профиль со статусом ready. Полоса идёт по ПОЧТАМ - лимит считается по
+  // каждой отдельно, и делить один лимит между ними было бы неправдой.
+  const ready = state.profiles.filter((p) => p.gmailStatus === 'ready').length;
+  const bigN = $('#phReady');
+  if (bigN) bigN.textContent = String(ready);
+  const bigCap = $('#phReadyCap');
+  if (bigCap) bigCap.textContent = t('prof.heroReady', { n: state.profiles.length });
+  setTone(bigN && bigN.parentElement, ready > 0 ? 'ok' : (state.profiles.length ? 'bad' : ''));
+
+  const limit = state.settings.system.mailsPerAccount;
+  let cap = 0;
+  let sent = 0;
+  for (const p of state.profiles) {
+    const boxes = p.mailboxes || [];
+    cap += limit * Math.max(1, boxes.length);
+    sent += boxes.length
+      ? boxes.reduce((n, b) => n + Math.min(b.sentCount || 0, limit), 0)
+      : Math.min(p.sentCount || 0, limit);
+  }
+  const bar = $('#phBar');
+  if (bar) bar.style.width = (cap > 0 ? clamp(sent / cap, 0, 1) * 100 : 0).toFixed(1) + '%';
+  const sub = $('#phSub');
+  if (sub) sub.textContent = t('prof.heroCap', { sent, cap });
 }
 
 function renderProfileCards(root) {
   const cards = root.querySelector('#cards') || $('#cards');
   if (!cards) return;
   const limit = state.settings.system.mailsPerAccount;
+  const ui = state.settings.ui || {};
+  const list = ui.profileView === 'list';
 
   // Список пересобираем, только когда изменилось что-то видимое на карточке.
   // Опрос идёт каждые четыре секунды, и без этой проверки DOM выбрасывался и
@@ -2103,6 +2217,7 @@ function renderProfileCards(root) {
   const current = sessionPlan().current;
   const sign = JSON.stringify([
     state.booted, state.profileFilter, limit, state.selectedProfile,
+    state.profileQuery, ui.profileSort, ui.profileView,
     current && state.runStatus.running ? current.key : '',
     state.profiles.map((p) => [p.id, p.label, p.email, p.gmailStatus, p.running, p.port, p.sentCount,
       (p.mailboxes || []).map((m) => [m.email, m.hasTab, m.sentCount]),
@@ -2111,6 +2226,7 @@ function renderProfileCards(root) {
   if (cards.dataset.sign === sign) return;
   cards.dataset.sign = sign;
 
+  cards.className = 'cascade ' + (list ? 'prof-rows' : 'cards-grid');
   cards.innerHTML = '';
   if (!state.booted) {
     for (let i = 0; i < 3; i++) cards.appendChild(h(`<div class="skeleton tile"></div>`));
@@ -2125,90 +2241,140 @@ function renderProfileCards(root) {
     wireRipples(cards);
     return;
   }
-  // Аккаунт, который движок пишет прямо сейчас, помечен на карточке - видно,
-  // куда уходят письма.
-  const filter = PROFILE_FILTERS.find((f) => f.id === state.profileFilter) || PROFILE_FILTERS[0];
-  const shown = state.profiles.filter(filter.match);
 
+  const shown = visibleProfiles();
   if (!shown.length) {
     cards.appendChild(h(`<div class="empty glass" style="grid-column:1/-1">${ICONS.profiles}
-      <div>${esc(t('prof.emptyFiltered'))}</div></div>`));
+      <div>${esc(state.profileQuery.trim() ? t('prof.emptySearch') : t('prof.emptyFiltered'))}</div></div>`));
     return;
   }
 
   for (const p of shown) {
-    const boxes = p.mailboxes || [];
-    // Прогресс профиля - по сумме лимитов его почт: лимит применяется к каждой
-    // почте отдельно, и делить один лимит между ними было бы неправдой.
-    const cap = limit * Math.max(1, boxes.length);
-    const sent = boxes.length
-      ? boxes.reduce((n, m) => n + Math.min(m.sentCount || 0, limit), 0)
-      : (p.sentCount || 0);
-    const done = cap > 0 ? clamp(sent / cap, 0, 1) : 0;
-    const isCurrent = !!(current && current.profileId === p.id && state.runStatus.running);
-    const m = (state.profileMetrics || {})[p.id] || { written: 0, dialogs: 0, replies: 0 };
-    const bad = p.gmailStatus === 'error' || p.gmailStatus === 'needs_login';
-    const card = h(`<div class="profile-card glass glass-sheen ${state.selectedProfile === p.id ? 'selected' : ''} ${isCurrent ? 'current' : ''} ${bad ? 'error' : ''}">
-      <div class="pc-head">
-        <span class="pc-avatar" style="--av:${avatarColor(p)}">${esc(avatarLetter(p))}
-          <span class="mark ${p.gmailStatus}"></span></span>
-        <span class="pc-id">
-          <span class="pc-name">${esc(p.label)}</span>
-          <div class="pc-email">${esc(p.email || t('prof.notSignedIn'))}</div>
-          <div class="pc-tags">${profileTags(p, m, isCurrent, limit)}</div>
-        </span>
-
-        <span class="pc-head-actions">
-          <button class="mini go" data-act="${p.running ? 'stop' : 'launch'}"
-            title="${esc(p.running ? t('prof.stopBtnFull') : t('prof.launch'))}">${p.running ? ICONS.stop : ICONS.play}</button>
-          <button class="mini" data-act="scan" title="${esc(t('prof.scan'))}">${ICONS.reset}</button>
-        </span>
-      </div>
-
-      <div class="pc-nums">
-        <span class="n"><b>${m.written}</b><span>${esc(t('prof.written'))}</span></span>
-        <span class="n" ${m.dialogs ? 'data-tone="accent"' : ''}><b>${m.dialogs}</b><span>${esc(t('prof.dialogs'))}</span></span>
-        <span class="n" ${m.replies ? 'data-tone="ok"' : ''}><b>${m.replies}</b><span>${esc(t('prof.replies'))}</span></span>
-      </div>
-
-      ${mailboxListHtml(p, limit, current)}
-
-      <div class="pc-meta">
-        <span><span class="dot ${p.running ? 'running' : 'new'}"></span> ${esc(p.running ? t('prof.running') : t('prof.stopped'))}</span>
-        <span>${esc(t('prof.port'))}: ${p.port || dash}</span>
-        <span class="chip-mini" title="${esc(t('prof.sentHint'))}">${boxes.length ? sent + ' / ' + cap : sent}</span>
-      </div>
-
-      <div class="pc-foot">
-        <span>${esc(fmtDate(p.createdAt))}</span>
-        <span class="acts">
-          <button class="mini" data-act="open" title="${esc(t('prof.details'))}">${ICONS.settings}</button>
-          <button class="mini" data-act="test" title="${esc(t('prof.testSend'))}">${ICONS.send}</button>
-          <button class="mini danger" data-act="del" title="${esc(t('prof.delete'))}">${ICONS.trash}</button>
-        </span>
-      </div>
-
-      <div class="pc-progress"><span style="width:${(done * 100).toFixed(1)}%"></span></div>
-    </div>`);
-
-    card.addEventListener('click', (e) => {
+    const info = profileInfo(p, limit, current);
+    const el = h(list ? profileRowHtml(p, info, limit) : profileCardHtml(p, info, limit, current));
+    el.addEventListener('click', (e) => {
       const btn = e.target.closest('[data-act]');
       if (!btn) { openProfileDrawer(p.id); return; }
       e.stopPropagation();
       profileAction(btn.dataset.act, p);
     });
-    cards.appendChild(card);
+    cards.appendChild(el);
   }
 
-  const add = h(`<div class="add-card">
-    <span class="plus">${ICONS.plus}</span>
-    <span class="cap">${esc(t('prof.new'))}</span>
-    <span class="sub">${esc(t('prof.addSub'))}</span></div>`);
-  add.addEventListener('click', () => createProfile());
-  cards.appendChild(add);
+  // Плитка "новый профиль" - часть сетки. В списке она смотрелась бы строкой
+  // среди аккаунтов, поэтому там её место занимает кнопка в шапке раздела.
+  if (!list) {
+    const add = h(`<div class="add-card">
+      <span class="plus">${ICONS.plus}</span>
+      <span class="cap">${esc(t('prof.new'))}</span>
+      <span class="sub">${esc(t('prof.addSub'))}</span></div>`);
+    add.addEventListener('click', () => createProfile());
+    cards.appendChild(add);
+  }
 
   wireSheen(cards);
   wireCascade(cards.parentElement || document);
+}
+
+/**
+ * Числа профиля, общие для карточки и строки: прогресс по лимиту, метрики и
+ * признак "пишем прямо сейчас". Считаются в одном месте, чтобы два вида одного
+ * списка не разошлись в цифрах.
+ */
+function profileInfo(p, limit, current) {
+  const boxes = p.mailboxes || [];
+  // Прогресс профиля - по сумме лимитов его почт: лимит применяется к каждой
+  // почте отдельно, и делить один лимит между ними было бы неправдой.
+  const cap = limit * Math.max(1, boxes.length);
+  const sent = boxes.length
+    ? boxes.reduce((n, m) => n + Math.min(m.sentCount || 0, limit), 0)
+    : (p.sentCount || 0);
+  return {
+    boxes,
+    cap,
+    sent,
+    done: cap > 0 ? clamp(sent / cap, 0, 1) : 0,
+    isCurrent: !!(current && current.profileId === p.id && state.runStatus.running),
+    m: (state.profileMetrics || {})[p.id] || { written: 0, dialogs: 0, replies: 0 },
+    bad: p.gmailStatus === 'error' || p.gmailStatus === 'needs_login',
+  };
+}
+
+function profileCardHtml(p, info, limit, current) {
+  const { boxes, cap, sent, done, isCurrent, m, bad } = info;
+  return `<div class="profile-card glass glass-sheen ${state.selectedProfile === p.id ? 'selected' : ''} ${isCurrent ? 'current' : ''} ${bad ? 'error' : ''}">
+    <div class="pc-head">
+      <span class="pc-avatar" style="--av:${avatarColor(p)}">${esc(avatarLetter(p))}
+        <span class="mark ${p.gmailStatus}"></span></span>
+      <span class="pc-id">
+        <span class="pc-name">${esc(p.label)}</span>
+        <div class="pc-email">${esc(p.email || t('prof.notSignedIn'))}</div>
+        <div class="pc-tags">${profileTags(p, m, isCurrent, limit)}</div>
+      </span>
+
+      <span class="pc-head-actions">
+        <button class="mini go" data-act="${p.running ? 'stop' : 'launch'}"
+          title="${esc(p.running ? t('prof.stopBtnFull') : t('prof.launch'))}">${p.running ? ICONS.stop : ICONS.play}</button>
+        <button class="mini" data-act="scan" title="${esc(t('prof.scan'))}">${ICONS.reset}</button>
+      </span>
+    </div>
+
+    <div class="pc-nums">
+      <span class="n"><b>${m.written}</b><span>${esc(t('prof.written'))}</span></span>
+      <span class="n" ${m.dialogs ? 'data-tone="accent"' : ''}><b>${m.dialogs}</b><span>${esc(t('prof.dialogs'))}</span></span>
+      <span class="n" ${m.replies ? 'data-tone="ok"' : ''}><b>${m.replies}</b><span>${esc(t('prof.replies'))}</span></span>
+    </div>
+
+    ${mailboxListHtml(p, limit, current)}
+
+    <div class="pc-meta">
+      <span><span class="dot ${p.running ? 'running' : 'new'}"></span> ${esc(p.running ? t('prof.running') : t('prof.stopped'))}</span>
+      <span>${esc(t('prof.port'))}: ${p.port || dash}</span>
+      <span class="chip-mini" title="${esc(t('prof.sentHint'))}">${boxes.length ? sent + ' / ' + cap : sent}</span>
+    </div>
+
+    <div class="pc-foot">
+      <span>${esc(fmtDate(p.createdAt))}</span>
+      <span class="acts">
+        <button class="mini" data-act="open" title="${esc(t('prof.details'))}">${ICONS.settings}</button>
+        <button class="mini" data-act="test" title="${esc(t('prof.testSend'))}">${ICONS.send}</button>
+        <button class="mini danger" data-act="del" title="${esc(t('prof.delete'))}">${ICONS.trash}</button>
+      </span>
+    </div>
+
+    <div class="pc-progress"><span style="width:${(done * 100).toFixed(1)}%"></span></div>
+  </div>`;
+}
+
+/**
+ * Тот же профиль строкой. Нужен, когда аккаунтов много: карточками десяток
+ * профилей занимает несколько экранов, и сравнить их между собой нельзя.
+ * Здесь только то, по чему их сравнивают: состояние, написано, прогресс.
+ */
+function profileRowHtml(p, info, limit) {
+  const { boxes, cap, sent, done, isCurrent, m, bad } = info;
+  return `<div class="prow glass ${state.selectedProfile === p.id ? 'selected' : ''} ${isCurrent ? 'current' : ''} ${bad ? 'error' : ''}">
+    <span class="pc-avatar" style="--av:${avatarColor(p)}">${esc(avatarLetter(p))}
+      <span class="mark ${p.gmailStatus}"></span></span>
+    <span class="prow-id">
+      <span class="pc-name">${esc(p.label)}</span>
+      <span class="pc-email">${esc(p.email || t('prof.notSignedIn'))}</span>
+    </span>
+    <span class="prow-tags">${profileTags(p, m, isCurrent, limit)}</span>
+    <span class="prow-num"><b>${m.written}</b><span>${esc(t('prof.written'))}</span></span>
+    <span class="prow-num"><b>${m.replies}</b><span>${esc(t('prof.replies'))}</span></span>
+    <span class="prow-track" title="${esc(t('prof.sentHint'))}">
+      <span class="track"><span style="width:${(done * 100).toFixed(1)}%"></span></span>
+      <span class="cnt">${boxes.length ? sent + ' / ' + cap : sent}</span>
+    </span>
+    <span class="acts">
+      <button class="mini go" data-act="${p.running ? 'stop' : 'launch'}"
+        title="${esc(p.running ? t('prof.stopBtnFull') : t('prof.launch'))}">${p.running ? ICONS.stop : ICONS.play}</button>
+      <button class="mini" data-act="scan" title="${esc(t('prof.scan'))}">${ICONS.reset}</button>
+      <button class="mini" data-act="open" title="${esc(t('prof.details'))}">${ICONS.settings}</button>
+      <button class="mini danger" data-act="del" title="${esc(t('prof.delete'))}">${ICONS.trash}</button>
+    </span>
+  </div>`;
 }
 
 /**

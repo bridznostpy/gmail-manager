@@ -114,12 +114,82 @@
 .note-plate.warn { background: var(--amber-soft); color: var(--amber); border-color: rgba(255, 180, 67, 0.28); }
 .note-plate svg { width: 15px; height: 15px; }
 
+/* ── Шапка профилей ──────────────────────────────────────────
+   Полоса из четырёх цифр не отвечала на главный вопрос экрана: сколько
+   аккаунтов движок вообще возьмёт в прогон и сколько лимита уже съедено.
+   Теперь это крупно слева, а счётчики ушли вправо вторым планом. */
+.prof-hero {
+  padding: 20px 24px; margin-bottom: 14px;
+  border-radius: var(--radius-lg);
+}
+.ph-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; }
+.ph-acts { display: flex; gap: 8px; flex-shrink: 0; }
+.ph-main { min-width: 0; }
+.ph-main > .section-label { display: block; margin-bottom: 8px; }
+.ph-big { display: flex; align-items: baseline; gap: 10px; }
+.ph-big b {
+  font-size: 38px; font-weight: 750; letter-spacing: -0.04em; line-height: 1;
+  color: var(--tone, var(--text));
+}
+.ph-big span { font-size: 12.5px; color: var(--text-dim); }
+.ph-big[data-tone="ok"] { --tone: var(--green); }
+.ph-big[data-tone="bad"] { --tone: var(--red); }
+/* Полоса на всю ширину шапки: это общий прогресс по лимиту всех почт, и
+   привязывать её к колонке с текстом смысла нет. */
+.ph-track {
+  height: 6px; border-radius: 6px; margin: 18px 0 10px;
+  background: var(--border-strong); overflow: hidden;
+}
+.ph-track span {
+  display: block; height: 100%; background: var(--gradient);
+  transition: width var(--dur-slow) var(--ease);
+}
+.ph-foot {
+  display: flex; align-items: flex-end; justify-content: space-between;
+  gap: 24px; flex-wrap: wrap;
+}
+.ph-sub { font-family: var(--font-mono); font-size: 10.5px; color: var(--text-faint); }
+.ph-nums { display: flex; gap: 30px; flex-shrink: 0; }
+.ph-nums .num {
+  font-size: 23px; font-weight: 700; letter-spacing: -0.03em; line-height: 1.1;
+  color: var(--tone, var(--text));
+}
+.ph-nums .cap { font-size: 11px; color: var(--text-faint); margin-top: 3px; }
+.prof-hero .note-plate { margin-top: 14px; }
+
+@media (max-width: 1080px) {
+  .ph-nums { flex-wrap: wrap; gap: 20px; }
+}
+
 /* ── Ряд фильтров ────────────────────────────────────────── */
 .filter-row {
   display: flex; align-items: center; gap: 12px;
   margin-bottom: 14px; flex-wrap: wrap;
 }
 .filter-row .spacer { margin-left: auto; }
+
+/* Поиск по профилям. Иконка поверх поля, как в поиске по настройкам. */
+.prof-search { position: relative; flex: 0 1 300px; min-width: 160px; }
+.prof-search svg {
+  position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
+  width: 14px; height: 14px; color: var(--text-faint); pointer-events: none;
+}
+.prof-search input { padding-left: 32px; font-size: 12px; height: 34px; }
+.prof-search input::-webkit-search-cancel-button { -webkit-appearance: none; }
+
+.prof-sort { position: relative; display: inline-flex; align-items: center; }
+.prof-sort svg {
+  position: absolute; left: 10px; width: 14px; height: 14px;
+  color: var(--text-faint); pointer-events: none;
+}
+.prof-sort select {
+  width: auto; height: 34px; padding: 0 12px 0 32px; font-size: 12px;
+  cursor: pointer;
+}
+
+/* Переключатель вида: только значки, подписи живут в подсказках. */
+.seg.icons button { padding: 0 10px; display: inline-flex; align-items: center; }
+.seg.icons svg { width: 15px; height: 15px; }
 .seg.filters button { display: inline-flex; align-items: center; gap: 7px; }
 .seg.filters .count {
   font-family: var(--font-mono); font-size: 9.5px;
@@ -422,6 +492,46 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
 .mini:hover { color: var(--text); border-color: var(--border-strong); transform: translateY(-1px); }
 .mini.danger:hover { color: var(--red); border-color: rgba(255, 95, 109, 0.4); background: var(--red-soft); }
 .mini.go:hover { color: var(--accent); border-color: var(--accent-line); background: var(--accent-soft); }
+
+/* ── Профили списком ──────────────────────────────────────────
+   Карточками десяток аккаунтов занимает несколько экранов, и сравнить их
+   между собой нельзя. В строке только то, по чему их сравнивают. */
+.prof-rows { display: flex; flex-direction: column; gap: 6px; }
+.prow {
+  display: flex; align-items: center; gap: 14px;
+  padding: 10px 14px; border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.prow:hover { border-color: var(--border-strong); }
+.prow.selected { border-color: var(--accent-line); box-shadow: var(--focus-ring); }
+.prow.current { border-color: var(--accent); }
+.prow.error { border-color: rgba(255, 95, 109, 0.5); }
+.prow .pc-avatar { width: 30px; height: 30px; border-radius: 10px; font-size: 12px; }
+.prow-id { min-width: 0; flex: 1 1 200px; display: flex; flex-direction: column; }
+.prow-id .pc-email { margin-top: 1px; }
+.prow-tags { display: flex; gap: 5px; flex-wrap: wrap; flex: 0 1 auto; }
+/* Числа выровнены по колонке: строки читают сверху вниз, а не по одной. */
+.prow-num { flex: 0 0 74px; text-align: right; }
+.prow-num b { display: block; font-size: 15px; font-weight: 700; letter-spacing: -0.02em; }
+.prow-num span { font-size: 9.5px; color: var(--text-faint); }
+.prow-track { flex: 0 0 150px; display: flex; align-items: center; gap: 8px; }
+.prow-track .track {
+  flex: 1 1 auto; height: 5px; border-radius: 5px;
+  background: var(--border-strong); overflow: hidden;
+}
+.prow-track .track span {
+  display: block; height: 100%; background: var(--gradient);
+  transition: width var(--dur-slow) var(--ease);
+}
+.prow-track .cnt {
+  font-family: var(--font-mono); font-size: 9.5px; color: var(--text-faint);
+  flex: 0 0 auto;
+}
+.prow .acts { display: flex; gap: 5px; flex-shrink: 0; }
+
+@media (max-width: 1180px) {
+  .prow-tags, .prow-num:nth-of-type(2) { display: none; }
+}
 
 .pc-progress {
   position: absolute; left: 0; right: 0; bottom: 0; height: 3px;

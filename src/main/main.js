@@ -57,6 +57,12 @@ function appIcon() {
  * Живёт в коде постоянно, потому что скриншот рабочего стола для Electron не
  * работает: окно рисуется на GPU, и GDI-захват отдаёт ровную заливку цветом
  * фона. Единственный честный способ увидеть интерфейс - capturePage.
+ *
+ * SHOT_RUN_STATUS - подменённый ответ `run:status` (JSON). Нужен, чтобы
+ * посмотреть экран работающего прогона, не запуская движок: настоящий запуск
+ * поднимает Chrome и рассылает реальные письма, и делать это ради проверки
+ * вёрстки нельзя. Подмена ставится ПОСЛЕ ipc.register - иначе регистрация
+ * второго хендлера на то же имя роняет весь набор обработчиков.
  */
 function wireShotMode(win) {
   if (!process.argv.includes('--shot')) return;
@@ -65,6 +71,12 @@ function wireShotMode(win) {
   });
   win.webContents.on('did-finish-load', () => {
     setTimeout(async () => {
+      if (process.env.SHOT_RUN_STATUS) {
+        const { ipcMain } = require('electron');
+        const fake = JSON.parse(process.env.SHOT_RUN_STATUS);
+        ipcMain.removeHandler('run:status');
+        ipcMain.handle('run:status', () => fake);
+      }
       if (process.env.SHOT_JS) {
         try { await win.webContents.executeJavaScript(process.env.SHOT_JS); }
         catch (e) { console.log('[shot-js]', e.message); }

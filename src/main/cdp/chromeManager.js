@@ -453,7 +453,16 @@ function putBodyFn(node, put) {
   // выглядела как успех, и продавцу уходило письмо с одной цитатой. Меряем
   // прирост: сколько добавилось именно нами.
   var before = node.innerHTML.length;
-  function grew() { return node.innerHTML.length > before; }
+  // Проба текста: по ней судим об успехе. Одной длины разметки мало - Gmail
+  // сам переписывает поле (подпись, свои обёртки), и она может не вырасти,
+  // хотя письмо на месте. Поэтому смотрим по существу: наш текст в поле?
+  var probe = String(put.text || '').replace(/\s+/g, ' ').trim().slice(0, 40);
+  function grew() {
+    if (node.innerHTML.length > before) return true;
+    if (!probe) return false;
+    var have = String(node.innerText || node.textContent || '').replace(/\s+/g, ' ');
+    return have.indexOf(probe) >= 0;
+  }
 
   node.focus();
   // Курсор ставим в начало поля сами. Без выделения внутри узла execCommand
@@ -496,7 +505,15 @@ function putBodyFn(node, put) {
   node.dispatchEvent(new InputEvent('input', { bubbles: true }));
   // Пробу содержимого возвращаем наружу: по журналу должно быть видно, что
   // реально оказалось в поле, а не только "получилось или нет".
-  return { ok: ok, how: how, sample: String(node.innerHTML || '').slice(0, 200) };
+  return {
+    ok: ok,
+    how: how,
+    sample: String(node.innerHTML || '').slice(0, 200),
+    before: before,
+    after: node.innerHTML.length,
+    hadHtml: !!put.html,
+    hadText: !!put.text,
+  };
 }
 
 /**
@@ -1227,8 +1244,20 @@ class PlaywrightManager {
    * пустым или голым текстом, а в логах об этом не было ни слова.
    */
   _notePut(res) {
-    if (!res || !res.ok) {
-      logger.error('gmail', t('gmail.bodyFailed'));
+    if (!res) {
+      logger.error('gmail', t('gmail.bodyCrashed'));
+      return false;
+    }
+    if (!res.ok) {
+      // На осечке подробности обязательны: без них разбирать приходится по
+      // скриншотам из почты, а это стоит человеку живых писем.
+      logger.error('gmail', t('gmail.bodyFailed', {
+        html: res.hadHtml ? '+' : '-',
+        text: res.hadText ? '+' : '-',
+        before: res.before,
+        after: res.after,
+        sample: res.sample,
+      }));
       return false;
     }
     logger.debug('gmail', t('gmail.bodyPut', { how: res.how, sample: res.sample }));
@@ -1273,7 +1302,12 @@ class PlaywrightManager {
       if (subject) await this._typeInto(page, widget, SEL.subject, subject);
       // Первое письмо уходит обычным текстом, разметки у него нет - буфер тут
       // не нужен, но page с inst передаём для единообразия пути.
-      if (body) await this._fillBody(widget, body, { page, inst });
+      //
+      // Результат проверяем обязательно: раньше он игнорировался, и письмо
+      // уходило даже после записи "тело не легло" - продавец получал пустое.
+      if (body && !(await this._fillBody(widget, body, { page, inst }))) {
+        throw new Error(t('err.bodyNotFilled'));
+      }
 
       let clicked = false;
       try {

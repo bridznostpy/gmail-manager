@@ -41,6 +41,7 @@ const DICT = {
     'err.composeNotRendered': 'окно письма не открылось (аккаунт не залогинен?)',
     'err.composeNotOpened': 'мини-окно письма не появилось после нажатия "Написать"',
     'err.recipientNotSet': 'адрес {to} не попал в поле получателя, отправка отменена',
+    'err.bodyNotFilled': 'текст письма не попал в поле ввода, отправка отменена',
     'err.threadNotOpened': 'переписка не открылась',
     'err.replyBoxNotOpened': 'поле ответа не открылось',
     'err.noThreadId': 'нет идентификатора переписки',
@@ -73,7 +74,8 @@ const DICT = {
     'gmail.replyBtnMissing': 'Кнопка "Ответить" не найдена - жду поле ответа как есть',
     'gmail.replyWidgetFallback': 'Ответ из списка не открылся - захожу в переписку',
     'gmail.bodyPut': 'Тело письма легло способом {how}. В поле: {sample}',
-    'gmail.bodyFailed': 'Тело письма НЕ легло в поле ввода - письмо не отправляем, оно ушло бы пустым',
+    'gmail.bodyFailed': 'Тело письма НЕ легло в поле ввода - не отправляем. Разметка: {html}, текст: {text}, длина поля {before} -> {after}. В поле: {sample}',
+    'gmail.bodyCrashed': 'Не удалось обратиться к полю ввода письма - не отправляем',
     'gmail.markReadFallback': 'Переписка осталась непрочитанной - открываю её, чтобы не ответить повторно',
 
     // Статусы сканирования Gmail
@@ -196,6 +198,7 @@ const DICT = {
     'err.composeNotRendered': 'compose window did not render (account not logged in?)',
     'err.composeNotOpened': 'the compose panel did not appear after clicking Compose',
     'err.recipientNotSet': 'address {to} did not land in the recipient field, send cancelled',
+    'err.bodyNotFilled': 'the message text did not land in the body field, send cancelled',
     'err.threadNotOpened': 'thread did not open',
     'err.replyBoxNotOpened': 'reply box did not open',
     'err.noThreadId': 'no thread id',
@@ -226,7 +229,8 @@ const DICT = {
     'gmail.replyBtnMissing': 'Reply button not found, waiting for the reply box as is',
     'gmail.replyWidgetFallback': 'Reply from the list did not open - opening the thread instead',
     'gmail.bodyPut': 'Mail body landed via {how}. Field holds: {sample}',
-    'gmail.bodyFailed': 'Mail body did NOT land in the input - not sending, it would go out empty',
+    'gmail.bodyFailed': 'Mail body did NOT land in the input - not sending. Markup: {html}, text: {text}, field length {before} -> {after}. Field holds: {sample}',
+    'gmail.bodyCrashed': 'Could not reach the mail body field - not sending',
     'gmail.markReadFallback': 'Thread stayed unread - opening it so we do not reply twice',
 
     'gmailStatus.ready': 'ready',

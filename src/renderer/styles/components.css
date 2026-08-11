@@ -2077,8 +2077,47 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
 }
 .drawer-head h3 { font-size: 15px; font-weight: 650; }
 .drawer-body { padding: 18px 20px 28px; overflow-y: auto; }
-.drawer-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 20px; }
-.drawer-actions .btn { flex: 1 1 auto; }
+/* Кнопки панели - сеткой в две колонки.
+   Гибкая раскладка с flex-wrap собирала строки по остаточной ширине: главное
+   действие оказывалось в паре со случайным соседом, а "Удалить" - рядом с
+   "Открыть Gmail заново". Теперь главное действие занимает строку целиком,
+   парные идут по две, а удаление отделено чертой. */
+.drawer-actions {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 20px;
+}
+.drawer-actions .btn { width: 100%; }
+.drawer-actions .btn.full, .drawer-danger .btn.full { grid-column: 1 / -1; }
+/* Нечётная кнопка в конце ряда растягивается: половинка рядом с пустотой
+   читается как незаконченная строка. */
+.drawer-actions .btn:last-child:nth-child(odd) { grid-column: 1 / -1; }
+.drawer-danger {
+  margin-top: 18px; padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+.drawer-danger .btn { width: 100%; }
+.drawer-danger .hint { margin-top: 8px; }
+
+/* Шапка панели деталей: кто это и в каком он состоянии. */
+.pd-head { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.pd-head .pc-avatar { width: 42px; height: 42px; border-radius: 13px; font-size: 16px; }
+.pd-id { min-width: 0; }
+.pd-id .pc-name { font-size: var(--fs-md); }
+.pd-status { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 16px; }
+.pd-nums {
+  display: flex; gap: 6px; margin-bottom: 20px;
+  padding-bottom: 16px; border-bottom: 1px solid var(--border);
+}
+.pd-nums .n { flex: 1 1 0; min-width: 0; }
+.pd-nums .n b {
+  display: block; font-size: 22px; font-weight: 700; letter-spacing: -0.03em;
+  color: var(--nt, var(--text));
+}
+.pd-nums .n span {
+  display: block; font-size: var(--fs-2xs); color: var(--text-faint);
+  line-height: 1.25; margin-top: 2px;
+}
+.pd-nums .n[data-tone="ok"] { --nt: var(--green); }
+.pd-nums .n[data-tone="accent"] { --nt: var(--accent); }
 .opt-group { margin-bottom: 22px; }
 .opt-group > .section-label { display: block; margin-bottom: 10px; }
 

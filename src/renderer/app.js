@@ -2991,33 +2991,71 @@ function openProfileDrawer(id) {
   });
 }
 
+/**
+ * Панель деталей профиля.
+ *
+ * Раскладка идёт от того, зачем панель открывают: сверху - кто это и в каком
+ * он состоянии, ниже - цифры, которые смотрят часто, и только потом отпечаток
+ * браузера. Отпечаток свёрнут: это пять строк машинного текста, и читают их
+ * раз в жизни, а места они занимали больше всего остального вместе взятого.
+ */
 function profileDetailCard(p) {
   const fp = p.fingerprint;
-  const card = h(`<div>
-    <div class="kv"><span class="k">${esc(t('prof.status'))}</span><span class="v"><span class="badge ${p.gmailStatus}">${esc(t('status.' + p.gmailStatus))}</span></span></div>
-    <div class="kv"><span class="k">${esc(t('prof.email'))}</span><span class="v">${esc(p.email || dash)}</span></div>
-    <div class="kv"><span class="k">${esc(t('prof.isRunning'))}</span><span class="v">${p.running ? esc(t('common.yes')) : esc(t('common.no'))}</span></div>
-    <div class="kv"><span class="k">${esc(t('prof.port'))}</span><span class="v">${p.port || dash}</span></div>
-    ${(p.mailboxes || []).length
-      ? (p.mailboxes || []).map((m) => `<div class="kv"><span class="k">${esc(m.email || dash)}${m.hasTab ? '' : ' · ' + esc(t('prof.noTab'))}</span>
-          <span class="v">${m.sentCount || 0} / ${state.settings.system.mailsPerAccount}</span></div>`).join('')
-      : `<div class="kv"><span class="k">${esc(t('prof.sentCount'))}</span><span class="v">${p.sentCount} / ${state.settings.system.mailsPerAccount}</span></div>`}
-    <div class="kv stacked"><span class="k">${esc(t('prof.ua'))}</span><span class="v">${esc(fp.userAgent)}</span></div>
-    <div class="kv"><span class="k">${esc(t('prof.platform'))}</span><span class="v">${esc(fp.platform)}</span></div>
-    <div class="kv"><span class="k">${esc(t('prof.screen'))}</span><span class="v">${fp.screen.width}x${fp.screen.height}</span></div>
-    <div class="kv"><span class="k">${esc(t('prof.timezone'))}</span><span class="v">${esc(fp.timezone)}</span></div>
-    <div class="kv stacked"><span class="k">${esc(t('prof.gpu'))}</span><span class="v">${esc(fp.webgl.renderer)}</span></div>
+  const limit = state.settings.system.mailsPerAccount;
+  const info = profileInfo(p, limit);
+  const kind = profileState(p, info);
+  const boxes = p.mailboxes || [];
+  const card = h(`<div class="pd">
+    <div class="pd-head">
+      <span class="pc-avatar" style="--av:${avatarColor(p)}">${esc(avatarLetter(p))}
+        <span class="mark ${kind}"></span></span>
+      <span class="pd-id">
+        <span class="pc-name">${esc(p.label)}</span>
+        <span class="pc-email">${esc(p.email || t('prof.notSignedIn'))}</span>
+      </span>
+    </div>
+    <div class="pd-status">${statusChipHtml(kind)}
+      <span class="pc-tag ${p.running ? 'live' : ''}">${esc(p.running ? t('prof.running') : t('prof.stopped'))}</span>
+    </div>
+
+    <div class="pd-nums">
+      <span class="n"><b>${info.total}</b><span>${esc(t('prof.numSent'))}</span></span>
+      <span class="n" ${info.m.replies ? 'data-tone="ok"' : ''}><b>${info.m.replies}</b><span>${esc(t('prof.numReplies'))}</span></span>
+      <span class="n" ${info.m.links ? 'data-tone="accent"' : ''}><b>${info.m.links || 0}</b><span>${esc(t('prof.numLinks'))}</span></span>
+    </div>
+
+    <div class="opt-group">
+      <span class="section-label">${esc(t('prof.grpState'))}</span>
+      <div class="kv"><span class="k">${esc(t('prof.port'))}</span><span class="v">${p.port || dash}</span></div>
+      ${boxes.length
+        ? boxes.map((m) => `<div class="kv"><span class="k">${esc(m.email || dash)}${m.hasTab ? '' : ' · ' + esc(t('prof.noTab'))}</span>
+            <span class="v">${m.sentCount || 0} / ${limit}</span></div>`).join('')
+        : `<div class="kv"><span class="k">${esc(t('prof.sentCount'))}</span><span class="v">${p.sentCount} / ${limit}</span></div>`}
+    </div>
+
+    ${panelHtml(false, `<span class="section-label">${esc(t('prof.grpFingerprint'))}</span>`, `
+      <div class="kv stacked"><span class="k">${esc(t('prof.ua'))}</span><span class="v">${esc(fp.userAgent)}</span></div>
+      <div class="kv"><span class="k">${esc(t('prof.platform'))}</span><span class="v">${esc(fp.platform)}</span></div>
+      <div class="kv"><span class="k">${esc(t('prof.screen'))}</span><span class="v">${fp.screen.width}x${fp.screen.height}</span></div>
+      <div class="kv"><span class="k">${esc(t('prof.timezone'))}</span><span class="v">${esc(fp.timezone)}</span></div>
+      <div class="kv stacked"><span class="k">${esc(t('prof.gpu'))}</span><span class="v">${esc(fp.webgl.renderer)}</span></div>`)}
+
     <div class="drawer-actions">
       ${p.running
-        ? '<button class="btn stop" id="dStop">' + ICONS.stop + '<span>' + esc(t('prof.stopBtnFull')) + '</span></button>'
-        : '<button class="btn primary" id="dLaunch">' + ICONS.play + '<span>' + esc(t('prof.launch')) + '</span></button>'}
-      <button class="btn" id="dScan">${ICONS.scan}<span>${esc(t('prof.scan'))}</span></button>
+        ? '<button class="btn stop full" id="dStop">' + ICONS.stop + '<span>' + esc(t('prof.stopBtnFull')) + '</span></button>'
+        : '<button class="btn primary full" id="dLaunch">' + ICONS.play + '<span>' + esc(t('prof.launch')) + '</span></button>'}
+      <button class="btn ${p.running ? '' : 'full'}" id="dScan">${ICONS.scan}<span>${esc(t('prof.scan'))}</span></button>
       ${p.running ? '<button class="btn" id="dTest">' + ICONS.send + '<span>' + esc(t('prof.testSend')) + '</span></button>' : ''}
       ${p.running ? '<button class="btn" id="dDry">' + ICONS.inbox + '<span>' + esc(t('prof.dryRun')) + '</span></button>' : ''}
       ${p.running ? '<button class="btn" id="dReopen">' + ICONS.reset + '<span>' + esc(t('prof.reopen')) + '</span></button>' : ''}
-      <button class="btn danger" id="dDel">${ICONS.trash}<span>${esc(t('prof.delete'))}</span></button>
+    </div>
+    <div class="drawer-danger">
+      <button class="btn danger full" id="dDel">${ICONS.trash}<span>${esc(t('prof.delete'))}</span></button>
+      <div class="hint">${esc(t('prof.deleteHint'))}</div>
     </div>
   </div>`);
+  // Панель живёт вне #main, и общий wirePanels до неё не доходит.
+  wirePanels(card);
 
   const launch = card.querySelector('#dLaunch');
   if (launch) launch.addEventListener('click', () => launchProfile(p.id, true));

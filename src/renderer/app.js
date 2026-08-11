@@ -1656,6 +1656,8 @@ VIEWS.chats = () => {
         <div class="seg filters" id="chatFilters">
           <button data-v="all" class="${state.chatFilter === 'all' ? 'active' : ''}">${esc(t('chat.f.all'))}<span class="count" id="cntAll">0</span></button>
           <button data-v="answered" class="${state.chatFilter === 'answered' ? 'active' : ''}">${esc(t('chat.f.answered'))}<span class="count" id="cntAns">0</span></button>
+          <button data-v="archived" class="${state.chatFilter === 'archived' ? 'active' : ''}"
+            title="${esc(t('chat.f.archivedHint'))}">${esc(t('chat.f.archived'))}<span class="count" id="cntArch">0</span></button>
         </div>
         <button class="mini" id="chatRefresh" title="${esc(t('chat.refresh'))}">${ICONS.reset}</button>
       </div>
@@ -1699,7 +1701,9 @@ VIEWS.chats = () => {
  */
 function chatProfiles() {
   const byId = new Map();
-  for (const c of (state.chats || [])) {
+  // Архивные переписки в колонку не попадают: писать с удалённого профиля
+  // некуда, и держать его в списке выбора значит обещать работу, которой нет.
+  for (const c of (state.chats || []).filter((x) => !x.archived)) {
     const id = c.accountKey || c.profileId;
     const row = byId.get(id) || {
       id,
@@ -1723,7 +1727,7 @@ function chatProfiles() {
 
 /** Сколько переписок ждут ответа во всех профилях сразу. */
 function chatsWaiting() {
-  return (state.chats || []).filter((c) => c.lastDir === 'in').length;
+  return (state.chats || []).filter((c) => c.lastDir === 'in' && !c.archived).length;
 }
 
 /**
@@ -1737,7 +1741,9 @@ function renderChatRail() {
   const box = $('#chatRail');
   if (!box) return;
   const profiles = chatProfiles();
-  const total = (state.chats || []).length;
+  // Архивные в колонку не входят, поэтому и общее число считаем по живым:
+  // иначе "Все профили 316" стояло бы над пустым списком.
+  const total = (state.chats || []).filter((c) => !c.archived).length;
   const waiting = chatsWaiting();
 
   setOnce(box, `
@@ -1790,10 +1796,23 @@ function pickChatProfile(id) {
 
 function chatMatches(c) {
   if (!c) return false;
+  // Архив - это отдельный список, а не пометка внутри общего: переписки
+  // удалённых профилей нужны на чтение, но в работе их больше нет.
+  if (state.chatFilter === 'archived') {
+    // В архиве выбор профиля не действует: профиля этих переписок обычно уже
+    // нет, и фильтр по нему оставлял бы пустой список.
+    return c.archived && chatQueryMatches(c);
+  }
+  if (c.archived) return false;
   // Выбор в колонке - это почта (accountKey), а у старых записей его нет: там
   // сравниваем по профилю.
   if (state.chatProfile && (c.accountKey || c.profileId) !== state.chatProfile) return false;
   if (state.chatFilter === 'answered' && !c.replies) return false;
+  return chatQueryMatches(c);
+}
+
+/** Строка поиска. Одна на все списки, включая архив. */
+function chatQueryMatches(c) {
   const q = state.chatQuery.trim().toLowerCase();
   if (!q) return true;
   const title = (c.contact && c.contact.title) || '';
@@ -1814,19 +1833,26 @@ function renderChatGroups() {
   const rows = all.filter(chatMatches);
 
   // Счётчики фильтров считаем в рамках выбранного профиля: иначе "Все 14" при
-  // одном видимом чате выглядит как поломка.
-  const cAll = $('#cntAll'); if (cAll) cAll.textContent = scope.length;
-  const cAns = $('#cntAns'); if (cAns) cAns.textContent = scope.filter((c) => c.replies > 0).length;
+  // одном видимом чате выглядит как поломка. Архив считаем по всем профилям:
+  // его профиля в колонке слева обычно уже нет.
+  const live = scope.filter((c) => !c.archived);
+  const cAll = $('#cntAll'); if (cAll) cAll.textContent = live.length;
+  const cAns = $('#cntAns'); if (cAns) cAns.textContent = live.filter((c) => c.replies > 0).length;
+  const cArch = $('#cntArch'); if (cArch) cArch.textContent = all.filter((c) => c.archived).length;
 
   if (!rows.length) {
+    const emptyText = state.chatFilter === 'archived'
+      ? t('chat.emptyArchive')
+      : (all.length ? t('chat.emptyFiltered') : t('chat.empty'));
     setOnce(box, `<div class="empty" style="padding:36px 16px">${ICONS.chat}
-      <div>${esc(all.length ? t('chat.emptyFiltered') : t('chat.empty'))}</div></div>`);
+      <div>${esc(emptyText)}</div></div>`);
     return;
   }
 
   // Внутри выбранного профиля группировать незачем, но в режиме "Все профили"
-  // подпись нужна: иначе непонятно, чей это адрес.
-  const showProfile = !state.chatProfile;
+  // подпись нужна: иначе непонятно, чей это адрес. В архиве она нужна всегда -
+  // там лежат переписки разных, в том числе удалённых, аккаунтов.
+  const showProfile = !state.chatProfile || state.chatFilter === 'archived';
   setOnce(box, rows.map((c) => chatRowHtml(c, showProfile)).join(''));
   if (!box.dataset.wired) {
     // Клики ловим на контейнере: строк много, и они пересобираются на каждый
@@ -1909,15 +1935,15 @@ function chatRowHtml(c, showProfile) {
       ${showProfile ? `<span class="clr-prof">${markMatch(
     (c.mailbox || c.profileEmail || c.profileLabel || t('chat.unknownProfile'))
       + (c.mailbox && c.profileLabel ? ' · ' + c.profileLabel : ''), q,
-  )}</span>` : ''}
+  )}${c.profileGone ? ' · ' + esc(t('chat.profileGone')) : ''}</span>` : ''}
       ${title ? `<span class="clr-title">${ICONS.target}${markMatch(shorten(title, 42), q)}</span>` : ''}
       <span class="clr-last">${c.lastDir === 'out' ? esc(t('chat.you')) + ': ' : ''}${esc(last)}</span>
     </span>
     <span class="clr-side">
       ${c.replies ? `<span class="clr-badge">${c.replies}</span>` : ''}
       <span class="clr-acts">
-        <button class="mini" data-act="nudge" data-email="${esc(c.email)}"
-          title="${esc(t('nudge.btn'))}" aria-label="${esc(t('nudge.btn'))}">${ICONS.send}</button>
+        ${c.archived ? '' : `<button class="mini" data-act="nudge" data-email="${esc(c.email)}"
+          title="${esc(t('nudge.btn'))}" aria-label="${esc(t('nudge.btn'))}">${ICONS.send}</button>`}
         ${listing ? `<button class="mini" data-act="open" data-url="${esc(listing)}"
           title="${esc(t('chat.openListing'))}" aria-label="${esc(t('chat.openListing'))}">${ICONS.link}</button>` : ''}
       </span>
@@ -1953,7 +1979,9 @@ function renderChatMain() {
   }
 
   const cap = state.settings.system.maxRepliesPerDialog;
-  const canReply = c.replies > 0;
+  // Из архива не пишут: профиля, с которого шла переписка, уже нет, и отправить
+  // письмо не с чего. Поле ответа там показывать - обещать несуществующее.
+  const canReply = c.replies > 0 && !c.archived;
 
   setOnce(box, `
     <header class="cm-head">
@@ -1962,6 +1990,7 @@ function renderChatMain() {
         <span class="cm-name">${esc(c.email || dash)}</span>
         <span class="cm-sub">${esc(c.mailbox || c.profileLabel || dash)} · ${esc(t('chat.repliesOf', { n: c.replies, cap }))}</span>
       </span>
+      ${c.archived ? `<span class="pc-tag">${esc(t('chat.archivedTag'))}</span>` : ''}
       <button class="mini" id="cmSide" title="${esc(t('chat.toggleSide'))}">${ICONS.dashboard}</button>
     </header>
     <div class="cm-feed" id="cmFeed"></div>
@@ -1970,7 +1999,9 @@ function renderChatMain() {
            <input type="text" id="cmInput" placeholder="${esc(t('chat.placeholder'))}"/>
            <button class="btn primary icon-only" id="cmSend" title="${esc(t('chat.send'))}">${ICONS.send}</button>
          </div>`
-      : `<div class="cm-locked">${ICONS.lock}<span>${esc(t('chat.locked'))}</span></div>`}
+      : `<div class="cm-locked">${ICONS.lock}<span>${esc(c.archived
+        ? t(c.profileGone ? 'chat.archivedGone' : 'chat.archivedNote')
+        : t('chat.locked'))}</span></div>`}
   `);
 
   renderChatFeed();

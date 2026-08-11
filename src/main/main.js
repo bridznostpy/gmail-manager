@@ -148,6 +148,24 @@ function debounce(fn, ms) {
   return (...args) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), ms); };
 }
 
+/**
+ * Разовые переносы данных при обновлении приложения.
+ *
+ * Архив чатов появился позже самих чатов, и всё, что накопилось до него,
+ * пользователь просил считать архивом: это переписки с профилей, которых уже
+ * нет или которые больше не используются. Флаг в настройках взводится один
+ * раз - иначе перенос повторялся бы на каждом запуске и утаскивал в архив
+ * свежие переписки.
+ */
+function runMigrations(context) {
+  const done = context.store.get('migrations') || {};
+  if (!done.chatsArchived) {
+    const n = context.messageStore.archiveAll();
+    context.store.set('migrations', { ...done, chatsArchived: true });
+    if (n) logger.info('system', i18n.t('sys.chatsArchived', { n }));
+  }
+}
+
 app.whenReady().then(() => {
   // Меню File/Edit/View рисуется поверх своей шапки и ломает вид - убираем.
   Menu.setApplicationMenu(null);
@@ -156,6 +174,7 @@ app.whenReady().then(() => {
   // ушли бы на языке по умолчанию.
   i18n.setLanguage(ctx.store.get('language'));
   appearance.init(ctx.userData);
+  runMigrations(ctx);
   createWindow();
   ipc.register(ctx);
   // Статус Gmail подтягиваем сами: вход пользователь делает руками в браузере,

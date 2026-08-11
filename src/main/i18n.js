@@ -20,6 +20,8 @@ const DICT = {
     'sys.textsLoaded': 'Тексты рассылки загружены',
     'sys.profileCreated': 'Создан профиль "{label}"',
     'sys.languageChanged': 'Язык приложения переключён на {lang}',
+    'sys.chatsArchived': 'Переписки убраны в архив чатов: {n}',
+    'sys.chatsArchivedProfile': 'Переписки профиля "{label}" убраны в архив: {n}',
 
     // ── Оформление ──────────────────────────────────────────
     'texts.dialogOpen': 'Выберите файл с текстами рассылки',
@@ -177,6 +179,8 @@ const DICT = {
     'sys.textsLoaded': 'Broadcast texts loaded',
     'sys.profileCreated': 'Created profile "{label}"',
     'sys.languageChanged': 'Application language switched to {lang}',
+    'sys.chatsArchived': 'Messages moved to the chat archive: {n}',
+    'sys.chatsArchivedProfile': 'Messages of profile "{label}" moved to the archive: {n}',
 
     'texts.dialogOpen': 'Pick an outreach texts file',
     'texts.dialogSave': 'Save the outreach texts',

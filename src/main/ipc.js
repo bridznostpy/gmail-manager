@@ -204,6 +204,16 @@ function register(ctx) {
   });
   ipcMain.handle('profiles:remove', async (_e, { id }) => {
     await chrome.stop(id).catch(() => {});
+    // Переписки профиля уводим в архив ДО удаления: после него метки профиля
+    // уже не найти, а выбрасывать письма вместе с аккаунтом нельзя - это то,
+    // что человек реально написал и получил.
+    const p = profileStore.get(id);
+    if (ctx.messageStore) {
+      const n = ctx.messageStore.archiveProfile(id);
+      if (n) {
+        logger.info('system', t('sys.chatsArchivedProfile', { label: (p && p.label) || id, n }));
+      }
+    }
     return profileStore.remove(id);
   });
   ipcMain.handle('profiles:launch', async (_e, { id, openGmail }) => {
@@ -304,6 +314,9 @@ function register(ctx) {
         profileEmail: p ? p.email : '',
         profileRunning: p ? !!chrome.isRunning(p.id) : false,
         profileStatus: p ? p.gmailStatus : 'unknown',
+        // Профиля больше нет: писать в такую переписку неоткуда, и экран
+        // говорит об этом прямо, а не оставляет пустое место вместо имени.
+        profileGone: !p,
         // Отвечать вручную можно только там, где автоответ уже сработал: такой
         // диалог легко найти в инбоксе, см. замысел экрана чатов.
         //

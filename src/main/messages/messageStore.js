@@ -78,6 +78,8 @@ class MessageStore {
       html: String(entry.html == null ? '' : entry.html),
       partial: !!entry.partial,
       ts: entry.ts || Date.now(),
+      // Время переноса в архив. Ноль - переписка в работе, см. archiveProfile.
+      archivedAt: 0,
     };
     this.items.push(rec);
     if (this.items.length > MAX_MESSAGES) this.items.splice(0, this.items.length - MAX_MESSAGES);
@@ -106,6 +108,40 @@ class MessageStore {
   }
 
   /**
+   * Убрать в архив переписки удалённого профиля.
+   *
+   * Записи не удаляем: переписка - это то, что человек реально написал и
+   * получил, и терять её вместе с профилем нельзя. В архиве она доступна на
+   * чтение, а из рабочего списка уходит.
+   */
+  archiveProfile(profileId) {
+    const id = String(profileId || '');
+    if (!id) return 0;
+    const now = Date.now();
+    let touched = 0;
+    for (const m of this.items) {
+      if (m.profileId !== id || m.archivedAt) continue;
+      m.archivedAt = now;
+      touched++;
+    }
+    if (touched) this._save();
+    return touched;
+  }
+
+  /** Убрать в архив всё разом. Нужно разовой миграции при обновлении. */
+  archiveAll() {
+    const now = Date.now();
+    let touched = 0;
+    for (const m of this.items) {
+      if (m.archivedAt) continue;
+      m.archivedAt = now;
+      touched++;
+    }
+    if (touched) this._save();
+    return touched;
+  }
+
+  /**
    * Свод по чатам: последнее сообщение, счётчики. Экрану списка не нужны
    * тела всех писем - их он запросит для открытого чата.
    */
@@ -126,8 +162,15 @@ class MessageStore {
         lastTs: 0,
         lastDir: '',
         lastText: '',
+        // Архивной переписка считается, только когда в ней НЕТ ни одной живой
+        // записи. Новый ответ продавца в старый тред возвращает её в работу -
+        // отвечать на живое письмо из архива было бы странно.
+        archived: true,
+        archivedAt: 0,
       };
       row.total++;
+      if (m.archivedAt) row.archivedAt = Math.max(row.archivedAt, m.archivedAt);
+      else row.archived = false;
       if (m.dir === 'in') row.incoming++;
       // Автоответ - признак того, что переписка уже завязалась: только в такой
       // разрешена ручная отправка (см. экран чатов).

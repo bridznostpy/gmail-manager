@@ -433,6 +433,44 @@ function gmailRowMessageFn(arg) {
 }
 
 /**
+ * Положить письмо в поле ввода Gmail. Выполняется в странице.
+ *
+ * Порядок попыток выстроен по живому разбору: письмо приходило продавцу одной
+ * слипшейся простынёй без жирного, без ссылок и без картинки.
+ *
+ * 1. execCommand('insertHTML') - тот же путь, каким Gmail вставляет из буфера.
+ *    Он МОЛЧА вставляет пусто, если дать ему документ целиком (с doctype и
+ *    head), и при этом не бросает исключение. Поэтому мало поймать ошибку -
+ *    надо посмотреть, что реально оказалось в поле.
+ * 2. Прямая запись innerHTML. Поле ввода это обычный contenteditable, и Gmail
+ *    забирает его содержимое как есть.
+ * 3. Текст. Переводы строк ОБЯЗАНЫ стать <br>: в разметке они схлопываются в
+ *    пробел, и письмо приходит одним абзацем - ровно то, что и увидел продавец.
+ */
+function putBodyFn(node, put) {
+  function filled() {
+    return !!(node.innerHTML && node.innerHTML.trim());
+  }
+  node.focus();
+  var ok = false;
+  if (put.html) {
+    try { document.execCommand('insertHTML', false, put.html); } catch (e) { /* ниже */ }
+    ok = filled();
+    if (!ok) {
+      try { node.innerHTML = put.html; ok = filled(); } catch (e2) { ok = false; }
+    }
+  }
+  if (!ok) {
+    var safe = String(put.text || '')
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/\r?\n/g, '<br>');
+    try { node.innerHTML = safe; } catch (e3) { node.textContent = put.text; }
+  }
+  node.dispatchEvent(new InputEvent('input', { bubbles: true }));
+  return true;
+}
+
+/**
  * Список писем дорисован и с ним можно работать: строки есть, а полоса загрузки
  * Gmail ушла.
  *
@@ -1071,29 +1109,15 @@ class PlaywrightManager {
   /**
    * Тело письма - contenteditable, перевод строки нужен настоящий.
    *
-   * TODO(gmail-dom): в режиме HTML вставляем разметку через
-   * execCommand('insertHTML') - тем же способом, каким её вставляет сам Gmail
-   * при вставке из буфера. Проверять на живом аккаунте: если Gmail разметку не
-   * примет, запасной путь - письмо обычным текстом.
+   * TODO(gmail-dom): проверено на живом аккаунте. execCommand('insertHTML')
+   * молча вставляет ПУСТО, если ему дать документ целиком - разметку приводит к
+   * пригодному виду htmlTemplate.mailSafe. Порядок попыток и текстовый запасной
+   * путь описаны в _putBody.
    */
   async _fillBody(widget, text, { html = '' } = {}) {
     const el = this._visibleIn(widget, SEL.body);
     if (!(await this._waitLocator(el, this._t(T_MED)))) return false;
-    return el.evaluate((node, put) => {
-      node.focus();
-      var cmd = put.html ? 'insertHTML' : 'insertText';
-      var value = put.html || put.text;
-      try { document.execCommand(cmd, false, value); }
-      catch (e) { node.textContent = put.text; }
-      // Разметка могла не вставиться, а исключения при этом нет: execCommand
-      // отдаёт false. Тогда письмо уходит обычным текстом, а не пустым.
-      if (!node.innerHTML || !node.innerHTML.trim()) {
-        try { document.execCommand('insertText', false, put.text); }
-        catch (e2) { node.textContent = put.text; }
-      }
-      node.dispatchEvent(new InputEvent('input', { bubbles: true }));
-      return true;
-    }, {
+    return el.evaluate(putBodyFn, {
       html: String(html == null ? '' : html),
       text: String(text == null ? '' : text),
     }).catch(() => false);
@@ -1486,17 +1510,7 @@ class PlaywrightManager {
       // Поле ответа берём видимое: SEL.replyBox это список селекторов через
       // запятую, и первым в документе может оказаться скрытый textbox.
       const box = this._visible(page, SEL.replyBox);
-      await box.evaluate((node, put) => {
-        node.focus();
-        var cmd = put.html ? 'insertHTML' : 'insertText';
-        try { document.execCommand(cmd, false, put.html || put.text); }
-        catch (e) { node.textContent = put.text; }
-        if (!node.innerHTML || !node.innerHTML.trim()) {
-          try { document.execCommand('insertText', false, put.text); }
-          catch (e2) { node.textContent = put.text; }
-        }
-        node.dispatchEvent(new InputEvent('input', { bubbles: true }));
-      }, {
+      await box.evaluate(putBodyFn, {
         html: String((body && body.html) || ''),
         text: String((body && body.text) || ''),
       }).catch(() => {});

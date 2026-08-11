@@ -200,6 +200,7 @@ const DICT = {
     'set.g.telegram': 'Telegram',
     'set.g.texts': 'Тексты рассылки',
     'set.g.autoreply': 'Авто-ответ',
+    'set.g.backup': 'Перенос настроек',
 
     'set.h.interface': 'Язык приложения',
     'set.h.appearance': 'Фон, акцент и тема',
@@ -211,6 +212,7 @@ const DICT = {
     'set.h.telegram': 'Уведомления в Telegram',
     'set.h.texts': 'Тексты писем и языки рассылки',
     'set.h.autoreply': 'Чем отвечать на ответ продавца',
+    'set.h.backup': 'Настройки файлом',
 
     // Строка под заголовком карточки: на что группа влияет.
     'set.s.interface': 'Язык интерфейса и сообщений в логах.',
@@ -223,6 +225,7 @@ const DICT = {
     'set.s.telegram': 'Куда приходят уведомления о прогоне.',
     'set.s.texts': 'Что именно пишется продавцу на каждом шаге.',
     'set.s.autoreply': 'Вид письма автоответчика: обычный текст или свой HTML-шаблон с фото товара.',
+    'set.s.backup': 'Резервная копия настроек и перенос их на другой компьютер.',
 
     // Разделы бокового меню настроек.
     'set.sec.run': 'Рассылка',
@@ -241,6 +244,27 @@ const DICT = {
     'set.b.bot': 'Бот',
     'set.b.mode': 'Вид письма',
     'set.b.template': 'HTML-шаблон',
+    'set.b.transfer': 'Файл настроек',
+    'set.b.dataDir': 'Каталог данных',
+
+    'set.backupHint': 'Выгрузка кладёт все настройки в один файл JSON. Загрузка заменяет ими текущие - профили, переписка и статистика при этом не трогаются.',
+    'set.dataDirHint': 'Здесь лежат настройки, профили, переписка и картинка фона. Чтобы перенести приложение целиком, копируется весь каталог.',
+
+    // ── Перенос настроек ────────────────────────────────────
+    'backup.export': 'Сохранить в файл',
+    'backup.import': 'Загрузить из файла',
+    'backup.openDir': 'Открыть каталог данных',
+    'backup.withKeys': 'Включить ключи API',
+    'backup.keysHint': 'Ключи парсера, генератора ссылок и токен бота. Без отметки они уйдут в файл пустыми - так им можно поделиться.',
+    'backup.exportedTo': 'Сохранено: {path}',
+    'backup.exportDone': 'Настройки выгружены',
+    'backup.exportFailed': 'Не удалось сохранить файл',
+    'backup.importTitle': 'Загрузить настройки?',
+    'backup.importText': 'Текущие настройки будут заменены значениями из файла. Профили, переписка и статистика останутся на месте.',
+    'backup.importDone': 'Настройки загружены',
+    'backup.importFailed': 'Не удалось прочитать файл',
+    'backup.badFormat': 'Это не файл настроек',
+    'backup.openFailed': 'Не удалось открыть каталог',
 
     'set.arModeHint': 'Обычным текстом уходит случайный вариант из словаря PASTE_DICT (раздел "Тексты рассылки"). HTML-шаблон один на всю рассылку и задаётся здесь.',
     'set.arTplHint': 'Плейсхолдеры подставляются из данных объявления. Блок <!--if:image_url--> ... <!--/if--> вырезается целиком, когда фото у объявления нет.',
@@ -904,6 +928,7 @@ const DICT = {
     'set.g.telegram': 'Telegram',
     'set.g.texts': 'Outreach texts',
     'set.g.autoreply': 'Auto-reply',
+    'set.g.backup': 'Settings transfer',
 
     'set.h.interface': 'Application language',
     'set.h.appearance': 'Background, accent and theme',
@@ -915,6 +940,7 @@ const DICT = {
     'set.h.telegram': 'Telegram notifications',
     'set.h.texts': 'Message texts and outreach languages',
     'set.h.autoreply': 'What the auto-responder replies with',
+    'set.h.backup': 'Settings as a file',
 
     'set.s.interface': 'Interface language and the language of log messages.',
     'set.s.appearance': 'Workspace background, glass density, accent color and motion.',
@@ -926,6 +952,7 @@ const DICT = {
     'set.s.telegram': 'Where run notifications are delivered.',
     'set.s.texts': 'What exactly is written to the seller at every step.',
     'set.s.autoreply': 'The look of the auto-reply: plain text or your own HTML template with the listing photo.',
+    'set.s.backup': 'A backup of the settings and moving them to another computer.',
 
     'set.sec.run': 'Outreach',
     'set.sec.data': 'Data',
@@ -942,6 +969,26 @@ const DICT = {
     'set.b.bot': 'Bot',
     'set.b.mode': 'Message kind',
     'set.b.template': 'HTML template',
+    'set.b.transfer': 'Settings file',
+    'set.b.dataDir': 'Data folder',
+
+    'set.backupHint': 'Export puts every setting into a single JSON file. Import replaces the current ones - profiles, chats and stats are left alone.',
+    'set.dataDirHint': 'Settings, profiles, chats and the background image live here. To move the whole app, copy the entire folder.',
+
+    'backup.export': 'Save to a file',
+    'backup.import': 'Load from a file',
+    'backup.openDir': 'Open data folder',
+    'backup.withKeys': 'Include API keys',
+    'backup.keysHint': 'Parser and link generator keys plus the bot token. Without the checkbox they are written empty, so the file can be shared.',
+    'backup.exportedTo': 'Saved: {path}',
+    'backup.exportDone': 'Settings exported',
+    'backup.exportFailed': 'Could not save the file',
+    'backup.importTitle': 'Load settings?',
+    'backup.importText': 'Current settings will be replaced with the ones from the file. Profiles, chats and stats stay where they are.',
+    'backup.importDone': 'Settings loaded',
+    'backup.importFailed': 'Could not read the file',
+    'backup.badFormat': 'Not a settings file',
+    'backup.openFailed': 'Could not open the folder',
 
     'set.arModeHint': 'Plain text sends a random variant from the PASTE_DICT dictionary (the "Outreach texts" group). The HTML template is a single one for the whole run and is edited here.',
     'set.arTplHint': 'Placeholders are filled from the listing data. The <!--if:image_url--> ... <!--/if--> block is dropped entirely when the listing has no photo.',

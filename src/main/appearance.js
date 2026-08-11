@@ -53,6 +53,12 @@ function resolveSafe(name) {
   return fs.existsSync(full) ? full : null;
 }
 
+/** Есть ли такая картинка в каталоге. Нужно при загрузке чужих настроек: имя
+    файла в них своё, а самого файла на этой машине нет. */
+function hasFile(name) {
+  return !!resolveSafe(name);
+}
+
 function removeFile(name) {
   const full = resolveSafe(name);
   if (full) { try { fs.unlinkSync(full); } catch (_e) {} }
@@ -97,4 +103,4 @@ function clear(store) {
   return { ok: true, appearance: saved };
 }
 
-module.exports = { registerScheme, init, pick, clear, SCHEME };
+module.exports = { registerScheme, init, pick, clear, hasFile, SCHEME };

@@ -3,7 +3,7 @@
  * All IPC handlers. The renderer only ever talks to main through these named
  * channels (see preload.js). Keeps the privileged surface small and explicit.
  */
-const { ipcMain, dialog } = require('electron');
+const { ipcMain, dialog, shell } = require('electron');
 const fs = require('fs');
 const logger = require('./logger');
 const i18n = require('./i18n');
@@ -28,7 +28,7 @@ const DEMO_CONTACT = {
 const DEMO_LINK = 'https://example.com/confirm/demo';
 
 function register(ctx) {
-  const { store, profileStore, contactStore, chrome, parser, sender, mainWindow } = ctx;
+  const { store, profileStore, contactStore, chrome, parser, sender, mainWindow, userData } = ctx;
 
   const send = (channel, payload) => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload);
@@ -74,6 +74,85 @@ function register(ctx) {
   ipcMain.handle('appearance:set', (_e, patch) => store.set('appearance', patch));
   ipcMain.handle('appearance:pick', () => appearance.pick(store, mainWindow));
   ipcMain.handle('appearance:clear', () => appearance.clear(store));
+
+  // ── перенос настроек файлом ───────────────────────────────────────
+  // Файл настроек лежит в каталоге данных, найти его руками умеет не каждый.
+  // Эти три вызова закрывают перенос на другую машину и резервную копию, не
+  // заставляя искать AppData.
+
+  // Ключи API - самое ценное в файле, и уносить их в копию нужно не всегда:
+  // настройками делятся, чтобы повторить лимиты и оформление, а не доступы.
+  const SECRET_FIELDS = [['parser', 'apiKey'], ['link', 'apiKey'], ['telegram', 'botToken']];
+
+  ipcMain.handle('settings:export', async (_e, { withSecrets } = {}) => {
+    const res = await dialog.showSaveDialog(mainWindow || null, {
+      title: t('backup.dialogSave'),
+      defaultPath: 'gmail-manager-settings.json',
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+    });
+    if (res.canceled || !res.filePath) return { ok: false, reason: 'cancelled' };
+
+    const data = JSON.parse(JSON.stringify(store.all()));
+    if (!withSecrets) for (const [section, key] of SECRET_FIELDS) {
+      if (data[section]) data[section][key] = '';
+    }
+    // Геометрия окна к настройкам не относится: на другой машине монитор
+    // другой, и окно открылось бы за краем экрана.
+    delete data.window;
+
+    try {
+      fs.writeFileSync(res.filePath, JSON.stringify(data, null, 2), 'utf-8');
+      logger.success('system', t('backup.exported', { path: res.filePath }));
+      return { ok: true, path: res.filePath };
+    } catch (e) {
+      logger.warn('system', t('backup.writeFailed', { error: e.message }));
+      return { ok: false, reason: 'write_failed', error: e.message };
+    }
+  });
+
+  ipcMain.handle('settings:import', async () => {
+    const res = await dialog.showOpenDialog(mainWindow || null, {
+      title: t('backup.dialogOpen'),
+      properties: ['openFile'],
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+    });
+    if (res.canceled || !res.filePaths.length) return { ok: false, reason: 'cancelled' };
+
+    let obj = null;
+    try {
+      obj = JSON.parse(fs.readFileSync(res.filePaths[0], 'utf-8'));
+    } catch (e) {
+      logger.warn('system', t('backup.readFailed', { error: e.message }));
+      return { ok: false, reason: 'read_failed', error: e.message };
+    }
+    // Массив или строка - это не файл настроек. Отдать такое в replaceAll
+    // значило бы затереть настройки мусором.
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) {
+      logger.warn('system', t('backup.badFormat'));
+      return { ok: false, reason: 'bad_format' };
+    }
+    delete obj.window;
+    // Картинка фона лежит файлом в каталоге данных, и на новой машине её нет.
+    // Без сброса приложение осталось бы с пустым фоном вместо градиента.
+    if (obj.appearance && obj.appearance.bgFile && !appearance.hasFile(obj.appearance.bgFile)) {
+      obj.appearance = { ...obj.appearance, bgType: 'gradient', bgFile: '' };
+    }
+
+    const saved = store.replaceAll(obj);
+    i18n.setLanguage(saved.language);
+    logger.success('system', t('backup.imported'));
+    return { ok: true, settings: saved };
+  });
+
+  // Каталог данных целиком: настройки, профили, переписки, картинка фона.
+  ipcMain.handle('settings:openDataDir', async () => {
+    const error = await shell.openPath(userData);
+    if (error) {
+      logger.warn('system', t('backup.openFailed', { error }));
+      return { ok: false, error };
+    }
+    return { ok: true, path: userData };
+  });
 
   // ── тексты рассылки: файл ──────────────────────────────────────────
   // Main только читает и пишет файл. Разбор и проверка формата живут в

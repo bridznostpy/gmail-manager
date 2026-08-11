@@ -22,6 +22,9 @@ contextBridge.exposeInMainWorld('api', {
     defaults: () => ipcRenderer.invoke('settings:defaults'),
     setSection: (key, value) => ipcRenderer.invoke('settings:setSection', { key, value }),
     loadTexts: (json) => ipcRenderer.invoke('settings:loadTexts', json),
+    exportFile: (withSecrets) => ipcRenderer.invoke('settings:export', { withSecrets }),
+    importFile: () => ipcRenderer.invoke('settings:import'),
+    openDataDir: () => ipcRenderer.invoke('settings:openDataDir'),
   },
   appearance: {
     get: () => ipcRenderer.invoke('appearance:get'),

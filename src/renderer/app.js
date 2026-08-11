@@ -3230,6 +3230,10 @@ const SETTINGS_GROUPS = [
     terms: ['tg.token', 'tg.chatId', 'tg.test'],
   },
   {
+    id: 'backup', section: 'system', icon: 'download', build: buildSetBackup,
+    terms: ['backup.export', 'backup.import', 'backup.openDir', 'backup.withKeys'],
+  },
+  {
     id: 'interface', section: 'look', icon: 'settings', build: buildSetInterface,
     terms: ['set.language'],
   },
@@ -3870,6 +3874,84 @@ function buildSetTelegram() {
       : t('tg.fail');
   });
   return el;
+}
+
+/**
+ * Перенос настроек файлом.
+ *
+ * Настройки и так лежат в JSON, но в каталоге данных - на другой машине его
+ * ещё надо найти. Здесь то же самое в два клика: выгрузить, перенести,
+ * загрузить. Кнопки сброса у группы нет: сбрасывать тут нечего, своих значений
+ * она не хранит.
+ */
+function buildSetBackup() {
+  const el = h(setCard('backup', `
+    ${setBlock('set.b.transfer', 'set.backupHint', `
+      <label class="switch" style="margin-bottom:12px">
+        <input type="checkbox" id="bKeys"/><span class="track"></span>
+        <span class="lbl">${esc(t('backup.withKeys'))}</span>
+      </label>
+      <div class="hint" style="margin-bottom:14px">${esc(t('backup.keysHint'))}</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" id="bExport">${ICONS.download}<span>${esc(t('backup.export'))}</span></button>
+        <button class="btn" id="bImport">${ICONS.upload}<span>${esc(t('backup.import'))}</span></button>
+      </div>
+      <div class="hint" id="bResult" style="margin-top:12px"></div>`)}
+
+    ${setBlock('set.b.dataDir', 'set.dataDirHint', `
+      <button class="btn ghost" id="bOpen">${ICONS.folder}<span>${esc(t('backup.openDir'))}</span></button>`)}`));
+
+  $('#bExport', el).addEventListener('click', async () => {
+    const res = await api.settings.exportFile($('#bKeys', el).checked);
+    if (!res.ok) {
+      if (res.reason !== 'cancelled') toast(t('backup.exportFailed'), 'error');
+      return;
+    }
+    $('#bResult', el).textContent = t('backup.exportedTo', { path: res.path });
+    toast(t('backup.exportDone'), 'success');
+  });
+
+  $('#bImport', el).addEventListener('click', async () => {
+    const ok = await askConfirm(t('backup.importTitle'), t('backup.importText'),
+      { okLabel: t('backup.import') });
+    if (!ok) return;
+    const res = await api.settings.importFile();
+    if (!res.ok) {
+      if (res.reason !== 'cancelled') {
+        toast(t(res.reason === 'bad_format' ? 'backup.badFormat' : 'backup.importFailed'), 'error');
+      }
+      return;
+    }
+    applyImported(res.settings);
+    toast(t('backup.importDone'), 'success');
+  });
+
+  $('#bOpen', el).addEventListener('click', async () => {
+    const res = await api.settings.openDataDir();
+    if (!res.ok) toast(t('backup.openFailed'), 'error');
+  });
+
+  return el;
+}
+
+/**
+ * Применить загруженные настройки, не перезапуская приложение.
+ *
+ * Перезапуск был бы проще, но человек только что нажал "Загрузить" и ждёт
+ * увидеть результат, а не закрывшееся окно. Порядок важен: язык до отрисовки,
+ * иначе экран собрался бы на старом.
+ */
+function applyImported(settings) {
+  state.settings = settings;
+  I18N.setLanguage(settings.language || 'ru');
+  applyTheme(settings.theme || 'dark');
+  applyAppearance();
+  renderChrome();
+  renderNav();
+  // Умолчания читались один раз при первом заходе в настройки - они не
+  // меняются, и перечитывать их незачем. А вот точки "раздел изменён"
+  // относятся к прежним значениям, поэтому экран пересобираем целиком.
+  render();
 }
 
 // ── Авто-ответ: обычный текст или HTML ─────────────────────────────

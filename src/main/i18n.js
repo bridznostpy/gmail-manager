@@ -37,6 +37,16 @@ const DICT = {
     'appear.cleared': 'Фон сброшен на градиент',
     'appear.copyFailed': 'Не удалось скопировать картинку фона: {error}',
 
+    // ── Перенос настроек файлом ─────────────────────────────
+    'backup.dialogSave': 'Сохранить настройки в файл',
+    'backup.dialogOpen': 'Выберите файл с настройками',
+    'backup.exported': 'Настройки сохранены в файл: {path}',
+    'backup.imported': 'Настройки загружены из файла',
+    'backup.badFormat': 'Это не файл настроек - внутри должен быть объект JSON',
+    'backup.readFailed': 'Не удалось прочитать файл настроек: {error}',
+    'backup.writeFailed': 'Не удалось сохранить файл настроек: {error}',
+    'backup.openFailed': 'Не удалось открыть каталог данных: {error}',
+
     // ── Ошибки ──────────────────────────────────────────────
     'err.profileNotFound': 'Профиль не найден',
     'err.profileNotRunning': 'Профиль не запущен',
@@ -197,6 +207,15 @@ const DICT = {
     'appear.picked': 'Background updated',
     'appear.cleared': 'Background reset to gradient',
     'appear.copyFailed': 'Could not copy the background image: {error}',
+
+    'backup.dialogSave': 'Save settings to a file',
+    'backup.dialogOpen': 'Pick a settings file',
+    'backup.exported': 'Settings saved to: {path}',
+    'backup.imported': 'Settings loaded from file',
+    'backup.badFormat': 'Not a settings file - it must contain a JSON object',
+    'backup.readFailed': 'Could not read the settings file: {error}',
+    'backup.writeFailed': 'Could not save the settings file: {error}',
+    'backup.openFailed': 'Could not open the data folder: {error}',
 
     'err.profileNotFound': 'Profile not found',
     'err.profileNotRunning': 'Profile is not running',

@@ -49,6 +49,10 @@ class SenderEngine {
     // продолжает опрашивать почту, аптайм идёт, очередь не теряется.
     this.paused = false;
     this.startedAt = null;
+    // Письма, ушедшие с момента старта ПРОГОНА. Счётчик в профиле
+    // накопительный и переживает перезапуски, поэтому темп и прогноз по нему
+    // считать нельзя - для них нужен именно сессионный счёт.
+    this.sentThisSession = 0;
     this._sendTimer = null;
     this._replyTimer = null;
     this._notifiedAllLimits = false;
@@ -65,6 +69,7 @@ class SenderEngine {
       startedAt: this.startedAt,
       uptimeSec: this.startedAt ? Math.floor((Date.now() - this.startedAt) / 1000) : 0,
       queueSize: this.parser.queueSize(),
+      sentThisSession: this.sentThisSession,
     };
   }
 
@@ -140,6 +145,7 @@ class SenderEngine {
     this.running = true;
     this.paused = false;
     this.startedAt = Date.now();
+    this.sentThisSession = 0;
     this._notifiedAllLimits = false;
     this._rr = 0;
     logger.success('system', t('run.started', { count: ready.length }));
@@ -212,6 +218,7 @@ class SenderEngine {
     try {
       await this._sendFirstMessage(slot, lead);
       this.profileStore.bumpMailbox(profile.id, mailbox.email);
+      this.sentThisSession++;
       // Сохраняем контакт с данными товара и почтой, с которой ушло письмо:
       // подталкивать человека надо из того же ящика.
       if (this.contactStore) this.contactStore.recordSent({ lead, profile, mailbox });

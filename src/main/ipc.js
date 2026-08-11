@@ -174,10 +174,14 @@ function register(ctx) {
    */
   ipcMain.handle('profiles:metrics', () => {
     const out = {};
-    for (const p of profileStore.list()) out[p.id] = { written: 0, dialogs: 0, replies: 0 };
+    for (const p of profileStore.list()) out[p.id] = { written: 0, dialogs: 0, replies: 0, lastSentAt: 0 };
+    // lastSentAt берём из контактов: там уже стоит время последней отправки, и
+    // отдельный журнал ради строки "активность N минут назад" не нужен.
     for (const c of (contactStore ? contactStore.list() : [])) {
       const row = out[c.profileId];
-      if (row) row.written++;
+      if (!row) continue;
+      row.written++;
+      row.lastSentAt = Math.max(row.lastSentAt, c.lastSentAt || 0);
     }
     for (const d of (ctx.dialogStore ? ctx.dialogStore.list() : [])) {
       const row = out[d.profileId];

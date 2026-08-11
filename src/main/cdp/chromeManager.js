@@ -492,15 +492,24 @@ function putBodyFn(node, put) {
       } catch (e3) { ok = false; }
     }
   }
-  if (!ok) {
-    var safe = String(put.text || '')
+  // Обычный текст кладём КОМАНДОЙ РЕДАКТИРОВАНИЯ, а не правкой DOM. Gmail
+  // следит за командами и забирает их результат в черновик; прямое изменение
+  // разметки для него чужое - письмо уходило с пустым телом при заполненной
+  // теме. Прямая правка остаётся последним запасным путём.
+  if (!ok && put.text) {
+    try { document.execCommand('insertText', false, put.text); } catch (e4) { /* ниже */ }
+    ok = grew();
+    if (ok) how = 'insertText';
+  }
+  if (!ok && put.text) {
+    var safe = String(put.text)
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
       .replace(/\r?\n/g, '<br>');
     try {
       node.insertAdjacentHTML('afterbegin', safe);
       ok = grew();
-      if (ok) how = 'text';
-    } catch (e4) { ok = false; }
+      if (ok) how = 'rawText';
+    } catch (e5) { ok = false; }
   }
   node.dispatchEvent(new InputEvent('input', { bubbles: true }));
   // Пробу содержимого возвращаем наружу: по журналу должно быть видно, что

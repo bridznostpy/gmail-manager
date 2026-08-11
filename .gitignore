@@ -1,20 +1,28 @@
-# deps
+# зависимости
 node_modules/
 
-# electron build output
+# результат сборки
 dist/
 out/
 
-# runtime data (settings, profiles, chrome user-data dirs)
+# данные приложения: настройки, профили, каталоги Chrome
 userdata/
 chrome-profiles/
 *.log
 
-# secrets — never commit real tokens/keys
+# портативный режим: метка рядом с exe и каталог данных при ней
+portable.txt
+
+# секреты - реальные токены и ключи не коммитим никогда
 .env
 secrets.json
 
-# os / editors
+# отладочные снимки экрана в корне (electron . --shot) и макеты интерфейса
+/*.png
+shot*.png
+reference/
+
+# система и редакторы
 .DS_Store
 Thumbs.db
 .vscode/

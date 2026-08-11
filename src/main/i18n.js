@@ -72,6 +72,8 @@ const DICT = {
     'gmail.listStale': 'Список писем не обновился - пропускаю проход, чтобы не ответить повторно',
     'gmail.replyBtnMissing': 'Кнопка "Ответить" не найдена - жду поле ответа как есть',
     'gmail.replyWidgetFallback': 'Ответ из списка не открылся - захожу в переписку',
+    'gmail.bodyPut': 'Тело письма легло способом {how}. В поле: {sample}',
+    'gmail.bodyFailed': 'Тело письма НЕ легло в поле ввода - письмо не отправляем, оно ушло бы пустым',
     'gmail.markReadFallback': 'Переписка осталась непрочитанной - открываю её, чтобы не ответить повторно',
 
     // Статусы сканирования Gmail
@@ -223,6 +225,8 @@ const DICT = {
     'gmail.listStale': 'Mail list did not refresh - skipping this pass to avoid a duplicate reply',
     'gmail.replyBtnMissing': 'Reply button not found, waiting for the reply box as is',
     'gmail.replyWidgetFallback': 'Reply from the list did not open - opening the thread instead',
+    'gmail.bodyPut': 'Mail body landed via {how}. Field holds: {sample}',
+    'gmail.bodyFailed': 'Mail body did NOT land in the input - not sending, it would go out empty',
     'gmail.markReadFallback': 'Thread stayed unread - opening it so we do not reply twice',
 
     'gmailStatus.ready': 'ready',

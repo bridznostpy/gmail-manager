@@ -448,26 +448,55 @@ function gmailRowMessageFn(arg) {
  *    пробел, и письмо приходит одним абзацем - ровно то, что и увидел продавец.
  */
 function putBodyFn(node, put) {
-  function filled() {
-    return !!(node.innerHTML && node.innerHTML.trim());
-  }
+  // Поле ОТВЕТА не пустое: в нём уже лежит цитата исходного письма. Поэтому
+  // судить об успехе по "в поле что-то есть" нельзя - так осечка вставки
+  // выглядела как успех, и продавцу уходило письмо с одной цитатой. Меряем
+  // прирост: сколько добавилось именно нами.
+  var before = node.innerHTML.length;
+  function grew() { return node.innerHTML.length > before; }
+
   node.focus();
+  // Курсор ставим в начало поля сами. Без выделения внутри узла execCommand
+  // вставляет в никуда, а письмо надо положить ПЕРЕД цитатой.
+  try {
+    var sel = window.getSelection();
+    var range = document.createRange();
+    range.setStart(node, 0);
+    range.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(range);
+  } catch (e) { /* без выделения остаётся запасной путь ниже */ }
+
   var ok = false;
+  var how = 'none';
   if (put.html) {
-    try { document.execCommand('insertHTML', false, put.html); } catch (e) { /* ниже */ }
-    ok = filled();
+    try { document.execCommand('insertHTML', false, put.html); } catch (e2) { /* ниже */ }
+    ok = grew();
+    if (ok) how = 'insertHTML';
     if (!ok) {
-      try { node.innerHTML = put.html; ok = filled(); } catch (e2) { ok = false; }
+      // Дописываем в начало, а НЕ переписываем поле целиком: innerHTML стёр бы
+      // цитату, на которую отвечаем.
+      try {
+        node.insertAdjacentHTML('afterbegin', put.html);
+        ok = grew();
+        if (ok) how = 'insertAdjacentHTML';
+      } catch (e3) { ok = false; }
     }
   }
   if (!ok) {
     var safe = String(put.text || '')
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
       .replace(/\r?\n/g, '<br>');
-    try { node.innerHTML = safe; } catch (e3) { node.textContent = put.text; }
+    try {
+      node.insertAdjacentHTML('afterbegin', safe);
+      ok = grew();
+      if (ok) how = 'text';
+    } catch (e4) { ok = false; }
   }
   node.dispatchEvent(new InputEvent('input', { bubbles: true }));
-  return true;
+  // Пробу содержимого возвращаем наружу: по журналу должно быть видно, что
+  // реально оказалось в поле, а не только "получилось или нет".
+  return { ok: ok, how: how, sample: String(node.innerHTML || '').slice(0, 200) };
 }
 
 /**
@@ -1111,16 +1140,31 @@ class PlaywrightManager {
    *
    * TODO(gmail-dom): проверено на живом аккаунте. execCommand('insertHTML')
    * молча вставляет ПУСТО, если ему дать документ целиком - разметку приводит к
-   * пригодному виду htmlTemplate.mailSafe. Порядок попыток и текстовый запасной
-   * путь описаны в _putBody.
+   * пригодному виду htmlTemplate.mailSafe. Порядок попыток описан в putBodyFn.
    */
   async _fillBody(widget, text, { html = '' } = {}) {
     const el = this._visibleIn(widget, SEL.body);
     if (!(await this._waitLocator(el, this._t(T_MED)))) return false;
-    return el.evaluate(putBodyFn, {
+    const res = await el.evaluate(putBodyFn, {
       html: String(html == null ? '' : html),
       text: String(text == null ? '' : text),
-    }).catch(() => false);
+    }).catch(() => null);
+    return this._notePut(res);
+  }
+
+  /**
+   * Записать в журнал, чем и что легло в поле письма.
+   *
+   * Без этого осечку вставки нельзя было отличить от успеха: письмо уходило
+   * пустым или голым текстом, а в логах об этом не было ни слова.
+   */
+  _notePut(res) {
+    if (!res || !res.ok) {
+      logger.error('gmail', t('gmail.bodyFailed'));
+      return false;
+    }
+    logger.debug('gmail', t('gmail.bodyPut', { how: res.how, sample: res.sample }));
+    return true;
   }
 
   /**
@@ -1510,10 +1554,13 @@ class PlaywrightManager {
       // Поле ответа берём видимое: SEL.replyBox это список селекторов через
       // запятую, и первым в документе может оказаться скрытый textbox.
       const box = this._visible(page, SEL.replyBox);
-      await box.evaluate(putBodyFn, {
+      const put = await box.evaluate(putBodyFn, {
         html: String((body && body.html) || ''),
         text: String((body && body.text) || ''),
-      }).catch(() => {});
+      }).catch(() => null);
+      // Пустое письмо продавцу хуже, чем неотправленное: оно занимает попытку
+      // в диалоге и выглядит поломкой. Не легло тело - не отправляем.
+      if (!this._notePut(put)) return { ok: false };
 
       // Сначала настоящая кнопка "Отправить" - она в форме ответа есть
       // (div[role=button].aoO). Горячая клавиша остаётся запасным путём, с

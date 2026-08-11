@@ -92,4 +92,18 @@ contextBridge.exposeInMainWorld('api', {
   cdp: {
     detectChrome: () => ipcRenderer.invoke('cdp:detectChrome'),
   },
+  app: {
+    version: () => ipcRenderer.invoke('app:version'),
+  },
+  update: {
+    state: () => ipcRenderer.invoke('update:state'),
+    check: () => ipcRenderer.invoke('update:check'),
+    download: () => ipcRenderer.invoke('update:download'),
+    install: () => ipcRenderer.invoke('update:install'),
+    onState: (cb) => {
+      const handler = (_e, payload) => cb(payload);
+      ipcRenderer.on('update:state', handler);
+      return () => ipcRenderer.removeListener('update:state', handler);
+    },
+  },
 });

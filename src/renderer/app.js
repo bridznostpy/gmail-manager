@@ -61,6 +61,10 @@ const state = {
   lastSentTotal: null,
   // Идёт запрос старт/стоп/пауза - второй клик в это время не нужен.
   runBusy: false,
+  // Обновление приложения: последнее состояние из main и отметка "свернул".
+  update: { phase: 'idle' },
+  updateHidden: false,
+  version: '',
 };
 
 // Главный экран - статистика: держать на нём пульт запуска незачем, он нужен
@@ -684,7 +688,7 @@ VIEWS.home = () => {
             <span class="home-logo">GM</span>
             <span>
               <span class="home-name">Gmail Manager</span>
-              <span class="home-ver">v0.1.0</span>
+              <span class="home-ver" id="homeVer"></span>
             </span>
           </div>
 
@@ -715,6 +719,10 @@ VIEWS.home = () => {
 function paintHome() {
   const greet = $('#homeGreet');
   if (!greet) return;
+
+  // Версию берём у main: зашитая строка после первого обновления врала бы.
+  const ver = $('#homeVer');
+  if (ver && state.version) ver.textContent = 'v' + state.version;
 
   greet.textContent = t(greetingKey());
   const mode = runState();
@@ -3182,6 +3190,100 @@ async function launchProfile(id, openGmail) {
   catch (e) { toast(t('prof.launchFailed', { error: e.message }), 'error'); }
 }
 
+// ── Обновление приложения ──────────────────────────────────────────
+// Приложение проверяет обновление само, но качает и ставит только по нажатию:
+// у человека может идти прогон, и перезапуск посреди рассылки - это потерянные
+// письма. Карточка живёт в углу и сворачивается, но не пропадает совсем:
+// свернув её один раз, обновление нашли бы уже не скоро.
+
+const UPDATE_PHASES = ['available', 'progress', 'ready', 'unsupported'];
+
+function fmtBytes(n) {
+  const mb = (Number(n) || 0) / (1024 * 1024);
+  return mb >= 10 ? Math.round(mb) + ' MB' : mb.toFixed(1) + ' MB';
+}
+
+function paintUpdate(next) {
+  if (next) state.update = next;
+  const st = state.update || { phase: 'idle' };
+  const box = $('#updateCard');
+  if (!box) return;
+
+  // Скачивание началось - карточку возвращаем, даже если её сворачивали:
+  // человек сам нажал "Скачать" и ждёт увидеть прогресс.
+  if (st.phase === 'progress' || st.phase === 'ready') state.updateHidden = false;
+
+  const show = UPDATE_PHASES.includes(st.phase) && !state.updateHidden;
+  box.hidden = !show;
+  if (!show) return;
+
+  const ver = st.version || '';
+  if (st.phase === 'progress') {
+    const pct = Math.max(0, Math.min(100, st.percent || 0));
+    box.innerHTML = `
+      <div class="uc-head">${ICONS.download}<b>${esc(t('upd.downloading', { version: ver }))}</b></div>
+      <div class="uc-bar"><span style="width:${pct}%"></span></div>
+      <div class="uc-sub">${esc(t('upd.progress', {
+        percent: pct,
+        done: fmtBytes(st.transferred),
+        total: fmtBytes(st.total),
+      }))}</div>`;
+    return;
+  }
+
+  const body = {
+    available: {
+      title: t('upd.availableTitle', { version: ver }),
+      sub: t('upd.availableSub'),
+      ok: t('upd.download'),
+      act: 'download',
+    },
+    ready: {
+      title: t('upd.readyTitle', { version: ver }),
+      sub: t('upd.readySub'),
+      ok: t('upd.restart'),
+      act: 'install',
+    },
+    unsupported: {
+      title: t('upd.availableTitle', { version: ver }),
+      sub: t('upd.portableSub'),
+      ok: t('upd.openPage'),
+      act: 'page',
+    },
+  }[st.phase];
+
+  box.innerHTML = `
+    <div class="uc-head">${ICONS.download}<b>${esc(body.title)}</b>
+      <button class="uc-x" id="ucHide" title="${esc(t('upd.later'))}">${ICONS.x}</button>
+    </div>
+    <div class="uc-sub">${esc(body.sub)}</div>
+    <div class="uc-acts">
+      <button class="btn primary" id="ucOk">${esc(body.ok)}</button>
+      <button class="btn ghost" id="ucLater">${esc(t('upd.later'))}</button>
+    </div>`;
+
+  const later = () => { state.updateHidden = true; paintUpdate(); };
+  $('#ucHide', box).addEventListener('click', later);
+  $('#ucLater', box).addEventListener('click', later);
+  $('#ucOk', box).addEventListener('click', async () => {
+    if (body.act === 'install') { await api.update.install(); return; }
+    // Страницу загрузки для портативной сборки открывает main - здесь тот же
+    // вызов, что и для скачивания, он сам разберётся по типу сборки.
+    paintUpdate(await api.update.download());
+  });
+  wireRipples(box);
+}
+
+/** Проверка по нажатию - из руководства. Возвращает строку для показа рядом. */
+async function checkUpdateNow() {
+  const st = await api.update.check();
+  paintUpdate(st);
+  if (st.phase === 'dev') return t('upd.devBuild');
+  if (st.phase === 'none') return t('upd.upToDate', { version: state.version });
+  if (st.phase === 'error') return t('upd.checkFailed');
+  return t('upd.checking');
+}
+
 // ── Настройки: разделы слева, содержимое справа ─────────────────────
 // Всё настраиваемое собрано здесь. Отдельных разделов под парсер, CDP,
 // ссылки и Telegram в верхней панели нет: одно место правды.
@@ -5278,6 +5380,9 @@ async function boot() {
   applyAppearance();
   renderChrome();
 
+  // Версия нужна витрине и руководству, поэтому берём её до первой отрисовки.
+  state.version = await api.app.version();
+
   buildPalette();
   $('#appearanceBtn').addEventListener('click', () => toggleAppearanceDrawer());
   $('#themeBtn').addEventListener('click', async () => {
@@ -5316,6 +5421,11 @@ async function boot() {
   paintBell();
 
   api.logs.onEntry((entry) => { appendLog(entry); noteFromLog(entry); });
+  // Проверка обновления идёт в main по своему расписанию, окно только слушает.
+  // Текущее состояние спрашиваем сразу: проверка могла пройти до того, как
+  // окно догрузилось.
+  api.update.onState((st) => paintUpdate(st));
+  paintUpdate(await api.update.state());
   setInterval(refreshRun, 1000);
   setInterval(refreshProfiles, 4000);
   setInterval(paintClock, 15000);

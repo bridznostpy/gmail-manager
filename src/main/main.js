@@ -99,6 +99,11 @@ function appIcon() {
  * поднимает Chrome и рассылает реальные письма, и делать это ради проверки
  * вёрстки нельзя. Подмена ставится ПОСЛЕ ipc.register - иначе регистрация
  * второго хендлера на то же имя роняет весь набор обработчиков.
+ *
+ * SHOT_UPDATE - подменённое состояние обновления (JSON). Карточка обновления
+ * появляется только у собранного приложения, когда на GitHub правда лежит
+ * версия новее: иначе её вёрстку нельзя было бы увидеть вообще. Отправляем
+ * событием, а не подменой хендлера, - окно уже спросило состояние при запуске.
  */
 function wireShotMode(win) {
   if (!process.argv.includes('--shot')) return;
@@ -112,6 +117,10 @@ function wireShotMode(win) {
         const fake = JSON.parse(process.env.SHOT_RUN_STATUS);
         ipcMain.removeHandler('run:status');
         ipcMain.handle('run:status', () => fake);
+      }
+      if (process.env.SHOT_UPDATE) {
+        win.webContents.send('update:state', JSON.parse(process.env.SHOT_UPDATE));
+        await new Promise((r) => setTimeout(r, 300));
       }
       if (process.env.SHOT_JS) {
         try { await win.webContents.executeJavaScript(process.env.SHOT_JS); }
@@ -251,5 +260,6 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', async () => {
   autoScan.stopAutoScan();
+  require('./updater').stop();
   try { ctx && (await ctx.chrome.stopAll()); } catch (_e) {}
 });

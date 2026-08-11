@@ -14,6 +14,7 @@ const htmlTemplate = require('./htmlTemplate');
 const { resolveChrome } = require('./cdp/chromeManager');
 const { scanAndPersist } = require('./profiles/autoScan');
 const appearance = require('./appearance');
+const updater = require('./updater');
 
 // Данные для превью HTML-шаблона, когда контактов рассылки ещё нет. Ссылка
 // заведомо нерабочая: настоящую выдаёт API только под реальный заказ.
@@ -435,6 +436,16 @@ function register(ctx) {
   });
   // Сухой прогон автоответа: скан непрочитанных без отправки.
   ipcMain.handle('gmail:dryRun', async (_e, { id }) => sender.dryRun(id));
+
+  // ── обновление приложения ─────────────────────────────────────────
+  // Версию берём из package.json через Electron: на главной она была зашита
+  // строкой и после первого же обновления показывала бы неправду.
+  ipcMain.handle('app:version', () => require('electron').app.getVersion());
+  ipcMain.handle('update:state', () => updater.current());
+  ipcMain.handle('update:check', () => updater.check());
+  ipcMain.handle('update:download', () => updater.download());
+  ipcMain.handle('update:install', () => updater.install());
+  updater.register((payload) => send('update:state', payload));
 
   // ── integrations ──────────────────────────────────────────────────
   ipcMain.handle('telegram:test', (_e, { botToken }) => telegram.test(botToken));

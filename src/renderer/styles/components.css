@@ -877,6 +877,43 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
 .toast.show .bar { animation: toastBar 2.6s linear forwards; }
 @keyframes toastBar { from { transform: scaleX(1); } to { transform: scaleX(0); } }
 
+/* ── Карточка обновления ─────────────────────────────────────
+   Живёт в правом нижнем углу, над всплывающими сообщениями: сообщение уходит
+   через пару секунд само, а обновление ждёт решения. Ниже модалок (z-index
+   400): вопрос "заменить настройки?" важнее новости о версии. */
+.update-card {
+  position: fixed; bottom: 22px; right: 22px; z-index: 320;
+  width: 340px; padding: 15px 17px 16px;
+  border-radius: var(--radius-sm); border-left: 3px solid var(--accent);
+  box-shadow: var(--glass-shadow);
+  animation: ucIn var(--dur) var(--ease-back);
+}
+@keyframes ucIn { from { opacity: 0; transform: translateY(14px) scale(0.97); } }
+.update-card[hidden] { display: none; }
+.uc-head { display: flex; align-items: center; gap: 9px; font-size: var(--fs-sm); }
+.uc-head svg { width: 17px; height: 17px; color: var(--accent); flex: none; }
+.uc-head b { font-weight: 600; }
+/* Крестик прижат к правому краю шапки, поэтому отступ слева тянется сам. */
+.uc-x {
+  margin-left: auto; background: none; border: 0; cursor: pointer;
+  color: var(--text-faint); padding: 2px; line-height: 0; border-radius: 6px;
+  transition: color var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+.uc-x svg { width: 13px; height: 13px; }
+.uc-x:hover { color: var(--text); background: var(--glass-bg-2); }
+.uc-sub { margin-top: 8px; color: var(--text-faint); font-size: var(--fs-xs); line-height: 1.5; }
+.uc-acts { display: flex; gap: 8px; margin-top: 14px; }
+.uc-acts .btn { flex: 1; justify-content: center; }
+.uc-bar {
+  margin-top: 11px; height: 5px; border-radius: 3px; overflow: hidden;
+  background: var(--glass-bg-2);
+}
+.uc-bar span {
+  display: block; height: 100%; border-radius: 3px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  transition: width 220ms var(--ease);
+}
+
 /* ── Модалки ─────────────────────────────────────────────── */
 .modal-overlay {
   position: fixed; inset: 0; background: rgba(6, 8, 12, 0.55);

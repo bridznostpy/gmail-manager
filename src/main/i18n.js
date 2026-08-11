@@ -47,6 +47,12 @@ const DICT = {
     'backup.writeFailed': 'Не удалось сохранить файл настроек: {error}',
     'backup.openFailed': 'Не удалось открыть каталог данных: {error}',
 
+    // ── Обновление ──────────────────────────────────────────
+    'upd.available': 'Вышла версия {version}',
+    'upd.downloaded': 'Версия {version} скачана, можно перезапускать',
+    'upd.installing': 'Перезапуск для установки обновления',
+    'upd.failed': 'Не удалось проверить обновление: {error}',
+
     // ── Ошибки ──────────────────────────────────────────────
     'err.profileNotFound': 'Профиль не найден',
     'err.profileNotRunning': 'Профиль не запущен',
@@ -216,6 +222,11 @@ const DICT = {
     'backup.readFailed': 'Could not read the settings file: {error}',
     'backup.writeFailed': 'Could not save the settings file: {error}',
     'backup.openFailed': 'Could not open the data folder: {error}',
+
+    'upd.available': 'Version {version} is out',
+    'upd.downloaded': 'Version {version} downloaded, ready to restart',
+    'upd.installing': 'Restarting to install the update',
+    'upd.failed': 'Could not check for updates: {error}',
 
     'err.profileNotFound': 'Profile not found',
     'err.profileNotRunning': 'Profile is not running',

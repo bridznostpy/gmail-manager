@@ -1008,8 +1008,8 @@ VIEWS.run = () => {
           <path class="area"/><path vector-effect="non-scaling-stroke"/>
         </svg>
         <div class="cap">${esc(t('dash.sentFoot'))}</div></div>
-      <div class="stat-cell" id="cReplies"><div class="num" id="sReplies">0</div><div class="cap">${esc(t('dash.replies'))}</div></div>
-      <div class="stat-cell" id="cLinks"><div class="num" id="sLinks">0</div><div class="cap">${esc(t('dash.links'))}</div></div>
+      <div class="stat-cell" id="cRunReplies"><div class="num" id="sRunReplies">0</div><div class="cap">${esc(t('dash.replies'))}</div></div>
+      <div class="stat-cell" id="cRunLinks"><div class="num" id="sRunLinks">0</div><div class="cap">${esc(t('dash.links'))}</div></div>
       <div class="stat-cell" id="cQueue"><div class="num" id="sQueue">0</div><div class="cap">${esc(t('dash.queue'))}</div></div>
       <div class="stat-cell" id="cReady"><div class="num" id="sReadyN">0</div><div class="cap">${esc(t('dash.ready'))}</div></div>
       <div class="stat-cell"><div class="num" id="sUptime">0s</div><div class="cap">${esc(t('dash.uptime'))}</div></div>
@@ -1276,10 +1276,13 @@ function paintRun() {
   setNumber($('#sQueue'), r.queueSize);
   setNumber($('#sReadyN'), ready);
   setNumber($('#sSent'), sent);
-  setNumber($('#sReplies'), r.repliesThisSession || 0);
-  setNumber($('#sLinks'), r.linksThisSession || 0);
-  setTone($('#cReplies'), r.repliesThisSession > 0 ? 'ok' : '');
-  setTone($('#cLinks'), r.linksThisSession > 0 ? 'accent' : '');
+  // Идентификаторы с приставкой run: те же слова "ответы" и "ссылки" стоят и
+  // в шапке профилей, а paintRun работает на любом открытом экране - без
+  // разных имён он затирал бы там накопленные числа сессионными.
+  setNumber($('#sRunReplies'), r.repliesThisSession || 0);
+  setNumber($('#sRunLinks'), r.linksThisSession || 0);
+  setTone($('#cRunReplies'), r.repliesThisSession > 0 ? 'ok' : '');
+  setTone($('#cRunLinks'), r.linksThisSession > 0 ? 'accent' : '');
 
   // Цифры красим по смыслу: ноль готовых аккаунтов - это проблема, а не
   // просто число, и выглядеть оно должно иначе, чем пустая очередь.

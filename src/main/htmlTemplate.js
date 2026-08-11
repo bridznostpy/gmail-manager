@@ -81,13 +81,36 @@ function _conditionals(tpl, values) {
 }
 
 /**
+ * Привести разметку к тому, что реально доедет до продавца.
+ *
+ * Письмо вставляется в поле Gmail через execCommand('insertHTML'), то есть в
+ * contenteditable - в контекст BODY. Всё, что в body жить не может, браузер
+ * выбрасывает молча: doctype, html/head/body, meta, link, title и, самое
+ * болезненное, STYLE. Шаблон, свёрстанный классами и блоком <style>, после
+ * такой вставки теряет всё оформление и уходит голым текстом.
+ *
+ * Режем это здесь, а не только в превью: тогда превью показывает ровно то, что
+ * получит продавец. Оформление в письме задаётся атрибутами style="..." на
+ * самих элементах - так свёрстан и встроенный образец.
+ */
+function mailSafe(html) {
+  return String(html == null ? '' : html)
+    .replace(/<!doctype[^>]*>/gi, '')
+    .replace(/<\/?(?:html|head|body)\b[^>]*>/gi, '')
+    .replace(/<(style|script|title)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, '')
+    .replace(/<(?:meta|link|base)\b[^>]*>/gi, '')
+    .trim();
+}
+
+/**
  * Собрать письмо. Возвращает и разметку, и её текстовую проекцию: журнал
  * переписки и лента чата показывают текст, а не сырой HTML.
  */
 function render({ template: tpl, contact, url }) {
   const values = texts.placeholderValues(contact, url);
   const withBlocks = _conditionals(tpl || DEFAULT_HTML, values);
-  const html = texts.fillPlaceholders(withBlocks, contact, url, { escape: escapeHtml });
+  const filled = texts.fillPlaceholders(withBlocks, contact, url, { escape: escapeHtml });
+  const html = mailSafe(filled);
   return { html, text: toText(html) };
 }
 
@@ -142,4 +165,4 @@ function images(html) {
   return out;
 }
 
-module.exports = { DEFAULT_HTML, template, mode, render, build, toText, images, escapeHtml };
+module.exports = { DEFAULT_HTML, template, mode, render, build, toText, images, escapeHtml, mailSafe };

@@ -36,6 +36,13 @@ body {
   padding: var(--gap);
   overflow: hidden;
   -webkit-app-region: drag;
+  transition: padding-right var(--dur-slow) var(--ease);
+}
+/* Пристыкованная панель (превью письма) отодвигает рабочую область, а не
+   накрывает её: править шаблон и смотреть на письмо надо одновременно. */
+body.drawer-docked #app { padding-right: calc(560px + var(--gap)); }
+@media (max-width: 1420px) {
+  body.drawer-docked #app { padding-right: calc(460px + var(--gap)); }
 }
 
 /* ── Рельс разделов ──────────────────────────────────────── */
@@ -123,7 +130,19 @@ body {
 }
 .shell-head button, .shell-head .clock, .shell-head .pill { -webkit-app-region: no-drag; }
 .shell-title .view-title { font-size: 23px; font-weight: 700; letter-spacing: -0.03em; line-height: 1.15; }
-.shell-title .view-sub { color: var(--text-dim); font-size: 12px; margin-top: 2px; }
+/* Подпись раздела - строго в одну строку. Когда сбоку пристыкована панель,
+   рабочая область сужается, и подпись переносами распирала шапку вдвое.
+   Заголовку перенос оставляем: обрезать название раздела хуже, чем занять
+   под него вторую строку. */
+.shell-title .view-sub {
+  color: var(--text-dim); font-size: 12px; margin-top: 2px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* С пристыкованной панелью на заголовок в шапке места не остаётся: он лез
+   под кнопки поиска и наезжал на них. Убираем его целиком - какой раздел
+   открыт, видно и по подсвеченному значку в рельсе, и по заголовку карточки.
+   Шапка на это время становится просто полосой управления. */
+body.drawer-docked .shell-title { display: none; }
 
 .shell-title { flex: 1 1 auto; min-width: 0; }
 .head-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; margin-left: auto; }

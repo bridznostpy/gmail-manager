@@ -539,6 +539,10 @@ function render() {
   $('#pageTitle').textContent = route.bare ? '' : t(route.titleKey);
   $('#pageSub').textContent = route.bare ? '' : t(route.subKey);
 
+  // Панель превью письма живёт при редакторе в настройках: уходя с экрана,
+  // убираем её вместе с ним.
+  dropArPreview();
+
   const main = $('#main');
   main.innerHTML = '';
   // Чаты занимают всю рабочую область и прокручиваются внутри колонок, а не
@@ -2439,6 +2443,8 @@ const SETTINGS_GROUPS = [
   },
   {
     id: 'autoreply', section: 'run', icon: 'chat', reset: 'autoReply', build: buildSetAutoReply,
+    // Единственная группа, которой узкой колонки мало: в ней редактор HTML.
+    wide: true,
     terms: ['ar.modeText', 'ar.modeHtml', 'set.b.template', 'ar.slots'],
   },
   {
@@ -2564,6 +2570,19 @@ function markSettingsHits(root, q) {
 function renderSettingsGroup(root) {
   const group = SETTINGS_GROUPS.find((g) => g.id === state.settingsGroup) || SETTINGS_GROUPS[0];
   $$('.set-tab', root).forEach((b) => b.classList.toggle('active', b.dataset.g === group.id));
+
+  // Панель превью привязана к редактору шаблона: карточку пересобираем -
+  // убираем и её. Открытой она останется, если редактор попросит заново.
+  dropArPreview();
+
+  // Колонка настроек нарочно узкая: поле "Ключ API" во всю ширину экрана
+  // читать неудобно. Редактору HTML это ограничение мешает, поэтому группа
+  // может попросить всю ширину сама.
+  const shell = root.classList && root.classList.contains('settings') ? root : $('.settings');
+  if (shell) {
+    shell.classList.toggle('wide', !!group.wide);
+    shell.classList.remove('focus-editor');
+  }
 
   const panel = root.querySelector('#setPanel');
   if (!panel) return;
@@ -2895,22 +2914,26 @@ function buildSetAutoReply() {
       </div>`)}
     ${html ? setBlock('set.b.template', 'set.arTplHint', `
       <div class="ar-acts">
-        <button class="btn ghost" id="arSample">${ICONS.reset}<span>${esc(t('ar.sample'))}</span></button>
+        <button class="btn ghost" id="arPreview">${ICONS.eye}<span>${esc(t('ar.previewToggle'))}</span></button>
         <button class="btn ghost" id="arBig">${ICONS.image}<span>${esc(t('ar.big'))}</span></button>
+        <button class="btn ghost" id="arSample">${ICONS.reset}<span>${esc(t('ar.sample'))}</span></button>
+        <span class="grow"></span>
+        <button class="btn ghost icon-only" id="arFocus" title="${esc(t('ar.focus'))}">${ICONS.expand}</button>
       </div>
       <div class="ar-slots tl-slots">
         ${HTML_SLOTS.map((s) => `<button class="slot-btn" data-slot="${esc(s)}">${esc(s)}</button>`).join('')}
       </div>
-      <div class="ar-edit">
-        <textarea id="arHtml" class="ar-area" spellcheck="false"
+      <div class="ar-code">
+        <div class="ar-gutter" id="arGutter" aria-hidden="true"></div>
+        <textarea id="arHtml" class="ar-area" spellcheck="false" wrap="off"
           aria-label="${esc(t('set.b.template'))}">${esc(ar.html || '')}</textarea>
-        <div class="ar-preview">
-          <div class="ar-prev-head">
-            <div class="section-label">${esc(t('ar.preview'))}</div>
-            <div class="hint" id="arSource"></div>
-          </div>
-          <iframe id="arFrame" class="ar-frame" title="${esc(t('ar.preview'))}"></iframe>
-        </div>
+      </div>
+      <div class="ar-status">
+        <span id="arPos"></span>
+        <span id="arLines"></span>
+        <span id="arSize"></span>
+        <span class="grow"></span>
+        <span id="arSaveHint">${esc(t('ar.saveHint'))}</span>
       </div>
       <div class="txt-issues" id="arIssues"></div>`) : ''}`));
 
@@ -2926,45 +2949,115 @@ function buildSetAutoReply() {
   return el;
 }
 
-/** Редактор шаблона: сохранение с задержкой и превью тем же собирателем. */
+/**
+ * Редактор шаблона.
+ *
+ * Превью больше не делит место с кодом: письмо на 600 px и HTML-таблица рядом
+ * не помещались ни во что читаемое. Письмо ушло в выезжающую панель, а редактор
+ * забрал всю ширину карточки и получил колонку номеров строк - без них найти
+ * место по сообщению об ошибке в шаблоне было нечем.
+ */
 function wireAutoReplyEditor(el) {
   const area = $('#arHtml', el);
-  const frame = $('#arFrame', el);
+  const gutter = $('#arGutter', el);
+  // Панель превью переживает перерисовку статуса, поэтому берёт текст функцией,
+  // а не значением на момент открытия.
+  const currentHtml = () => area.value;
 
-  const repaint = async () => {
-    const res = await api.autoReply.preview(area.value);
-    paintHtmlPreview(frame, res && res.html);
-    const src = $('#arSource', el);
-    if (src) {
-      src.textContent = res && res.source === 'contact'
-        ? t('ar.previewContact', { title: shorten(res.title || dash, 40) })
-        : t('ar.previewDemo');
+  let lineCount = -1;
+  let curLine = -1;
+
+  const paintGutter = () => {
+    const n = area.value.split('\n').length;
+    if (n !== lineCount) {
+      lineCount = n;
+      curLine = -1;
+      let out = '';
+      for (let i = 1; i <= n; i++) out += '<span>' + i + '</span>';
+      gutter.innerHTML = out;
     }
-    paintAutoReplyIssues($('#arIssues', el), area.value);
+    // Подсветку строки под курсором двигаем точечно: перебирать сотни номеров
+    // на каждое нажатие клавиши незачем.
+    const at = area.value.slice(0, area.selectionStart).split('\n').length - 1;
+    if (at !== curLine) {
+      const prev = gutter.children[curLine];
+      if (prev) prev.classList.remove('cur');
+      const now = gutter.children[at];
+      if (now) now.classList.add('cur');
+      curLine = at;
+    }
+    gutter.scrollTop = area.scrollTop;
   };
 
-  area.addEventListener('input', debounce(async () => {
+  const paintStatus = () => {
+    const before = area.value.slice(0, area.selectionStart).split('\n');
+    const pos = $('#arPos', el);
+    const lines = $('#arLines', el);
+    const size = $('#arSize', el);
+    if (pos) pos.textContent = t('ar.pos', { line: before.length, col: before[before.length - 1].length + 1 });
+    if (lines) lines.textContent = t('ar.lines', { n: area.value.split('\n').length });
+    // Размер в килобайтах, а не в символах: письмо режется по байтам, и
+    // кириллица в шаблоне весит вдвое больше латиницы.
+    if (size) size.textContent = t('ar.size', { n: (new Blob([area.value]).size / 1024).toFixed(1) });
+  };
+
+  const paintChrome = () => { paintGutter(); paintStatus(); };
+
+  const repaint = () => {
+    paintAutoReplyIssues($('#arIssues', el), area.value);
+    repaintArPreview();
+  };
+
+  const save = async () => {
     await saveSection('autoReply', { html: area.value });
-    markSaved(area);
-    repaint();
-  }, 260));
+    const hint = $('#arSaveHint', el);
+    if (hint) {
+      hint.textContent = t('set.saved');
+      hint.classList.add('ok');
+      clearTimeout(hint._t);
+      hint._t = setTimeout(() => {
+        hint.textContent = t('ar.saveHint');
+        hint.classList.remove('ok');
+      }, 1800);
+    }
+  };
+
+  const saveLater = debounce(() => { save(); repaint(); }, 260);
+
+  area.addEventListener('input', () => { paintChrome(); saveLater(); });
+  area.addEventListener('keyup', paintChrome);
+  area.addEventListener('click', paintChrome);
+  area.addEventListener('scroll', () => { gutter.scrollTop = area.scrollTop; });
+
+  area.addEventListener('keydown', async (e) => {
+    // Tab в шаблоне нужен как отступ: уводить им фокус на следующую кнопку
+    // в редакторе кода бессмысленно.
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      insertAtCursor(area, '  ');
+      return;
+    }
+    // Сохранение отложенное, и момент записи по виду экрана не читался.
+    // Ctrl+S записывает сразу и говорит об этом.
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+      e.preventDefault();
+      await save();
+      repaint();
+      toast(t('ar.saved'), 'success');
+    }
+  });
 
   // Плейсхолдер вставляем в место курсора - дописывать его в конец шаблона
   // почти всегда не то, что нужно.
   $$('.slot-btn', el).forEach((b) => b.addEventListener('click', () => {
-    const slot = b.dataset.slot;
-    const at = area.selectionStart;
-    area.value = area.value.slice(0, at) + slot + area.value.slice(area.selectionEnd);
-    area.focus();
-    area.setSelectionRange(at + slot.length, at + slot.length);
-    area.dispatchEvent(new Event('input', { bubbles: true }));
+    insertAtCursor(area, b.dataset.slot);
   }));
 
   $('#arSample', el).addEventListener('click', async () => {
     const sample = await api.autoReply.defaultHtml();
     area.value = sample;
-    await saveSection('autoReply', { html: sample });
-    markSaved(area);
+    await save();
+    paintChrome();
     toast(t('ar.sampleDone'), 'success');
     repaint();
   });
@@ -2974,6 +3067,30 @@ function wireAutoReplyEditor(el) {
     openHtmlPreview(res && res.html);
   });
 
+  const previewBtn = $('#arPreview', el);
+  previewBtn.addEventListener('click', async () => {
+    if (drawerView && drawerView.kind === 'arPreview') { setDrawerOpen(false); return; }
+    previewBtn.classList.add('on');
+    await saveSection('ui', { arPreviewOpen: true });
+    openArPreviewDrawer(currentHtml);
+  });
+
+  // Редактор во весь экран: меню разделов уезжает, код занимает рабочую область.
+  // Состояние временное - при следующем заходе настройки открываются как обычно.
+  const focusBtn = $('#arFocus', el);
+  focusBtn.addEventListener('click', () => {
+    const shell = $('.settings');
+    if (!shell) return;
+    const on = shell.classList.toggle('focus-editor');
+    focusBtn.innerHTML = on ? ICONS.collapse : ICONS.expand;
+    focusBtn.title = on ? t('ar.focusOff') : t('ar.focus');
+  });
+
+  if ((state.settings.ui || {}).arPreviewOpen) {
+    previewBtn.classList.add('on');
+    openArPreviewDrawer(currentHtml);
+  }
+
   // Пустой шаблон означает "взять образец" (см. htmlTemplate.js). Оставить при
   // этом пустой редактор рядом с непустым превью нельзя - непонятно, что уйдёт
   // продавцу. Поэтому образец сразу подставляем и в поле, и в настройки.
@@ -2981,11 +3098,85 @@ function wireAutoReplyEditor(el) {
     api.autoReply.defaultHtml().then(async (sample) => {
       area.value = sample;
       await saveSection('autoReply', { html: sample });
+      paintChrome();
       repaint();
     });
     return;
   }
+  paintChrome();
   repaint();
+}
+
+/** Вставка в место курсора с сохранением истории отмены и события input. */
+function insertAtCursor(area, text) {
+  const at = area.selectionStart;
+  area.value = area.value.slice(0, at) + text + area.value.slice(area.selectionEnd);
+  area.focus();
+  area.setSelectionRange(at + text.length, at + text.length);
+  area.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+// ── Панель превью письма ───────────────────────────────────────────
+// Содержимое перерисовываем точечно, не пересобирая панель: иначе iframe
+// пересоздавался бы на каждое нажатие клавиши и письмо мигало.
+let arPreviewSource = null;
+
+function openArPreviewDrawer(getHtml) {
+  arPreviewSource = getHtml;
+  openDrawer({
+    kind: 'arPreview',
+    wide: true,
+    dock: true,
+    title: t('ar.preview'),
+    build: (body) => {
+      const device = (state.settings.ui || {}).arPreviewDevice === 'mobile' ? 'mobile' : 'desktop';
+      body.innerHTML = `
+        <div class="seg ar-device" id="arDevice">
+          <button data-v="desktop" class="${device === 'desktop' ? 'active' : ''}">${ICONS.monitor}<span>${esc(t('ar.deviceDesktop'))}</span></button>
+          <button data-v="mobile" class="${device === 'mobile' ? 'active' : ''}">${ICONS.mobile}<span>${esc(t('ar.deviceMobile'))}</span></button>
+        </div>
+        <div class="hint ar-src" id="arSource"></div>
+        <div class="ar-stage" data-device="${device}">
+          <iframe id="arFrame" class="ar-frame" title="${esc(t('ar.preview'))}"></iframe>
+        </div>`;
+      $$('#arDevice button', body).forEach((b) => b.addEventListener('click', async () => {
+        $$('#arDevice button', body).forEach((x) => x.classList.toggle('active', x === b));
+        $('.ar-stage', body).dataset.device = b.dataset.v;
+        await saveSection('ui', { arPreviewDevice: b.dataset.v });
+      }));
+      repaintArPreview();
+    },
+    onClose: () => {
+      arPreviewSource = null;
+      const btn = $('#arPreview');
+      if (btn) btn.classList.remove('on');
+      saveSection('ui', { arPreviewOpen: false });
+    },
+  });
+}
+
+async function repaintArPreview() {
+  const frame = $('#arFrame');
+  if (!frame || !arPreviewSource) return;
+  const res = await api.autoReply.preview(arPreviewSource());
+  paintHtmlPreview(frame, res && res.html);
+  const src = $('#arSource');
+  if (src) {
+    src.textContent = res && res.source === 'contact'
+      ? t('ar.previewContact', { title: shorten(res.title || dash, 40) })
+      : t('ar.previewDemo');
+  }
+}
+
+/**
+ * Убрать панель превью, не трогая сохранённый выбор "панель открыта": её
+ * закрывает уход с экрана, а не человек, и вернувшись он ждёт её на месте.
+ */
+function dropArPreview() {
+  if (!drawerView || drawerView.kind !== 'arPreview') return;
+  drawerView.onClose = null;
+  setDrawerOpen(false);
+  arPreviewSource = null;
 }
 
 /**
@@ -3440,9 +3631,19 @@ let drawerView = null;
 function drawerOpen() { return $('#drawer').classList.contains('open'); }
 
 function setDrawerOpen(open) {
+  const view = drawerView;
+  // Пристыкованная панель не гасит экран вуалью и не накрывает работу, а
+  // отодвигает её: письмо в превью смотрят прямо во время правки шаблона, и
+  // редактор при открытой панели должен остаться рабочим.
+  const docked = !!(view && view.dock);
   $('#drawer').classList.toggle('open', open);
-  $('#drawerScrim').classList.toggle('open', open);
-  if (!open) drawerView = null;
+  $('#drawerScrim').classList.toggle('open', open && !docked);
+  document.body.classList.toggle('drawer-docked', open && docked);
+  if (open) return;
+  drawerView = null;
+  // Закрыть панель можно крестиком, вуалью и клавишей Esc. Чтобы вызвавшему
+  // экрану не пришлось ловить все три пути, зовём его обработчик здесь.
+  if (view && view.onClose) view.onClose();
 }
 
 function openDrawer(view) {
@@ -3454,6 +3655,9 @@ function openDrawer(view) {
 function renderDrawerView() {
   if (!drawerView) return;
   const drawer = $('#drawer');
+  // Письмо в превью верстается на 600 px - в обычную ширину панели оно не
+  // влезает, поэтому такие панели просят себе больше места сами.
+  drawer.classList.toggle('wide', !!drawerView.wide);
   drawer.innerHTML = `
     <div class="drawer-head">
       <h3>${esc(drawerView.title)}</h3>

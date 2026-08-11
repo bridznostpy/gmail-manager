@@ -1022,13 +1022,28 @@ VIEWS.run = () => {
       </div>
     </div>
 
+    <div class="card glass sess-card">
+      <div class="sess-head">
+        <h3 style="margin:0">${esc(t('dash.session'))}</h3>
+        <span class="hint" id="sessHint"></span>
+      </div>
+      <div class="sess-wrap">
+        <svg class="sess-chart" id="sessChart" viewBox="0 0 100 46" preserveAspectRatio="none">
+          <path class="area"/><path vector-effect="non-scaling-stroke"/>
+        </svg>
+        <div class="sess-empty" id="sessEmpty">${esc(t('dash.sessEmpty'))}</div>
+      </div>
+      <div class="hint sess-sub">${esc(t('dash.sessSub'))}</div>
+    </div>
+
     <div class="card glass">
       <div class="logs-head">
         <h3 style="margin:0">${esc(t('dash.logs'))}</h3>
-        <div class="seg" id="logLevels">
+        <div class="seg filters" id="logLevels">
           ${LOG_LEVELS.map((lv) => `<button data-v="${lv}" class="${state.logFilter.level === lv ? 'active' : ''}">${esc(lv === 'all' ? t('logs.all') : lv)}</button>`).join('')}
         </div>
         <div class="grow"><input type="text" id="logSearch" placeholder="${esc(t('logs.searchPh'))}" value="${esc(state.logFilter.query)}"/></div>
+        <button class="btn ghost" id="logPause"></button>
         <button class="btn ghost" id="logFollow"></button>
         <button class="btn ghost" id="logClear">${esc(t('logs.clear'))}</button>
         <span class="logs-count" id="logCount"></span>
@@ -1066,12 +1081,33 @@ VIEWS.run = () => {
     if (state.logFollow) scrollLogsToEnd();
     paintLogFollow();
   });
+  // Пауза потока - не то же самое, что "Следить за концом": там автопрокрутка,
+  // здесь список вообще перестаёт меняться. На бегущем прогоне строку, за
+  // которую зацепился глаз, иначе не прочитать.
+  wrap.querySelector('#logPause').addEventListener('click', async () => {
+    const on = !(state.settings.ui || {}).logsPaused;
+    await saveSection('ui', { logsPaused: on });
+    if (!on) { logsHeld = 0; renderLogs(); }
+    paintLogPause();
+  });
   wrap.querySelector('#logClear').addEventListener('click', () => {
     state.logs = [];
+    logsHeld = 0;
     renderLogs();
     toast(t('logs.cleared'));
   });
   const box = wrap.querySelector('#logs');
+  // Копирование строки - делегированием: строк в списке до пяти сотен, вешать
+  // на каждую свой слушатель незачем.
+  box.addEventListener('click', async (e) => {
+    const btn = e.target.closest('.log-copy');
+    if (!btn) return;
+    const line = btn.closest('.log-line');
+    try {
+      await navigator.clipboard.writeText(line.dataset.raw || '');
+      toast(t('logs.copied'), 'success');
+    } catch (err) { toast(t('logs.copyFailed'), 'error'); }
+  });
   // Пользователь отскроллил вверх - перестаём тащить его вниз каждой записью.
   box.addEventListener('scroll', () => {
     const atEnd = box.scrollHeight - box.scrollTop - box.clientHeight < 26;
@@ -1399,9 +1435,38 @@ function sparkPath(values, w, hh) {
 
 function paintSpark() {
   const svg = $('#dSpark');
+  if (svg) {
+    const [area, line] = svg.children;
+    const d = sparkPath(state.sendSeries, 100, 22);
+    line.setAttribute('d', d.line);
+    area.setAttribute('d', d.area);
+  }
+  paintSessionChart();
+}
+
+/**
+ * График прогона над логами. Тот же ряд, что и у искры в полосе статов, но
+ * крупно: по последней строке лога виден только текущий момент, а по графику -
+ * ритм. Провал в нём означает, что аккаунты встали, и это заметно раньше, чем
+ * об этом скажет счётчик.
+ */
+function paintSessionChart() {
+  const svg = $('#sessChart');
   if (!svg) return;
+  // Ровная линия по низу на пустом ряду читалась как сломанный график, поэтому
+  // до первых замеров вместо него стоит подпись.
+  const has = state.sendSeries.length >= 2;
+  svg.hidden = !has;
+  const empty = $('#sessEmpty');
+  if (empty) empty.hidden = has;
+  const hint = $('#sessHint');
+  if (hint) {
+    const n = state.sendSeries.reduce((a, b) => a + b, 0);
+    hint.textContent = has ? t('dash.sessTotal', { n }) : '';
+  }
+  if (!has) return;
   const [area, line] = svg.children;
-  const d = sparkPath(state.sendSeries, 100, 22);
+  const d = sparkPath(state.sendSeries, 100, 46);
   line.setAttribute('d', d.line);
   area.setAttribute('d', d.area);
 }
@@ -1445,7 +1510,10 @@ function highlight(text, query) {
 
 function logLineEl(entry, fresh) {
   const time = new Date(entry.ts).toLocaleTimeString();
-  return h(`<div class="log-line ${entry.level}${fresh ? ' fresh' : ''}"><span class="t">${esc(time)}</span><span class="s">[${esc(entry.scope)}]</span><span class="m">${highlight(entry.message, state.logFilter.query)}</span></div>`);
+  // Исходный текст держим в data-raw: из разметки его пришлось бы собирать
+  // обратно, а подсветка поиска добавляет в неё лишние теги.
+  const raw = time + ' [' + entry.scope + '] ' + entry.message;
+  return h(`<div class="log-line ${entry.level}${fresh ? ' fresh' : ''}" data-raw="${esc(raw)}"><span class="t">${esc(time)}</span><span class="s">[${esc(entry.scope)}]</span><span class="m">${highlight(entry.message, state.logFilter.query)}</span><button class="log-copy" title="${esc(t('logs.copy'))}">${ICONS.copy}</button></div>`);
 }
 
 function renderLogs() {
@@ -1463,13 +1531,43 @@ function renderLogs() {
     box.appendChild(frag);
   }
   paintLogCount(shown.length);
+  paintLogLevels();
   paintLogFollow();
+  paintLogPause();
   if (state.logFollow) scrollLogsToEnd();
 }
 
 function paintLogCount(shown) {
   const el = $('#logCount');
   if (el) el.textContent = t('logs.shown', { shown, total: state.logs.length });
+}
+
+/**
+ * Счётчики по уровням прямо на кнопках фильтра. Без них узнать, есть ли в
+ * журнале ошибки, можно было только переключившись на "error" и обратно.
+ */
+function paintLogLevels() {
+  const box = $('#logLevels');
+  if (!box) return;
+  for (const btn of $$('button', box)) {
+    const lv = btn.dataset.v;
+    const n = lv === 'all' ? state.logs.length : state.logs.filter((e) => e.level === lv).length;
+    let c = btn.querySelector('.count');
+    if (!c) { c = h('<span class="count"></span>'); btn.appendChild(c); }
+    c.textContent = String(n);
+  }
+}
+
+// Сколько записей пришло, пока поток на паузе.
+let logsHeld = 0;
+
+function paintLogPause() {
+  const btn = $('#logPause');
+  if (!btn) return;
+  const on = !!(state.settings.ui || {}).logsPaused;
+  const label = on ? (logsHeld ? t('logs.resumeN', { n: logsHeld }) : t('logs.resume')) : t('logs.pause');
+  btn.innerHTML = (on ? ICONS.play : ICONS.pause) + '<span>' + esc(label) + '</span>';
+  btn.style.color = on ? 'var(--amber)' : '';
 }
 
 function paintLogFollow() {
@@ -1495,6 +1593,10 @@ function appendLog(entry) {
   while (state.logs.length > 500) state.logs.shift();
   const box = $('#logs');
   if (!box) return;
+  // Поток на паузе: в журнал запись идёт, но список не трогаем. Иначе строку,
+  // за которую зацепился глаз, на бегущем прогоне не прочитать.
+  if ((state.settings.ui || {}).logsPaused) { logsHeld++; paintLogPause(); return; }
+  paintLogLevels();
   if (!logPasses(entry)) { paintLogCount(box.children.length); return; }
   const empty = box.querySelector('.empty');
   if (empty) empty.remove();
@@ -4650,7 +4752,9 @@ async function refreshProfiles() {
   const total = state.profiles.reduce((n, p) => n + (p.sentCount || 0), 0);
   if (state.lastSentTotal !== null) {
     state.sendSeries.push(Math.max(0, total - state.lastSentTotal));
-    while (state.sendSeries.length > 40) state.sendSeries.shift();
+    // Окно на 120 тактов, а не на 40: тот же ряд теперь рисует и крупный
+    // график прогона, а на сорока точках он показывал только пару минут.
+    while (state.sendSeries.length > 120) state.sendSeries.shift();
   }
   state.lastSentTotal = total;
 
@@ -4697,6 +4801,10 @@ async function refreshRun() {
 // ── запуск ─────────────────────────────────────────────────────────
 async function boot() {
   state.settings = await api.settings.getAll();
+  // Пауза логов - состояние на время работы, а не настройка вида: приложение,
+  // открывшееся с замороженным журналом, выглядит зависшим. Остальное в
+  // секции ui (вид списка, сортировка, панель превью) переживает перезапуск.
+  if (state.settings.ui && state.settings.ui.logsPaused) saveSection('ui', { logsPaused: false });
   I18N.setLanguage(state.settings.language || 'ru');
   applyTheme(state.settings.theme || 'dark');
   applyAppearance();

@@ -45,7 +45,10 @@ const DEFAULTS = {
     profileSort: 'created', // 'created' | 'written' | 'status' | 'label'
     arPreviewOpen: false, // панель превью HTML-шаблона авто-ответа
     arPreviewDevice: 'desktop', // 'desktop' | 'mobile' - ширина письма в превью
-    logsPaused: false, // поток живых логов на паузе
+    // Поток живых логов на паузе. Единственное поле секции, которое НЕ
+    // переживает перезапуск: рендер сбрасывает его при старте, иначе
+    // приложение открывалось бы с замороженным журналом и выглядело зависшим.
+    logsPaused: false,
   },
 
   // ── System settings ──────────────────────────────────────────────

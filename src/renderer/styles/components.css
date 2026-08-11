@@ -1844,6 +1844,45 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
   .control { grid-template-columns: 1fr; }
 }
 
+/* ── График активности прогона ─────────────────────────────
+   По последней строке лога виден только текущий момент. График показывает
+   ритм: провал в нём означает, что аккаунты встали, и это заметно раньше,
+   чем об этом скажет счётчик. */
+.sess-card { margin-bottom: 14px; }
+.sess-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 12px; }
+.sess-head h3 { font-size: 15px; }
+.sess-head .hint { margin: 0; margin-left: auto; font-family: var(--font-mono); font-size: 10px; }
+/* Высоту держит обёртка, а не сам график: иначе на пустом ряду карточка
+   схлопывалась и снова распухала, когда пошли первые замеры. */
+.sess-wrap { height: 74px; display: grid; }
+.sess-chart { display: block; width: 100%; height: 100%; }
+.sess-chart[hidden] { display: none; }
+.sess-chart path { fill: none; stroke: var(--accent); stroke-width: 1.6; stroke-linejoin: round; }
+.sess-chart .area { fill: rgba(var(--accent-rgb), 0.14); stroke: none; }
+.sess-empty {
+  place-self: center; color: var(--text-faint);
+  font-family: var(--font-mono); font-size: 10.5px;
+}
+.sess-empty[hidden] { display: none; }
+/* Отступ задан с весом карточки: общее правило .card .hint тянет подсказки
+   вверх отрицательным margin, и подпись налезала на график. */
+.card .sess-sub { margin: 12px 0 0; }
+
+/* Копирование строки лога. Кнопка проявляется по наведению: пятьсот всегда
+   видимых значков превратили бы журнал в частокол. */
+.log-line { position: relative; }
+.log-copy {
+  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+  width: 22px; height: 22px; border-radius: 6px;
+  display: grid; place-items: center;
+  background: var(--glass-bg-2); border: 1px solid var(--border);
+  color: var(--text-faint); cursor: pointer;
+  opacity: 0; transition: opacity var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.log-copy svg { width: 12px; height: 12px; }
+.log-line:hover .log-copy { opacity: 1; }
+.log-copy:hover { color: var(--text); border-color: var(--border-strong); }
+
 /* Мини-строки аккаунтов в работе на дашборде. */
 .acc-row {
   display: flex; align-items: center; gap: 12px;

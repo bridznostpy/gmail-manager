@@ -66,7 +66,8 @@ class ParserEngine {
     try {
       const leads = await client.fetchBatch({
         apiKey: parser.apiKey,
-        platforms: parser.platforms,
+        platform: parser.platform,
+        countries: parser.countries,
         limit: sys.parserBatchSize,
       });
       if (leads.length) {

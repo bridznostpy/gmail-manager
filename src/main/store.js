@@ -86,7 +86,13 @@ const DEFAULTS = {
     aiTemplateSwap: false, // rotate message templates via AI
     enabled: false,
     swapKeyEveryN: 0, // rotate API key after N messages (0 = never)
-    platforms: [], // e.g. ['usa', 'poshmark']
+    // Цель рассылки. Площадка ОДНА: оба парсера принимают ровно одну за вызов
+    // (XProject - поле platform в задаче, VVS - сегмент пути /ads/{platform}).
+    // Стран может быть несколько - клиенты обходят их по очереди, отдельным
+    // запросом на каждую. Коды канонические, нижним регистром; регистр под свой
+    // контракт каждый клиент приводит сам.
+    platform: 'poshmark', // 'depop' | 'poshmark' | 'vinted'
+    countries: ['us'],
   },
 
   // ── Chrome CDP ───────────────────────────────────────────────────
@@ -115,6 +121,30 @@ const DEFAULTS = {
   texts: null,
 };
 
+/**
+ * Разовый перенос старых форм настроек.
+ *
+ * Цели рассылки раньше лежали плоским списком чипов (platforms: ['usa',
+ * 'poshmark']), из которого клиенты парсера всё равно собирали одну площадку и
+ * одну страну. Теперь это явные поля. Без переноса после обновления рассылка
+ * молча ушла бы на площадку по умолчанию - то есть собирала бы не то, что
+ * человек выбрал.
+ *
+ * Возвращает true, если что-то изменилось и файл надо переписать.
+ */
+function migrate(data) {
+  const p = data.parser;
+  if (!p || !Array.isArray(p.platforms)) return false;
+  const old = p.platforms;
+  const known = ['depop', 'poshmark', 'vinted'];
+  const platform = old.find((x) => known.includes(x));
+  if (platform) p.platform = platform;
+  // Единственной страной в старом списке была отметка "usa".
+  if (old.includes('usa')) p.countries = ['us'];
+  delete p.platforms;
+  return true;
+}
+
 function deepMerge(base, over) {
   if (Array.isArray(base)) return Array.isArray(over) ? over : base;
   if (base && typeof base === 'object') {
@@ -138,6 +168,9 @@ class Store {
     try {
       const raw = fs.readFileSync(this.filePath, 'utf-8');
       this.data = deepMerge(DEFAULTS, JSON.parse(raw));
+      // Переносим сразу и пишем обратно: иначе старое поле осталось бы в файле
+      // и перенос повторялся бы каждый запуск, затирая новый выбор.
+      if (migrate(this.data)) this._save();
     } catch (_e) {
       // first run or unreadable - keep defaults
       this.data = { ...DEFAULTS };

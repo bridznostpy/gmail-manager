@@ -18,32 +18,43 @@ const CONFIG = {
   authPrefix: '',
   defaultPlatform: 'poshmark',
   emailOnly: true, // email=true asks the parser for gmail-validated listings
-  // App platform chips -> real API platform / country filter.
-  platformMap: {
-    usa: { country: 'US' },
-    poshmark: { platform: 'poshmark' },
-  },
+  // Площадки из документации. Список тут для проверки: неизвестный сегмент
+  // пути вернул бы ошибку, и поймать это до запроса дешевле.
+  platforms: ['depop', 'poshmark', 'vinted'],
+  // В этом API коды стран верхним регистром.
+  countryCase: 'upper',
 };
 
-/** Map the app's platform chips onto one API platform + country. */
-function _resolve(platforms) {
-  let platform = CONFIG.defaultPlatform;
-  let country = '';
-  for (const p of platforms || []) {
-    const m = CONFIG.platformMap[p];
-    if (!m) continue;
-    if (m.platform) platform = m.platform;
-    if (m.country) country = m.country;
+// Указатель обхода стран, свой на площадку: за один запрос API отдаёт
+// объявления одной страны, поэтому несколько стран обходим по очереди.
+const _rr = new Map();
+
+/**
+ * Площадка и страна для очередного запроса. Площадка одна - она сегмент пути
+ * /ads/{platform}. Стран может быть несколько, берём следующую по кругу.
+ */
+function _resolve(platform, countries) {
+  const known = CONFIG.platforms.includes(platform) ? platform : CONFIG.defaultPlatform;
+  if (known !== platform && platform) {
+    logger.warn('parser', t('parser.unknownPlatform', { platform, used: known }));
   }
-  return { platform, country };
+  const list = (countries || []).filter(Boolean);
+  let country = '';
+  if (list.length) {
+    const at = (_rr.get(known) || 0) % list.length;
+    _rr.set(known, at + 1);
+    const code = String(list[at]);
+    country = CONFIG.countryCase === 'lower' ? code.toLowerCase() : code.toUpperCase();
+  }
+  return { platform: known, country };
 }
 
-async function fetchBatch({ apiKey, platforms, limit }) {
+async function fetchBatch({ apiKey, platform: want, countries, limit }) {
   if (!apiKey) {
     logger.warn('parser', t('vvs.noKey'));
     return [];
   }
-  const { platform, country } = _resolve(platforms);
+  const { platform, country } = _resolve(want, countries);
   const params = new URLSearchParams();
   if (country) params.set('country', country);
   if (CONFIG.emailOnly) params.set('email', 'true');

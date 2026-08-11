@@ -23,31 +23,47 @@ const CONFIG = {
   authHeader: 'X-API-Key',
   authPrefix: '',
   defaultPlatform: 'poshmark',
-  // App platform chips -> real API platform / country filter.
-  platformMap: {
-    usa: { country: 'us' },
-    poshmark: { platform: 'poshmark' },
-  },
+  // Значения enum Platform из документации. Задача заводится ровно под одну
+  // площадку, поэтому список тут только для проверки: неизвестное значение
+  // вернуло бы 422, и лучше поймать это до запроса.
+  platforms: ['depop', 'poshmark', 'vinted'],
+  // Ключ фильтра страны в start.filters и регистр кода (enum Country - нижний).
+  countryFilter: 'country',
+  countryCase: 'lower',
 };
 
 // "apiKey|platform|country" -> { taskId, cursor } for the process lifetime.
 const _tasks = new Map();
+// Указатель обхода стран, свой на площадку: за один вызов API отдаёт объявления
+// одной страны, поэтому несколько стран обходим по очереди.
+const _rr = new Map();
 
 function _headers(apiKey) {
   return { [CONFIG.authHeader]: CONFIG.authPrefix + apiKey, 'Content-Type': 'application/json' };
 }
 
-/** Map the app's platform chips onto one API platform + filter set. */
-function _resolve(platforms) {
-  let platform = CONFIG.defaultPlatform;
-  const filters = {};
-  for (const p of platforms || []) {
-    const m = CONFIG.platformMap[p];
-    if (!m) continue;
-    if (m.platform) platform = m.platform;
-    if (m.country) filters.country = m.country;
+/**
+ * Площадка и страна для очередного запроса.
+ *
+ * Площадка одна - так устроен start: одна задача под одну платформу. Стран
+ * может быть несколько, и каждая живёт своей задачей со своим курсором
+ * (реестр _tasks ключуется вместе со страной), поэтому переключение между ними
+ * не сбивает разбор страниц.
+ */
+function _resolve(platform, countries) {
+  const known = CONFIG.platforms.includes(platform) ? platform : CONFIG.defaultPlatform;
+  if (known !== platform && platform) {
+    logger.warn('parser', t('parser.unknownPlatform', { platform, used: known }));
   }
-  return { platform, filters };
+  const list = (countries || []).filter(Boolean);
+  const filters = {};
+  if (list.length) {
+    const at = (_rr.get(known) || 0) % list.length;
+    _rr.set(known, at + 1);
+    const code = String(list[at]);
+    filters[CONFIG.countryFilter] = CONFIG.countryCase === 'lower' ? code.toLowerCase() : code.toUpperCase();
+  }
+  return { platform: known, filters };
 }
 
 async function _startTask(apiKey, platform, filters) {
@@ -67,12 +83,12 @@ async function _startTask(apiKey, platform, filters) {
   return data && data.task_id != null ? data.task_id : null;
 }
 
-async function fetchBatch({ apiKey, platforms, limit }) {
+async function fetchBatch({ apiKey, platform: want, countries, limit }) {
   if (!apiKey) {
     logger.warn('parser', t('xp.noKey'));
     return [];
   }
-  const { platform, filters } = _resolve(platforms);
+  const { platform, filters } = _resolve(want, countries);
   const key = `${apiKey}|${platform}|${filters.country || ''}`;
   let task = _tasks.get(key);
   try {

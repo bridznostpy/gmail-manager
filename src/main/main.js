@@ -26,8 +26,44 @@ const i18n = require('./i18n');
 // её уже не примет.
 appearance.registerScheme();
 
+// Каталог данных выбираем до whenReady: настройки, профили и переписки читаются
+// сразу после готовности, и менять путь позже было бы поздно.
+const portableNote = applyPortableMode();
+
 let mainWindow = null;
 let ctx = null;
+
+/**
+ * Портативный режим.
+ *
+ * Обычно данные лежат там, куда их кладёт Electron - в AppData пользователя.
+ * Если рядом с программой положен файл "portable.txt", всё уходит в каталог
+ * "data" рядом с ней: тогда приложение переносится на другую машину папкой
+ * целиком, вместе с настройками, профилями и перепиской.
+ *
+ * Только для собранного приложения: в разработке рядом с exe лежит
+ * node_modules/electron, и данные уехали бы туда.
+ *
+ * Возвращает строку для лога - писать в него отсюда нельзя, язык логгера
+ * ставится позже, уже из настроек.
+ */
+function applyPortableMode() {
+  if (!app.isPackaged) return null;
+  const dir = path.dirname(app.getPath('exe'));
+  if (!fs.existsSync(path.join(dir, 'portable.txt'))) return null;
+  const data = path.join(dir, 'data');
+  try {
+    // Каталог рядом с программой может быть закрыт на запись - например, если
+    // её положили в Program Files. Тогда остаёмся на обычном пути: приложение
+    // должно запуститься в любом случае, пусть и не портативным.
+    fs.mkdirSync(data, { recursive: true });
+    fs.accessSync(data, fs.constants.W_OK);
+    app.setPath('userData', data);
+    return { key: 'sys.portableOn', params: {} };
+  } catch (e) {
+    return { key: 'sys.portableFailed', params: { error: e.message } };
+  }
+}
 
 function buildContext() {
   const userData = app.getPath('userData');
@@ -191,6 +227,10 @@ app.whenReady().then(() => {
   // Язык логов берём из настроек до первой записи, иначе стартовые строки
   // ушли бы на языке по умолчанию.
   i18n.setLanguage(ctx.store.get('language'));
+  // Каталог данных пишем в лог всегда: это первый вопрос при разборе любой
+  // жалобы - где лежат настройки этого запуска.
+  if (portableNote) logger.info('system', i18n.t(portableNote.key, portableNote.params));
+  logger.info('system', i18n.t('sys.dataDir', { path: ctx.userData }));
   appearance.init(ctx.userData);
   runMigrations(ctx);
   createWindow();

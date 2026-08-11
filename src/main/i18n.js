@@ -22,6 +22,9 @@ const DICT = {
     'sys.languageChanged': 'Язык приложения переключён на {lang}',
     'sys.chatsArchived': 'Переписки убраны в архив чатов: {n}',
     'sys.chatsArchivedProfile': 'Переписки профиля "{label}" убраны в архив: {n}',
+    'sys.dataDir': 'Данные приложения: {path}',
+    'sys.portableOn': 'Портативный режим: данные лежат рядом с программой',
+    'sys.portableFailed': 'Портативный режим не включён, каталог рядом с программой недоступен на запись: {error}',
 
     // ── Оформление ──────────────────────────────────────────
     'texts.dialogOpen': 'Выберите файл с текстами рассылки',
@@ -181,6 +184,9 @@ const DICT = {
     'sys.languageChanged': 'Application language switched to {lang}',
     'sys.chatsArchived': 'Messages moved to the chat archive: {n}',
     'sys.chatsArchivedProfile': 'Messages of profile "{label}" moved to the archive: {n}',
+    'sys.dataDir': 'Application data: {path}',
+    'sys.portableOn': 'Portable mode: data lives next to the program',
+    'sys.portableFailed': 'Portable mode is off, the folder next to the program is not writable: {error}',
 
     'texts.dialogOpen': 'Pick an outreach texts file',
     'texts.dialogSave': 'Save the outreach texts',

@@ -3509,7 +3509,9 @@ function paintTargetSummary(box) {
   if (!countries.length) {
     list.appendChild(h(`<span class="hint">${esc(t('targets.noCountry'))}</span>`));
   } else {
-    for (const c of countries) list.appendChild(h(`<span class="tg-flag">${esc(t('country.' + c))}</span>`));
+    for (const c of countries) {
+      list.appendChild(h(`<span class="tg-flag">${flagHtml(c)}<span>${esc(t('country.' + c))}</span></span>`));
+    }
   }
   box.appendChild(list);
 }
@@ -3574,6 +3576,7 @@ function openTargetsModal() {
           <div class="tg-c-grid">
             ${p.countries.map((c) => `<button class="tg-c ${picked.includes(c) ? 'on' : ''}" data-c="${c}">
               <span class="tg-c-box">${picked.includes(c) ? ICONS.check : ''}</span>
+              ${flagHtml(c)}
               <span>${esc(t('country.' + c))}</span>
             </button>`).join('')}
           </div>
@@ -3601,9 +3604,10 @@ function openTargetsModal() {
                   <span class="tg-card-id">
                     <span class="tg-name">${esc(p.label)}</span>
                     <span class="tg-note">${esc(t('platform.' + p.id + '.note'))}</span>
-                    <span class="tg-note">${esc(p.countries.length > 1
-                      ? t('targets.nCountries', { n: p.countries.length })
-                      : t('country.' + p.countries[0]))}</span>
+                    <span class="tg-note tg-note-country">${p.countries.length > 1
+                      ? p.countries.slice(0, 6).map((c) => flagHtml(c)).join('')
+                        + `<span>${esc(t('targets.nCountries', { n: p.countries.length }))}</span>`
+                      : flagHtml(p.countries[0]) + `<span>${esc(t('country.' + p.countries[0]))}</span>`}</span>
                   </span>
                   <span class="tg-mark">${p.id === pickedId ? ICONS.check : ''}</span>
                 </button>`).join('')}

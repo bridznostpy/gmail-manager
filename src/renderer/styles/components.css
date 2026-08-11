@@ -1945,17 +1945,38 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
 .pf-logo { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 
 .tg-name { font-size: 13.5px; font-weight: 650; display: block; }
-.tg-note { font-size: var(--fs-2xs); color: var(--text-faint); display: block; }
+/* Подпись площадки лежит прямо на карточке поверх фона: держим её на
+   --text-dim, самый бледный цвет тут не выживает (см. texts.png). */
+.tg-note { font-size: var(--fs-2xs); color: var(--text-dim); display: block; }
 
 /* Сводка выбранного - и в настройках, и в центре управления. */
 .tg-sum { display: flex; align-items: center; gap: 12px; }
 .tg-sum-id { min-width: 0; }
 .tg-sum-countries { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
 .tg-flag {
-  font-size: var(--fs-2xs); padding: 3px 9px; border-radius: 20px;
+  display: inline-flex; align-items: center; gap: 7px;
+  font-size: var(--fs-2xs); padding: 3px 10px 3px 5px; border-radius: 20px;
   background: var(--accent-soft); color: var(--accent);
   border: 1px solid var(--accent-line);
 }
+
+/* Флаг страны. Кромка обязательна: у белых и жёлтых полотнищ край иначе
+   растворяется в подложке чипа, и флаг читается как обрезок. */
+.flag {
+  flex-shrink: 0; display: block;
+  width: 21px; height: 14px; border-radius: 3px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35), 0 0 0 2px rgba(255, 255, 255, 0.1);
+}
+.flag-unknown {
+  flex-shrink: 0; display: inline-grid; place-items: center;
+  width: 21px; height: 14px; border-radius: 3px;
+  background: var(--bg-input); border: 1px solid var(--border-strong);
+  font-family: var(--font-mono); font-size: 9px; color: var(--text-faint);
+}
+/* Ряд флагов в подписи площадки: сами флаги, затем "N стран". */
+.tg-note-country { display: flex; align-items: center; gap: 4px; margin-top: 4px; }
+.tg-note-country .flag { width: 16px; height: 11px; }
+.tg-note-country > span { margin-left: 3px; }
 
 .tg-groups { margin-top: 18px; }
 .tg-group + .tg-group { margin-top: 20px; }

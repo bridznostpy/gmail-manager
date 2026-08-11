@@ -4071,11 +4071,19 @@ function paintAutoReplyIssues(box, tpl) {
   const s = String(tpl || '');
   const rows = [];
   if (/<script/i.test(s)) rows.push(['bad', t('ar.warnScript')]);
-  // Самая частая и самая незаметная беда: шаблон свёрстан классами и блоком
-  // <style>. Письмо вставляется в поле Gmail как в contenteditable, и <style>
-  // оттуда выбрасывается - оформление пропадает целиком, письмо уходит голым.
-  if (/<style\b/i.test(s)) rows.push(['bad', t('ar.warnStyleTag')]);
-  else if (/\sclass\s*=/i.test(s)) rows.push(['warn', t('ar.warnClasses')]);
+  // Блок <style> сам по себе больше не беда: правила раскладываются по
+  // атрибутам элементов при отправке. Предупреждаем только о том, что перенести
+  // физически невозможно - такие правила молча не применятся.
+  if (/<style\b/i.test(s)) {
+    rows.push(['ok', t('ar.styleInlined')]);
+    const css = (s.match(/<style\b[^>]*>[\s\S]*?<\/style\s*>/gi) || []).join(' ');
+    if (/@media/i.test(css)) rows.push(['warn', t('ar.warnMedia')]);
+    if (/:(?:hover|focus|active|visited|first-|last-|nth-)|::/i.test(css)) {
+      rows.push(['warn', t('ar.warnPseudo')]);
+    }
+  } else if (/\sclass\s*=/i.test(s)) {
+    rows.push(['warn', t('ar.warnClasses')]);
+  }
   if (/\son[a-z]+\s*=/i.test(s)) rows.push(['warn', t('ar.warnHandlers')]);
   if (!/\{link\}/.test(s)) rows.push(['warn', t('ar.warnNoLink')]);
   if (!/\{image_url\}/.test(s)) rows.push(['info', t('ar.warnNoImage')]);

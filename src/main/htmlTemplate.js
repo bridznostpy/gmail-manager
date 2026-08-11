@@ -80,6 +80,171 @@ function _conditionals(tpl, values) {
   );
 }
 
+// ── Перенос стилей в атрибуты ──────────────────────────────────────
+// Блок <style> до продавца не доезжает: письмо вставляется в поле Gmail как в
+// contenteditable, и весь блок оттуда выбрасывается вместе с оформлением.
+// Поэтому правила раскладываются по атрибутам style="..." самих элементов -
+// единственный способ оформления, который понимают почтовые клиенты.
+
+/** Теги без закрывающего: в стек вложенности их класть нельзя. */
+const VOID_TAGS = ['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input',
+  'link', 'meta', 'param', 'source', 'track', 'wbr'];
+
+/**
+ * Разобрать CSS в плоский список правил.
+ *
+ * Групповые правила (@media и подобные) выбрасываем целиком: инлайнить их
+ * некуда - условие негде хранить, а без него правило применилось бы всегда.
+ * Селекторы с псевдоклассами и комбинаторами тоже пропускаем: :hover в письме
+ * не работает, а ">" и "+" без настоящего дерева не разобрать честно.
+ */
+function _parseCss(css) {
+  const clean = String(css)
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/@[a-z-]+[^{]*\{(?:[^{}]|\{[^{}]*\})*\}/gi, '')
+    .replace(/@[a-z-]+[^;{}]*;/gi, '');
+  const out = [];
+  const re = /([^{}]+)\{([^{}]*)\}/g;
+  let m = re.exec(clean);
+  let order = 0;
+  while (m) {
+    // Переносы и отступы из исходного CSS схлопываем: иначе они уезжают в
+    // атрибут style и раздувают письмо на пустом месте.
+    const body = m[2].replace(/\s+/g, ' ').trim().replace(/;\s*$/, '');
+    if (body) {
+      for (const one of m[1].split(',')) {
+        const sel = one.trim();
+        if (sel && !/[:>+~[*]/.test(sel)) {
+          const parts = sel.split(/\s+/).map(_parsePart);
+          if (parts.every(Boolean)) out.push({ parts, body, spec: _spec(parts), order: order++ });
+        }
+      }
+    }
+    m = re.exec(clean);
+  }
+  return out;
+}
+
+/** Часть селектора: тег, классы и идентификатор. */
+function _parsePart(part) {
+  if (!/^[a-z0-9]*(?:[.#][\w-]+)*$/i.test(part)) return null;
+  const tag = (part.match(/^[a-z0-9]+/i) || [''])[0].toLowerCase();
+  const out = { tag, classes: [], id: '' };
+  const re = /([.#])([\w-]+)/g;
+  let m = re.exec(part);
+  while (m) {
+    if (m[1] === '.') out.classes.push(m[2]);
+    else out.id = m[2];
+    m = re.exec(part);
+  }
+  return (tag || out.classes.length || out.id) ? out : null;
+}
+
+/** Вес селектора по обычным правилам CSS: идентификатор, класс, тег. */
+function _spec(parts) {
+  let n = 0;
+  for (const p of parts) n += (p.id ? 100 : 0) + p.classes.length * 10 + (p.tag ? 1 : 0);
+  return n;
+}
+
+function _matchOne(part, el) {
+  if (!el) return false;
+  if (part.tag && part.tag !== el.tag) return false;
+  if (part.id && part.id !== el.id) return false;
+  return part.classes.every((c) => el.classes.indexOf(c) >= 0);
+}
+
+/**
+ * Селектор подходит текущему элементу? Последняя часть проверяется на нём
+ * самом, остальные - на предках в том же порядке, но не обязательно подряд:
+ * это обычный вложенный селектор вида ".notice-box strong".
+ */
+function _matches(parts, stack) {
+  let i = parts.length - 1;
+  if (!_matchOne(parts[i], stack[stack.length - 1])) return false;
+  i--;
+  let j = stack.length - 2;
+  while (i >= 0 && j >= 0) {
+    if (_matchOne(parts[i], stack[j])) i--;
+    j--;
+  }
+  return i < 0;
+}
+
+/** Атрибуты тега строкой в объект. Значения бывают в любых кавычках и без них. */
+function _attrs(s) {
+  const out = {};
+  const re = /([\w-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/g;
+  let m = re.exec(s || '');
+  while (m) {
+    out[m[1].toLowerCase()] = m[2] != null ? m[2] : (m[3] != null ? m[3] : (m[4] || ''));
+    m = re.exec(s || '');
+  }
+  return out;
+}
+
+/**
+ * Разложить правила из <style> по атрибутам style элементов.
+ *
+ * Свой inline-стиль всегда сильнее: он дописывается последним и перекрывает
+ * пришедшее из блока. Правила между собой сортируются по весу селектора, при
+ * равном весе побеждает последнее в файле - как в браузере.
+ */
+function inlineCss(html) {
+  const src = String(html == null ? '' : html);
+  let css = '';
+  src.replace(/<style\b[^>]*>([\s\S]*?)<\/style\s*>/gi, (_m, body) => { css += '\n' + body; return ''; });
+  const rules = _parseCss(css);
+  if (!rules.length) return src;
+
+  const stack = [];
+  const token = /<!--[\s\S]*?-->|<\/([a-z][a-z0-9]*)\s*>|<([a-z][a-z0-9]*)\b((?:"[^"]*"|'[^']*'|[^>])*)>/gi;
+  let styledBody = false;
+
+  const out = src.replace(token, (raw, closeTag, openTag, attrStr) => {
+    if (raw.slice(0, 4) === '<!--') return raw;
+    if (closeTag) {
+      const tag = closeTag.toLowerCase();
+      for (let i = stack.length - 1; i >= 0; i--) {
+        if (stack[i].tag === tag) { stack.length = i; break; }
+      }
+      return raw;
+    }
+    const tag = String(openTag).toLowerCase();
+    const attrs = _attrs(attrStr);
+    const el = {
+      tag,
+      id: attrs.id || '',
+      classes: String(attrs.class || '').split(/\s+/).filter(Boolean),
+    };
+    stack.push(el);
+
+    const hit = rules.filter((r) => _matches(r.parts, stack))
+      .sort((a, b) => (a.spec - b.spec) || (a.order - b.order))
+      .map((r) => r.body.trim().replace(/;$/, ''));
+
+    const selfClose = /\/\s*$/.test(attrStr || '');
+    if (selfClose || VOID_TAGS.indexOf(tag) >= 0) stack.pop();
+
+    if (!hit.length) return raw;
+    if (tag === 'body') styledBody = true;
+    const own = (attrs.style || '').trim().replace(/;$/, '');
+    const merged = hit.concat(own ? [own] : []).join(';');
+    const quoted = 'style="' + merged.replace(/"/g, '&quot;') + '"';
+    const rest = /\bstyle\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/i.test(attrStr)
+      ? attrStr.replace(/\bstyle\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/i, quoted)
+      : (attrStr || '').replace(/\s*\/?\s*$/, '') + ' ' + quoted + (selfClose ? ' /' : '');
+    return '<' + openTag + rest + '>';
+  });
+
+  // Оформление body пропало бы вместе с самим тегом: mailSafe его вырезает.
+  // Переносим его на div, иначе письмо теряет базовый шрифт и цвет.
+  if (!styledBody) return out;
+  return out
+    .replace(/<body\b((?:"[^"]*"|'[^']*'|[^>])*)>/i, '<div$1>')
+    .replace(/<\/body\s*>/i, '</div>');
+}
+
 /**
  * Привести разметку к тому, что реально доедет до продавца.
  *
@@ -110,7 +275,9 @@ function render({ template: tpl, contact, url }) {
   const values = texts.placeholderValues(contact, url);
   const withBlocks = _conditionals(tpl || DEFAULT_HTML, values);
   const filled = texts.fillPlaceholders(withBlocks, contact, url, { escape: escapeHtml });
-  const html = mailSafe(filled);
+  // Порядок важен: стили разложить надо ДО того, как mailSafe вырежет блок
+  // <style> - иначе переносить будет нечего.
+  const html = mailSafe(inlineCss(filled));
   return { html, text: toText(html) };
 }
 
@@ -165,4 +332,7 @@ function images(html) {
   return out;
 }
 
-module.exports = { DEFAULT_HTML, template, mode, render, build, toText, images, escapeHtml, mailSafe };
+module.exports = {
+  DEFAULT_HTML, template, mode, render, build, toText, images, escapeHtml,
+  mailSafe, inlineCss,
+};

@@ -75,12 +75,48 @@ const ROUTES = [
   { id: 'settings', labelKey: 'nav.settings', icon: 'settings', titleKey: 'set.title', subKey: 'set.sub' },
 ];
 
-// Площадки парсера. Значения - те же ключи, что понимает platformMap клиентов
-// (src/main/parser/apis/*.js). Новых сюда не добавлять без документации API.
+/**
+ * Каталог площадок.
+ *
+ * id - это значение platform в обоих API (XProject: enum Platform,
+ * VVS: сегмент пути /ads/{platform}). Придумывать сюда новые нельзя, площадки
+ * берутся из документации - см. CONFIG клиентов в src/main/parser/apis/.
+ *
+ * countries - страны, доступные площадке, кодами нижнего регистра. У площадки
+ * одной страны список из одного кода: выбирать там нечего, страна ставится
+ * сама. Логотип подставляется файлом platforms/<id>.svg, если он положен;
+ * пока файла нет, рисуется монограмма в цвете площадки.
+ */
 const PLATFORMS = [
-  { id: 'usa', label: 'USA', code: 'us' },
-  { id: 'poshmark', label: 'Poshmark', code: 'pm' },
+  { id: 'depop', label: 'Depop', group: 'us', color: '#ff2300', countries: ['us'] },
+  { id: 'poshmark', label: 'Poshmark', group: 'us', color: '#8b1a4f', countries: ['us'] },
+  {
+    id: 'vinted',
+    label: 'Vinted',
+    group: 'world',
+    color: '#007782',
+    countries: ['us', 'at', 'au', 'be', 'cz', 'de', 'dk', 'es', 'fr', 'gr',
+      'it', 'lv', 'nl', 'pl', 'pt', 'ro', 'se', 'gb'],
+  },
 ];
+
+const PLATFORM_GROUPS = ['us', 'world'];
+
+function platformById(id) {
+  return PLATFORMS.find((p) => p.id === id) || PLATFORMS[1];
+}
+
+/**
+ * Выбранная цель в разобранном виде. Страны фильтруем по площадке: список мог
+ * остаться от прошлого выбора, когда площадка была другой, и показывать страну,
+ * которой у неё нет, значило бы врать.
+ */
+function currentTarget() {
+  const p = state.settings.parser || {};
+  const platform = platformById(p.platform);
+  const countries = (p.countries || []).filter((c) => platform.countries.includes(c));
+  return { platform, countries };
+}
 
 const ACCENTS = {
   green: { c: '#3ddc84', c2: '#16b364', rgb: '61, 220, 132', on: '#04120a' },
@@ -633,7 +669,7 @@ function readySteps() {
     { key: 'profile', done: state.profiles.length > 0, go: () => go('profiles') },
     { key: 'login', done: ready > 0, go: () => go('profiles') },
     { key: 'texts', done: !!s.texts, go: () => goSettings('texts') },
-    { key: 'parser', done: !!(s.parser.apiKey && s.parser.platforms.length), go: () => goSettings('parser') },
+    { key: 'parser', done: !!(s.parser.apiKey && currentTarget().countries.length), go: () => goSettings('parser') },
     { key: 'link', done: !!s.link.apiKey, go: () => goSettings('link') },
   ];
 }
@@ -1015,10 +1051,9 @@ VIEWS.run = () => {
         <div id="dAccounts"></div>
       </div>
       <div class="card glass">
-        <h3 style="font-size:15px">${ICONS.target} ${esc(t('targets.title'))}</h3>
-        <div class="hint" style="margin-top:-8px;margin-bottom:14px">${esc(t('targets.sub'))}</div>
-        <div class="chips" id="dTargets"></div>
-        <div class="hint" id="dTargetsHint" style="margin-top:10px"></div>
+        <h3 style="font-size:15px">${ICONS.target} ${esc(t('dash.target'))}</h3>
+        <div class="hint" style="margin-top:-8px;margin-bottom:14px">${esc(t('dash.targetSub'))}</div>
+        <div class="tg-current" id="dTarget"></div>
       </div>
     </div>
 
@@ -1063,8 +1098,6 @@ VIEWS.run = () => {
   const leadBtn = h(`<button class="btn ghost big">${ICONS.send}<span>${esc(t('dash.testLead'))}</span></button>`);
   leadBtn.addEventListener('click', () => testLeadFlow());
   controls.append(primary, secondary, leadBtn);
-
-  wireTargetChips(wrap.querySelector('#dTargets'), wrap.querySelector('#dTargetsHint'));
 
   // Логи
   $$('#logLevels button', wrap).forEach((b) => b.addEventListener('click', () => {
@@ -1117,23 +1150,6 @@ VIEWS.run = () => {
   setTimeout(() => { renderLogs(); paintRun(); }, 0);
   return wrap;
 };
-
-/** Чипы площадок. Один код на два места: блок на дашборде и группу настроек -
-    настройка одна и та же, разъезжаться ей нельзя. */
-function wireTargetChips(box, hint) {
-  if (!box) return;
-  const selected = (state.settings.parser.platforms || []);
-  box.innerHTML = PLATFORMS.map((p) => `<div class="chip ${selected.includes(p.id) ? 'on' : ''}" data-v="${p.id}">
-    <span class="code">${esc(p.code)}</span>${esc(p.label)}</div>`).join('');
-  if (hint) hint.textContent = selected.length ? '' : t('targets.empty');
-  $$('.chip', box).forEach((c) => c.addEventListener('click', async () => {
-    c.classList.toggle('on');
-    const sel = $$('.chip.on', box).map((x) => x.dataset.v);
-    await saveSection('parser', { platforms: sel });
-    if (hint) hint.textContent = sel.length ? '' : t('targets.empty');
-    toast(t('targets.saved'), 'success');
-  }));
-}
 
 /** Одна точка входа для старт/стоп/пауза - и одна защита от двойного клика. */
 async function runAction(kind) {
@@ -1262,6 +1278,9 @@ function paintRun() {
 
   paintPace(plan);
   paintReadyList(ready, noTab);
+  // В центре управления цель только показывается: менять её можно в настройках,
+  // чтобы одна настройка не жила в двух местах.
+  paintTargetSummary($('#dTarget'));
   paintAccountRows(plan);
   paintRunControls();
   paintQuickRun();
@@ -1307,7 +1326,7 @@ function paintReadyList(ready, noTab) {
     { ok: ready > 0, key: 'dash.chk.ready', go: () => go('profiles') },
     { ok: !noTab, key: 'dash.chk.tabs', go: () => go('profiles') },
     { ok: !!s.texts, key: 'dash.chk.texts', go: () => goSettings('texts') },
-    { ok: !!(s.parser.platforms || []).length, key: 'dash.chk.targets', go: () => goSettings('targets') },
+    { ok: !!currentTarget().countries.length, key: 'dash.chk.targets', go: () => goSettings('targets') },
     { ok: !!s.parser.apiKey, key: 'dash.chk.parser', go: () => goSettings('parser') },
     { ok: !!s.link.apiKey, key: 'dash.chk.link', go: () => goSettings('link') },
   ];
@@ -3458,10 +3477,167 @@ function buildSetParser() {
 
 function buildSetTargets() {
   const el = h(setCard('targets', `
-    <div class="chips" id="setTargets"></div>
-    <div class="hint" id="setTargetsHint" style="margin-top:12px"></div>`));
-  wireTargetChips($('#setTargets', el), $('#setTargetsHint', el));
+    <div class="tg-current" id="tgCurrent"></div>
+    <div class="ar-acts" style="margin-top:16px">
+      <button class="btn primary" id="tgEdit">${ICONS.target}<span>${esc(t('targets.change'))}</span></button>
+    </div>`));
+  paintTargetSummary($('#tgCurrent', el));
+  $('#tgEdit', el).addEventListener('click', () => openTargetsModal());
   return el;
+}
+
+/** Что сейчас выбрано: площадка с логотипом и её страны. */
+function paintTargetSummary(box) {
+  if (!box) return;
+  const { platform, countries } = currentTarget();
+  // Пересобираем только при смене цели: в центре управления этот блок
+  // перерисовывается каждый такт опроса, и логотип грузился бы заново.
+  const sign = platform.id + '|' + countries.join(',');
+  if (box.dataset.sign === sign) return;
+  box.dataset.sign = sign;
+  box.innerHTML = '';
+  const row = h(`<div class="tg-sum">
+    <span class="tg-sum-id">
+      <span class="tg-name">${esc(platform.label)}</span>
+      <span class="tg-note">${esc(t('platform.' + platform.id + '.note'))}</span>
+    </span>
+  </div>`);
+  row.prepend(platformAvatar(platform));
+  box.appendChild(row);
+
+  const list = h(`<div class="tg-sum-countries"></div>`);
+  if (!countries.length) {
+    list.appendChild(h(`<span class="hint">${esc(t('targets.noCountry'))}</span>`));
+  } else {
+    for (const c of countries) list.appendChild(h(`<span class="tg-flag">${esc(t('country.' + c))}</span>`));
+  }
+  box.appendChild(list);
+}
+
+/**
+ * Аватарка площадки.
+ *
+ * Монограмма в цвете площадки - основа, логотип подставляется поверх, если
+ * файл positions platforms/<id>.svg положен рядом с интерфейсом. Картинку
+ * вставляем только после успешной загрузки: так отсутствие файла ничего не
+ * ломает и не мигает битым значком, а обработчик события пишется кодом -
+ * inline-атрибут onerror запрещён политикой безопасности.
+ */
+function platformAvatar(p) {
+  const el = h(`<span class="pf-avatar" style="--pf:${p.color}">${esc(p.label.charAt(0))}</span>`);
+  const img = new Image();
+  img.className = 'pf-logo';
+  img.alt = '';
+  img.addEventListener('load', () => el.appendChild(img));
+  img.src = 'platforms/' + encodeURIComponent(p.id) + '.svg';
+  return el;
+}
+
+/**
+ * Выбор цели рассылки.
+ *
+ * Площадка одна: оба парсера принимают ровно одну за вызов, и мультивыбор
+ * означал бы обещание, которого движок не выполняет. Стран у всемирной
+ * площадки можно отметить сколько угодно - клиенты обходят их по очереди.
+ */
+function openTargetsModal() {
+  const cur = currentTarget();
+  let pickedId = cur.platform.id;
+  let picked = cur.countries.slice();
+  if (!picked.length) picked = [cur.platform.countries[0]];
+
+  return modal(
+    `<h3>${esc(t('targets.title'))}</h3>
+     <div class="hint" style="margin-top:-6px">${esc(t('targets.modalSub'))}</div>
+     <div class="tg-groups" id="tgGroups"></div>
+     <div class="tg-countries" id="tgCountries"></div>
+     <div class="modal-actions">
+       <button class="btn" id="tgCancel">${esc(t('common.cancel'))}</button>
+       <button class="btn primary" id="tgSave">${esc(t('common.ok'))}</button>
+     </div>`,
+    (overlay, done) => {
+      overlay.firstElementChild.classList.add('wide');
+      const groups = $('#tgGroups', overlay);
+      const box = $('#tgCountries', overlay);
+      const save = $('#tgSave', overlay);
+
+      const paintCountries = () => {
+        const p = platformById(pickedId);
+        // У площадки одной страны выбирать нечего - блок только мешал бы.
+        if (p.countries.length < 2) { box.innerHTML = ''; save.disabled = false; return; }
+        box.innerHTML = `
+          <div class="tg-c-head">
+            <div class="section-label">${esc(t('targets.countries'))}</div>
+            <button class="btn ghost" data-all="1">${esc(t('targets.selectAll'))}</button>
+            <button class="btn ghost" data-none="1">${esc(t('targets.selectNone'))}</button>
+          </div>
+          <div class="tg-c-grid">
+            ${p.countries.map((c) => `<button class="tg-c ${picked.includes(c) ? 'on' : ''}" data-c="${c}">
+              <span class="tg-c-box">${picked.includes(c) ? ICONS.check : ''}</span>
+              <span>${esc(t('country.' + c))}</span>
+            </button>`).join('')}
+          </div>
+          <div class="hint tg-c-note">${esc(t('targets.countriesHint'))}</div>`;
+        $$('.tg-c', box).forEach((b) => b.addEventListener('click', () => {
+          const c = b.dataset.c;
+          const at = picked.indexOf(c);
+          if (at === -1) picked.push(c); else picked.splice(at, 1);
+          paintCountries();
+        }));
+        $('[data-all]', box).addEventListener('click', () => { picked = p.countries.slice(); paintCountries(); });
+        $('[data-none]', box).addEventListener('click', () => { picked = []; paintCountries(); });
+        // Без единой страны запрос отправлять некуда.
+        save.disabled = !picked.length;
+      };
+
+      const paintGroups = () => {
+        groups.innerHTML = PLATFORM_GROUPS.map((g) => `
+          <div class="tg-group">
+            <div class="section-label">${esc(t('targets.group.' + g))}</div>
+            <div class="tg-cards">
+              ${PLATFORMS.filter((p) => p.group === g).map((p) => `
+                <button class="tg-card ${p.id === pickedId ? 'on' : ''}" data-p="${p.id}">
+                  <span class="tg-card-av" data-av="${p.id}"></span>
+                  <span class="tg-card-id">
+                    <span class="tg-name">${esc(p.label)}</span>
+                    <span class="tg-note">${esc(t('platform.' + p.id + '.note'))}</span>
+                    <span class="tg-note">${esc(p.countries.length > 1
+                      ? t('targets.nCountries', { n: p.countries.length })
+                      : t('country.' + p.countries[0]))}</span>
+                  </span>
+                  <span class="tg-mark">${p.id === pickedId ? ICONS.check : ''}</span>
+                </button>`).join('')}
+            </div>
+          </div>`).join('');
+        // Аватарки собираем кодом: внутри лежит картинка с обработчиком загрузки.
+        $$('[data-av]', groups).forEach((slot) => slot.appendChild(platformAvatar(platformById(slot.dataset.av))));
+        $$('.tg-card', groups).forEach((b) => b.addEventListener('click', () => {
+          if (b.dataset.p === pickedId) return;
+          pickedId = b.dataset.p;
+          const p = platformById(pickedId);
+          // Со сменой площадки оставляем те страны, которые она умеет; если не
+          // осталось ни одной - первую из её списка, чтобы цель не стала пустой.
+          picked = picked.filter((c) => p.countries.includes(c));
+          if (!picked.length) picked = [p.countries[0]];
+          paintGroups();
+          paintCountries();
+        }));
+      };
+
+      paintGroups();
+      paintCountries();
+      wireRipples(overlay);
+
+      $('#tgCancel', overlay).addEventListener('click', () => done(null));
+      save.addEventListener('click', async () => {
+        await saveSection('parser', { platform: pickedId, countries: picked });
+        toast(t('targets.saved'), 'success');
+        const root = $('.settings');
+        if (root) renderSettingsGroup(root);
+        done(true);
+      });
+    },
+  );
 }
 
 function buildSetCdp() {

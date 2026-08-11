@@ -1142,14 +1142,82 @@ class PlaywrightManager {
    * молча вставляет ПУСТО, если ему дать документ целиком - разметку приводит к
    * пригодному виду htmlTemplate.mailSafe. Порядок попыток описан в putBodyFn.
    */
-  async _fillBody(widget, text, { html = '' } = {}) {
+  async _fillBody(widget, text, { html = '', page = null, inst = null } = {}) {
     const el = this._visibleIn(widget, SEL.body);
     if (!(await this._waitLocator(el, this._t(T_MED)))) return false;
-    const res = await el.evaluate(putBodyFn, {
-      html: String(html == null ? '' : html),
-      text: String(text == null ? '' : text),
-    }).catch(() => null);
+    const body = { html: String(html == null ? '' : html), text: String(text == null ? '' : text) };
+    // Буфер обмена - основной путь для разметки: письмо разбирает сам Gmail,
+    // ровно как при вставке руками. См. _pasteBody.
+    const pasted = page ? await this._pasteBody(page, inst, el, body) : null;
+    if (pasted) return this._notePut(pasted);
+    const res = await el.evaluate(putBodyFn, body).catch(() => null);
     return this._notePut(res);
+  }
+
+  /**
+   * Положить письмо через буфер обмена.
+   *
+   * execCommand('insertHTML') зависит от того, как поле относится к разметке, и
+   * на живом аккаунте это уже подводило: письмо уходило то голым текстом, то
+   * пустым. Вставка из буфера идёт через собственный обработчик Gmail - тот
+   * самый, которым письмо вставляет человек, - и разметка доезжает так же.
+   *
+   * Возвращает null, если путь недоступен (нет разрешения на буфер, нечего
+   * вставлять, вставка не прижилась) - тогда работает запасной putBodyFn.
+   */
+  async _pasteBody(page, inst, locator, body) {
+    if (!body.html) return null;
+    // Без разрешения Chrome отклоняет запись в буфер из скрипта: жеста
+    // пользователя здесь нет.
+    try {
+      await inst.context.grantPermissions(['clipboard-read', 'clipboard-write'],
+        { origin: 'https://mail.google.com' });
+    } catch (_e) { /* не дали - поймём по результату ниже */ }
+
+    // Вставка идёт настоящим нажатием клавиш, а его принимает активная
+    // вкладка. Осечку это не исключает - тогда просто отработает запасной путь.
+    await page.bringToFront().catch(() => {});
+
+    const wrote = await page.evaluate(async (put) => {
+      try {
+        await navigator.clipboard.write([new ClipboardItem({
+          'text/html': new Blob([put.html], { type: 'text/html' }),
+          'text/plain': new Blob([put.text], { type: 'text/plain' }),
+        })]);
+        return true;
+      } catch (e) { return false; }
+    }, body).catch(() => false);
+    if (!wrote) return null;
+
+    // Курсор в начало поля: в ответе там уже лежит цитата, и письмо должно
+    // встать перед ней.
+    const before = await locator.evaluate((node) => {
+      node.focus();
+      try {
+        const sel = window.getSelection();
+        const range = document.createRange();
+        range.setStart(node, 0);
+        range.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(range);
+      } catch (e) { /* вставка пойдёт в текущую позицию */ }
+      return node.innerHTML.length;
+    }).catch(() => null);
+    if (before == null) return null;
+
+    await page.keyboard.press(inst && inst.mac ? 'Meta+V' : 'Control+V');
+
+    // Gmail разбирает вставку не мгновенно, поэтому ждём прирост, а не
+    // проверяем сразу после нажатия.
+    for (let i = 0; i < 20; i++) {
+      const now = await locator.evaluate((node) => ({
+        len: node.innerHTML.length,
+        sample: String(node.innerHTML || '').slice(0, 200),
+      })).catch(() => null);
+      if (now && now.len > before) return { ok: true, how: 'clipboard', sample: now.sample };
+      await page.waitForTimeout(100);
+    }
+    return null;
   }
 
   /**
@@ -1203,7 +1271,9 @@ class PlaywrightManager {
         throw new Error(t('err.recipientNotSet', { to }));
       }
       if (subject) await this._typeInto(page, widget, SEL.subject, subject);
-      if (body) await this._fillBody(widget, body);
+      // Первое письмо уходит обычным текстом, разметки у него нет - буфер тут
+      // не нужен, но page с inst передаём для единообразия пути.
+      if (body) await this._fillBody(widget, body, { page, inst });
 
       let clicked = false;
       try {
@@ -1471,7 +1541,7 @@ class PlaywrightManager {
 
     let sent = false;
     try {
-      if (!(await this._fillBody(widget, body.text, { html: body.html }))) return null;
+      if (!(await this._fillBody(widget, body.text, { html: body.html, page, inst }))) return null;
 
       let clicked = false;
       try {
@@ -1554,10 +1624,12 @@ class PlaywrightManager {
       // Поле ответа берём видимое: SEL.replyBox это список селекторов через
       // запятую, и первым в документе может оказаться скрытый textbox.
       const box = this._visible(page, SEL.replyBox);
-      const put = await box.evaluate(putBodyFn, {
+      const payload = {
         html: String((body && body.html) || ''),
         text: String((body && body.text) || ''),
-      }).catch(() => null);
+      };
+      const put = await this._pasteBody(page, inst, box, payload)
+        || await box.evaluate(putBodyFn, payload).catch(() => null);
       // Пустое письмо продавцу хуже, чем неотправленное: оно занимает попытку
       // в диалоге и выглядит поломкой. Не легло тело - не отправляем.
       if (!this._notePut(put)) return { ok: false };

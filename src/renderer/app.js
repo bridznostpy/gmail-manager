@@ -12,6 +12,7 @@
 const api = window.api;
 const ICONS = window.ICONS;
 const I18N = window.I18N;
+const ONBOARD = window.ONBOARD;
 const t = (key, params) => I18N.t(key, params);
 
 const state = {
@@ -77,6 +78,7 @@ const ROUTES = [
   { id: 'chats', labelKey: 'nav.chats', icon: 'chat', titleKey: 'chat.title', subKey: 'chat.sub', fullHeight: true },
   { id: 'profiles', labelKey: 'nav.profiles', icon: 'profiles', titleKey: 'prof.title', subKey: 'prof.sub' },
   { id: 'settings', labelKey: 'nav.settings', icon: 'settings', titleKey: 'set.title', subKey: 'set.sub' },
+  { id: 'guide', labelKey: 'nav.guide', icon: 'help', titleKey: 'guide.title', subKey: 'guide.sub' },
 ];
 
 /**
@@ -670,6 +672,11 @@ function readySteps() {
   const s = state.settings;
   const ready = state.profiles.filter((p) => p.gmailStatus === 'ready').length;
   return [
+    // Первым шагом - мастер, пока его не прошли: пока человек не понял, что
+    // куда, остальные шаги ему ни о чём не говорят.
+    ...(s.onboarding && s.onboarding.done ? [] : [
+      { key: 'wizard', done: false, go: () => ONBOARD.wizard() },
+    ]),
     { key: 'profile', done: state.profiles.length > 0, go: () => go('profiles') },
     { key: 'login', done: ready > 0, go: () => go('profiles') },
     { key: 'texts', done: !!s.texts, go: () => goSettings('texts') },
@@ -3190,6 +3197,70 @@ async function launchProfile(id, openGmail) {
   catch (e) { toast(t('prof.launchFailed', { error: e.message }), 'error'); }
 }
 
+// ── Руководство ────────────────────────────────────────────────────
+// Постоянный раздел, а не только приветствие новичку: половина вопросов о
+// приложении - это "почему профиль не готов" и "куда делись мои настройки", и
+// отвечать на них должно само приложение, а не переписка.
+//
+// Разделы держим списком ключей: текст живёт в словаре, здесь только порядок и
+// то, куда ведёт кнопка под разделом.
+
+const GUIDE_SECTIONS = [
+  { id: 'how', icon: 'rocket' },
+  { id: 'order', icon: 'list', go: () => goSettings('parser') },
+  { id: 'profiles', icon: 'profiles', go: () => go('profiles') },
+  { id: 'texts', icon: 'inbox', go: () => goSettings('texts') },
+  { id: 'trouble', icon: 'alert', go: () => go('run') },
+  { id: 'data', icon: 'folder', go: () => goSettings('backup') },
+];
+
+VIEWS.guide = () => {
+  const wrap = h(`<div class="guide">
+    <section class="card glass guide-hero">
+      <div class="gh-icon">${ICONS.help}</div>
+      <div>
+        <h3>${esc(t('guide.heroTitle'))}</h3>
+        <div class="hint">${esc(t('guide.heroSub'))}</div>
+      </div>
+      <div class="gh-acts">
+        <button class="btn" id="gWizard">${ICONS.rocket}<span>${esc(t('guide.runWizard'))}</span></button>
+        <button class="btn ghost" id="gTour">${ICONS.eye}<span>${esc(t('guide.runTour'))}</span></button>
+      </div>
+    </section>
+
+    <section class="guide-list">
+      ${GUIDE_SECTIONS.map((s) => panelHtml(false, `
+        <span class="icon">${ICONS[s.icon]}</span>
+        <span class="ph-title">${esc(t('guide.t.' + s.id))}</span>`, `
+        <div class="guide-text">${esc(t('guide.d.' + s.id))}</div>
+        ${s.go ? `<button class="btn ghost" data-goto="${s.id}">${esc(t('guide.open.' + s.id))}</button>` : ''}`)).join('')}
+    </section>
+
+    <section class="card glass guide-ver">
+      <div>
+        <div class="section-label">${esc(t('guide.version'))}</div>
+        <div class="gv-num" id="gVer">v${esc(state.version)}</div>
+      </div>
+      <div class="gv-right">
+        <button class="btn" id="gCheck">${ICONS.download}<span>${esc(t('upd.check'))}</span></button>
+        <div class="hint" id="gCheckMsg"></div>
+      </div>
+    </section>
+  </div>`);
+
+  $('#gWizard', wrap).addEventListener('click', () => ONBOARD.wizard());
+  $('#gTour', wrap).addEventListener('click', () => ONBOARD.tour());
+  $$('[data-goto]', wrap).forEach((b) => b.addEventListener('click', () => {
+    const sec = GUIDE_SECTIONS.find((s) => s.id === b.dataset.goto);
+    if (sec && sec.go) sec.go();
+  }));
+  $('#gCheck', wrap).addEventListener('click', async () => {
+    $('#gCheckMsg', wrap).textContent = t('upd.checking');
+    $('#gCheckMsg', wrap).textContent = await checkUpdateNow();
+  });
+  return wrap;
+};
+
 // ── Обновление приложения ──────────────────────────────────────────
 // Приложение проверяет обновление само, но качает и ставит только по нажатию:
 // у человека может идти прогон, и перезапуск посреди рассылки - это потерянные
@@ -5426,6 +5497,15 @@ async function boot() {
   // окно догрузилось.
   api.update.onState((st) => paintUpdate(st));
   paintUpdate(await api.update.state());
+
+  // Мастер первого запуска - последним делом: он перекрывает окно, и показывать
+  // его поверх наполовину собранного экрана нельзя.
+  ONBOARD.init({
+    api, state, t, esc, h, toast, go, goSettings, saveSection, debounce,
+    wireRipples, setLanguage, setTheme, openTextsFile, refreshProfiles,
+    ICONS, I18N, PLATFORMS,
+  });
+  ONBOARD.greetIfNew();
   setInterval(refreshRun, 1000);
   setInterval(refreshProfiles, 4000);
   setInterval(paintClock, 15000);

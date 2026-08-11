@@ -227,6 +227,17 @@ function runMigrations(context) {
     context.store.set('migrations', { ...done, chatsArchived: true });
     if (n) logger.info('system', i18n.t('sys.chatsArchived', { n }));
   }
+
+  // Мастер первого запуска появился позже самого приложения, и без этой
+  // проверки он встретил бы всех, кто уже работает: в их настройках отметки о
+  // мастере просто нет. Наличие профилей означает, что человек всё настроил
+  // руками и объяснять ему нечего.
+  if (!done.onboardingChecked) {
+    if (context.profileStore.list().length) {
+      context.store.set('onboarding', { done: true, tourDone: true });
+    }
+    context.store.set('migrations', { ...context.store.get('migrations'), onboardingChecked: true });
+  }
 }
 
 app.whenReady().then(() => {

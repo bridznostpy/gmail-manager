@@ -1,132 +1,172 @@
 # Gmail Manager
 
-Desktop app (Electron) for managing Gmail accounts through isolated Chrome
-profiles driven over the **DevTools Protocol (CDP)**. It parses leads into a
-queue, sends first-messages sequentially per account up to a configurable
-limit, and runs an auto-responder the whole time. Left-side navigation with
-collapsible panels, light/dark theme, JetBrains Mono typography and inline SVG
-icons. The interface ships in **Russian and English** (Russian by default).
+Настольное приложение на Electron для работы с аккаунтами Gmail через отдельные
+профили Chrome, которыми управляет Playwright по протоколу DevTools. Собирает
+объявления в очередь, пишет продавцам с ваших аккаунтов по очереди, до заданного
+предела на каждый, и всё это время отвечает на ответы автоматически.
 
-> **Gmail login is manual by design.** No Gmail API, no credential handling.
-> Each profile opens `gmail.com` in its own Chrome instance and the user signs
-> in by hand. The app only *observes* auth status via a DOM scan.
+Интерфейс на русском и английском, тёмная и светлая тема, своя картинка фона.
 
-## Run
+> **Вход в Gmail выполняется только вручную.** Никакого Gmail API, никаких
+> паролей: приложение их не знает и не спрашивает. Каждый профиль открывает
+> `gmail.com` в своём окне Chrome, где вы входите сами. Приложение лишь
+> наблюдает за состоянием аккаунта, сканируя страницу.
+
+## Установка
+
+Готовую сборку под Windows возьмите на [странице
+релизов](https://github.com/bridznostpy/gmail-manager/releases/latest):
+
+- `Gmail-Manager-Setup-<версия>.exe` - установщик. Ставится без прав
+  администратора, в папку пользователя, и **обновляется сам**.
+- `Gmail-Manager-Portable-<версия>.exe` - один файл, запускается без установки.
+  Обновление скачивается вручную.
+
+Нужен установленный **Google Chrome**. Обычно он находится сам; если нет,
+укажите путь в настройках, раздел "Chrome CDP".
+
+## Запуск из исходников
 
 ```bash
 cd gmail-manager
-npm install          # electron + ws
-npm start            # or: npm run dev  (opens devtools)
+npm install
+npm start          # или npm run dev - с открытыми инструментами разработчика
 ```
 
-Requires a local **Google Chrome** install. Set its path under **Chrome CDP** if
-auto-detect fails.
+## Сборка
 
-## Layout
+```bash
+npm run build      # установщик и портативный exe в dist/
+npm run release    # то же самое и публикация релиза на GitHub
+```
+
+Для публикации нужен токен GitHub в переменной окружения `GH_TOKEN`. В
+репозиторий он не попадает. Порядок выпуска версии описан в
+[docs/RELEASE.md](docs/RELEASE.md).
+
+## Обновление
+
+Приложение проверяет новую версию через несколько секунд после запуска и дальше
+раз в шесть часов. Найдя её, показывает карточку в углу окна - и ждёт. Ничего
+не скачивается, пока вы не нажмёте: во время прогона перезапуск означал бы
+потерянные письма.
+
+После скачивания приложение предложит перезапуститься и поставит обновление
+само. Отказ не теряется: предложение вернётся при следующем запуске.
+
+Портативная сборка обновиться сама не может, ей нечем заменить свой файл, -
+она показывает ту же карточку со ссылкой на страницу загрузки.
+
+## Где лежат данные
+
+Настройки, профили, переписка, статистика и картинка фона - в каталоге данных
+приложения (`%APPDATA%\gmail-manager`). Открыть его можно прямо из настроек:
+раздел "Перенос настроек".
+
+Оттуда же настройки выгружаются в один файл JSON и загружаются обратно - это
+перенос на другой компьютер и резервная копия. Ключи API уходят в файл только
+по отметке: без неё файлом можно поделиться.
+
+**Портативный режим.** Положите рядом с exe файл `portable.txt` - и все данные
+будут храниться в папке `data` рядом с программой. Тогда приложение переносится
+целиком, вместе со всем нажитым. Установленная версия при обновлении заменяет
+свою папку, поэтому портативный режим предназначен для портативной сборки.
+
+## Знакомство для новичка
+
+При первом запуске открывается мастер на восемь шагов: язык и тема, поиск
+Chrome, ключ парсера и площадка, генератор ссылок, Telegram, тексты рассылки и
+первый профиль. Любой шаг можно пропустить - введённое сохраняется сразу.
+
+Раздел **"Руководство"** остаётся в приложении навсегда: как всё устроено, в
+каком порядке настраивать, что значит готовность профиля, что делать при
+ошибках и где лежат данные. Оттуда же запускаются заново мастер и подсказки по
+интерфейсу.
+
+На главной есть чек-лист готовности - он проверяет настоящие данные и ведёт
+туда, где незакрытый пункт закрывается.
+
+## Структура
 
 ```
 src/
-  main/                       Electron main process
-    main.js                   entry: wires store + engines + window
-    store.js                  JSON settings store (userData/settings.json)
-    i18n.js                   ru/en strings for logs, errors, Telegram notices
-    logger.js                 central log stream → dashboard live logs
-    ipc.js                    all IPC handlers (the only privileged surface)
-    preload.js                contextBridge → window.api
+  main/                       главный процесс Electron
+    main.js                   точка входа: каталог данных, хранилища, окно
+    store.js                  настройки в JSON (userData/settings.json)
+    updater.js                проверка и установка обновлений с GitHub
+    i18n.js                   строки логов, ошибок и уведомлений (ru/en)
+    logger.js                 общий поток логов -> живые логи в окне
+    ipc.js                    все обработчики IPC (единственная привилегированная поверхность)
+    preload.js                мост contextBridge -> window.api
+    appearance.js             картинка фона: своя схема appbg:
     cdp/
-      chromeManager.js        spawn Chrome, CDP over ws, port allocation
-      fingerprint.js          per-profile fingerprint + injection script
-    profiles/profileStore.js  persistent profile list (userData/profiles.json)
+      chromeManager.js        запуск Chrome, работа со страницами Gmail
+      fingerprint.js          отпечаток профиля и скрипт подмены
+    profiles/profileStore.js  список профилей (userData/profiles.json)
     parser/
-      parserEngine.js         queue filler (batch + refill threshold)
-      apis/xproject.js        XProject client   - TODO(docs)
-      apis/vvs.js             VVS client        - TODO(docs)
-    link/haronRent.js         Haron Rent link generator - TODO(docs)
-    sender/senderEngine.js    run orchestration: sequential fill + auto-reply
-    telegram/telegram.js      Bot API notifications (no deps)
-  renderer/                   UI (vanilla JS, no framework)
+      parserEngine.js         наполнение очереди (пачками, с дозаливкой)
+      apis/xproject.js        клиент XProject   - TODO(docs)
+      apis/vvs.js             клиент VVS        - TODO(docs)
+    link/haronRent.js         генератор ссылок Haron Rent - TODO(docs)
+    sender/senderEngine.js    прогон: последовательная отправка и автоответы
+    telegram/telegram.js      уведомления через Bot API
+  renderer/                   интерфейс (ванильный JS, без фреймворка)
     index.html, app.js, icons.js, styles/*.css
-    i18n.js                   ru/en strings for the interface
-    fonts/                    JetBrains Mono woff2 + OFL license
-data/texts.example.json       broadcast-texts template
+    onboarding.js             мастер первого запуска и подсказки
+    i18n.js                   строки интерфейса (ru/en)
+    fonts/                    JetBrains Mono и Inter, лицензии рядом
+data/texts.example.json       образец файла с текстами рассылки
 ```
 
-## Modules (UI)
+## Язык и шрифты
 
-- **Dashboard** - Start/Stop, status pill, uptime, queue size, live logs.
-- **Profiles** - stats (total / running / gmail ready / ports open), create a
-  profile (auto-launches Chrome at gmail.com for manual login), per-profile
-  fingerprint, **Scan** button to detect auth status, readiness dot on each card,
-  details in the right panel.
-- **Parser** - API key + type (xproject / vvs), AI template swap toggle, enable
-  toggle, rotate-key-every-N, platform filter (USA / Poshmark).
-- **Chrome CDP** - port range (start/end), Chrome path + detect.
-- **Link Generator** - Haron Rent API key, team, link mode, profile ID, country.
-- **Telegram** - bot token + id, test button.
-- **System Settings** - interface language (RU / EN), mails/account, max
-  replies/dialog, check interval, parser batch size, queue refill threshold,
-  and the broadcast-texts loader.
+Язык интерфейса лежит в `settings.json` полем `language` (по умолчанию `ru`,
+см. `DEFAULTS` в `store.js`) и переключается в настройках, раздел "Интерфейс".
+Его питают два независимых словаря:
 
-## Language and fonts
+- `src/renderer/i18n.js` - всё, что нарисовано в окне (`window.I18N.t`);
+- `src/main/i18n.js` - сообщения логгера, тексты ошибок и уведомление в
+  Telegram. Окно только показывает готовые строки оттуда, поэтому словари не
+  пересекаются.
 
-The interface language lives in `settings.json` as `language` (`ru` by default,
-see `DEFAULTS` in `store.js`) and is switched under **System Settings ->
-Interface**. Two independent dictionaries back it:
+Переключение применяется сразу. Уже накопленные записи логов остаются на том
+языке, на котором были написаны.
 
-- `src/renderer/i18n.js` - everything drawn in the window (`window.I18N.t`).
-- `src/main/i18n.js` - logger messages, thrown error texts and the Telegram
-  notice. The renderer only displays strings already formatted by main, so the
-  two dictionaries never overlap.
+**JetBrains Mono** и **Inter** (обе SIL OFL 1.1) лежат в
+`src/renderer/fonts/` файлами, лицензии рядом. Никакого CDN тут нет и быть не
+может: политика безопасности страницы - `default-src 'self'`, внешние шрифты
+она заблокирует. Правила `@font-face` живут в начале `styles/theme.css`.
 
-Switching applies immediately. Log entries already in the buffer keep the
-language they were written in; new entries use the new one.
+## Как идёт прогон
 
-**JetBrains Mono** (SIL OFL 1.1) is vendored in `src/renderer/fonts/` as four
-woff2 weights, licence text alongside them. No CDN is involved and none is
-possible: the page CSP is `default-src 'self'`, so external fonts would be
-blocked. Update the font by replacing the woff2 files; the `@font-face` rules
-live at the top of `styles/theme.css`.
+Реализовано в `senderEngine.js`:
 
-## Run scenario (implemented in `senderEngine.js`)
+1. Запуск поднимает по одному окну Chrome на каждый **готовый** аккаунт.
+2. Парсер постепенно наполняет очередь: пачками, дозаливая её, когда остаток
+   опускается ниже порога.
+3. Аккаунты работают **по очереди**: текущий пишет, пока не упрётся в свой
+   предел, затем начинает следующий.
+4. Автоответчик работает всё это время, с заданным интервалом проверки и не
+   больше заданного числа ответов в одной переписке.
+5. Когда все аккаунты выбрали пределы, приходит уведомление в Telegram, а
+   система остаётся в режиме одних автоответов, пока её не остановят.
 
-1. Start launches a Chrome instance for every **ready** account (one per account).
-2. Parser gradually fills the queue (batches, refilled below the threshold).
-3. Accounts fill **sequentially**: the current account sends until it hits
-   `mailsPerAccount`, then the next account takes over.
-4. The auto-responder runs throughout (interval = `checkIntervalSec`), capped at
-   `maxRepliesPerDialog`.
-5. When every account hits its limit, the user is notified via Telegram and the
-   system stays in auto-reply-only mode until stopped.
+## Внешние API
 
-## External API clients (wired from the provided docs)
+У каждого клиента базовый адрес, эндпоинты и авторизация собраны в блоке
+`CONFIG` - менять контракт только там (правило 4 в `Rules.md`):
 
-Each client keeps its base URL, endpoints and auth in a `CONFIG` block (Rules 4):
-
-| Integration | File | Base / shape |
+| Интеграция | Файл | Основа |
 |---|---|---|
-| XProject Parser API | `src/main/parser/apis/xproject.js` | `https://api.xproject.icu`, header `X-API-Key`; task-based (start -> cursor-paged poll) |
-| VVS Parser API | `src/main/parser/apis/vvs.js` | `http://vvsproject.xyz`, header `api-key`; one-shot `GET /ads/{platform}` |
-| Haron Rent API | `src/main/link/haronRent.js` | `https://haronrent.xyz/api/v1`, `Bearer` token; `POST /createAd` (link mode = serviceCode) |
+| XProject Parser API | `src/main/parser/apis/xproject.js` | `https://api.xproject.icu`, заголовок `X-API-Key`; задача, потом опрос страницами |
+| VVS Parser API | `src/main/parser/apis/vvs.js` | `http://vvsproject.xyz`, заголовок `api-key`; один запрос `GET /ads/{platform}` |
+| Haron Rent API | `src/main/link/haronRent.js` | `https://haronrent.xyz/api/v1`, токен `Bearer`; `POST /createAd` |
 
-The parser's platform chips (USA / Poshmark) map onto each API's platform +
-country filter via a `platformMap` in `CONFIG`. Link generation fails soft: a
-missing key/serviceCode or API error yields a placeholder link so the pipeline
-keeps running.
+Ключей в репозитории нет и быть не должно - в коде только заглушки. Генерация
+ссылки не роняет прогон: без ключа или при ошибке API в письмо уходит
+ссылка-заглушка, а в лог - предупреждение.
 
-Gmail send and auto-reply over CDP are implemented in
-`src/main/cdp/chromeManager.js` (`gmailCompose` / `gmailListUnread` /
-`gmailReply`) and wired into `senderEngine.js`. They drive only stable Gmail
-mechanisms (compose-in-URL + Ctrl+Enter, DOM read of unread rows) and are marked
-`TODO(gmail-dom)`: the selectors still need a final check against a live
-logged-in Gmail (use the profile "Test send" button to validate).
-
-Everything else - orchestration, limits, sequencing, queue, fingerprints,
-profile lifecycle, CDP launch/scan, theming, persistence - is complete and runs.
-
-## Git / indexing
-
-The repo is initialized locally. To push to GitHub and index via MCP:
-
-```bash
-gh repo create gmail-manager --private --source . --push   # needs gh auth
-```
+Отправка и автоответ через Chrome реализованы в `cdp/chromeManager.js` и
+помечены `TODO(gmail-dom)`: селекторы Gmail нужно сверять с живым залогиненным
+почтовым ящиком, а не с догадками. Для проверки есть кнопка тестовой отправки
+на карточке профиля.

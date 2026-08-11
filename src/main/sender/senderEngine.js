@@ -53,6 +53,10 @@ class SenderEngine {
     // накопительный и переживает перезапуски, поэтому темп и прогноз по нему
     // считать нельзя - для них нужен именно сессионный счёт.
     this.sentThisSession = 0;
+    // Ответы и ссылки за прогон - по той же причине, что и письма: на экране
+    // прогона показываются цифры текущего запуска, а не всё за историю.
+    this.repliesThisSession = 0;
+    this.linksThisSession = 0;
     this._sendTimer = null;
     this._replyTimer = null;
     this._notifiedAllLimits = false;
@@ -384,7 +388,7 @@ class SenderEngine {
           }
           // Ссылку строим по сохранённым данным товара этого адресата - у самой
           // переписки названия товара и цены нет.
-          const url = await this._linkFor(thread.from, thread);
+          const url = await this._linkFor(thread.from, thread, account.id);
           const body = this._autoReplyBody(loaded, lang, url, contact);
           const res = await this.chrome.gmailReply(account.id, mailbox, thread, body);
           if (!res || !res.ok) {
@@ -392,6 +396,7 @@ class SenderEngine {
             continue;
           }
           if (this.statsStore) this.statsStore.note('replies');
+          this.repliesThisSession++;
           if (this.messageStore) {
             this.messageStore.add({
               accountKey: key, profileId: account.id, mailbox: mailbox.email,
@@ -517,8 +522,16 @@ class SenderEngine {
     };
   }
 
-  /** Ссылка Haron по контакту (данные товара) или по переданному лиду. */
-  async _linkFor(email, fallbackLead) {
+  /**
+   * Ссылка Haron по контакту (данные товара) или по переданному лиду.
+   *
+   * `profileId` нужен только для счётчика: генератор о профилях приложения не
+   * знает, а на экране число созданных ссылок стоит рядом с аккаунтом, с
+   * которого их отправляли. Считаем ТОЛЬКО настоящие ссылки: при пустом ключе
+   * или отказе API клиент возвращает заглушку (`placeholder: true`), и
+   * записывать её в достижения нельзя.
+   */
+  async _linkFor(email, fallbackLead, profileId) {
     const link = this.store.get('link');
     const contact = this.contactStore ? this.contactStore.get(email) : null;
     // Площадка и страна нужны генератору: по ним собирается serviceCode, и
@@ -536,6 +549,10 @@ class SenderEngine {
       apiKey: link.apiKey, mode: link.mode, profileId: link.profileId,
       country: link.country, lead,
     });
+    if (gen && !gen.placeholder) {
+      this.linksThisSession++;
+      if (profileId) this.profileStore.bumpLinks(profileId);
+    }
     return gen.url;
   }
 
@@ -579,7 +596,7 @@ class SenderEngine {
     }
     const loaded = this.store.get('texts');
     const lang = texts.outreachLang(this.store);
-    const url = await this._linkFor(addr, null);
+    const url = await this._linkFor(addr, null, account.id);
     const body = texts.nudge(loaded, lang, url, contact);
     const subject = contact.title || t('send.defaultSubject');
     logger.info('sender', t('nudge.sending', {

@@ -169,12 +169,18 @@ function register(ctx) {
   ipcMain.handle('profiles:stats', () => profileStore.stats(live));
   /**
    * Счётчики по каждому профилю для карточек: скольким написали, сколько
-   * переписок завязалось и сколько автоответов ушло. Считаем на лету по двум
-   * журналам - отдельного хранилища для этого заводить незачем.
+   * переписок завязалось, сколько автоответов ушло и сколько ссылок создано.
+   * Первые три считаем на лету по двум журналам - отдельного хранилища для
+   * этого заводить незачем. Ссылки так посчитать нельзя: генератор ничего не
+   * пишет в журналы, поэтому их счётчик живёт в самом профиле.
    */
   ipcMain.handle('profiles:metrics', () => {
     const out = {};
-    for (const p of profileStore.list()) out[p.id] = { written: 0, dialogs: 0, replies: 0, lastSentAt: 0 };
+    for (const p of profileStore.list()) {
+      out[p.id] = {
+        written: 0, dialogs: 0, replies: 0, lastSentAt: 0, links: p.linksCreated || 0,
+      };
+    }
     // lastSentAt берём из контактов: там уже стоит время последней отправки, и
     // отдельный журнал ради строки "активность N минут назад" не нужен.
     for (const c of (contactStore ? contactStore.list() : [])) {

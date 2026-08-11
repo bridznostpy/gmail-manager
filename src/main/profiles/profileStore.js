@@ -59,6 +59,10 @@ class ProfileStore {
       email: '', // основная почта профиля (первая из mailboxes)
       gmailStatus: 'new', // new | needs_login | ready | error
       sentCount: 0, // писем с профиля всего, для карточки; лимит считается по почтам
+      // Ссылок Haron, ушедших с этого профиля. Считаем сами: генератор о
+      // профилях приложения не знает, а на карточке число стоит рядом с
+      // аккаунтом, из которого их отправляли.
+      linksCreated: 0,
       running: false,
       port: null,
       // Почты профиля: { email, userIndex, sentCount, hasTab, lastSeenAt }.
@@ -159,6 +163,18 @@ class ProfileStore {
     p.sentCount = (p.sentCount || 0) + n;
     this._save();
     return mb;
+  }
+
+  /**
+   * Плюс одна созданная ссылка этому профилю. Профили, заведённые до появления
+   * счётчика, поля не имеют - поэтому читаем через ноль, а не ждём его в файле.
+   */
+  bumpLinks(id, n = 1) {
+    const p = this.get(id);
+    if (!p) return null;
+    p.linksCreated = (p.linksCreated || 0) + n;
+    this._save();
+    return p.linksCreated;
   }
 
   /**

@@ -1,16 +1,25 @@
 /* ── Карточки и панели ───────────────────────────────────── */
 .card { padding: 18px; }
 .card h3 {
-  font-size: 12.5px; font-weight: 600; margin-bottom: 14px;
+  font-size: var(--fs-sm); font-weight: 600; margin-bottom: 14px;
   display: flex; align-items: center; gap: 9px;
 }
 .card h3 svg { width: 16px; height: 16px; color: var(--accent); }
-.card .hint { color: var(--text-faint); font-size: 11px; margin: -8px 0 12px; line-height: 1.6; }
+.card .hint { color: var(--text-faint); font-size: var(--fs-2xs); margin: -8px 0 12px; line-height: 1.6; }
 
 .section-label {
   font-family: var(--font-mono);
-  font-size: 9.5px; letter-spacing: var(--track-wide);
-  text-transform: uppercase; color: var(--text-faint);
+  font-size: var(--fs-label); letter-spacing: var(--track-wide);
+  text-transform: uppercase; color: var(--text-dim);
+}
+
+/* Подписи второго плана лежат на полупрозрачном стекле, а под ним может стоять
+   фотография пользователя. Мягкая тень даёт букве край там, где подложка
+   совпала с текстом по светлоте: без неё подпись пропадает ровно на пёстром
+   кадре, где она нужнее всего. */
+.hint, .section-label, .cap, .sub, .foot, .tg-note, .pc-email, .pc-when,
+.stat .label, .pace-row .k, .ph-sub, .acc-prof, .cr-sub, .clr-prof, .clr-last {
+  text-shadow: var(--text-shadow-soft);
 }
 
 /* Сворачиваемые панели. Раскрытие анимируем через grid-template-rows: высота
@@ -53,7 +62,7 @@
 }
 .hero .hero-sub { color: var(--text-dim); font-size: 13px; max-width: 52ch; }
 .hero-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 22px; }
-.hero-note { color: var(--text-faint); font-size: 11.5px; margin-top: 14px; min-height: 17px; }
+.hero-note { color: var(--text-faint); font-size: var(--fs-xs); margin-top: 14px; min-height: 17px; }
 
 /* Правая колонка hero - живая сводка сессии, а не одно слово статуса. */
 .hero-side { padding: 18px 20px; border-radius: var(--radius); align-self: start; }
@@ -71,9 +80,9 @@
 }
 .hero-progress .bar-foot {
   display: flex; justify-content: space-between; margin-top: 7px;
-  font-family: var(--font-mono); font-size: 10.5px; color: var(--text-faint);
+  font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--text-faint);
 }
-.hero-side .kv { padding: 7px 0; font-size: 11.5px; }
+.hero-side .kv { padding: 7px 0; font-size: var(--fs-xs); }
 
 @media (max-width: 1180px) {
   .hero { grid-template-columns: 1fr; padding: 24px; }
@@ -82,17 +91,17 @@
 
 /* ── Полоса статистики ───────────────────────────────────── */
 .stats-strip {
-  display: flex; align-items: center; gap: 34px;
+  display: flex; align-items: center; gap: 24px;
   padding: 16px 22px; margin-bottom: 14px;
   flex-wrap: wrap;
 }
-.stats-strip .stat-cell { min-width: 78px; }
+.stats-strip .stat-cell { min-width: 92px; }
 .stats-strip .num {
   font-size: 25px; font-weight: 700; letter-spacing: -0.03em; line-height: 1.1;
   color: var(--tone, var(--text));
 }
 .stats-strip .cap {
-  font-size: 11px; color: var(--text-faint); margin-top: 3px;
+  font-size: var(--fs-2xs); color: var(--text-faint); margin-top: 3px;
 }
 .cell-spark { display: block; width: 74px; height: 18px; margin-top: 2px; }
 .cell-spark path { fill: none; stroke: var(--tone, var(--accent)); stroke-width: 1.5; stroke-linejoin: round; }
@@ -109,7 +118,7 @@
   padding: 9px 14px; border-radius: var(--radius-sm);
   background: var(--red-soft); color: var(--red);
   border: 1px solid rgba(255, 95, 109, 0.28);
-  font-size: 11.5px; font-weight: 500;
+  font-size: var(--fs-xs); font-weight: 500;
 }
 .note-plate.warn { background: var(--amber-soft); color: var(--amber); border-color: rgba(255, 180, 67, 0.28); }
 .note-plate svg { width: 15px; height: 15px; }
@@ -131,7 +140,7 @@
   font-size: 38px; font-weight: 750; letter-spacing: -0.04em; line-height: 1;
   color: var(--tone, var(--text));
 }
-.ph-big span { font-size: 12.5px; color: var(--text-dim); }
+.ph-big span { font-size: var(--fs-sm); color: var(--text-dim); }
 .ph-big[data-tone="ok"] { --tone: var(--green); }
 .ph-big[data-tone="bad"] { --tone: var(--red); }
 /* Полоса на всю ширину шапки: это общий прогресс по лимиту всех почт, и
@@ -148,13 +157,13 @@
   display: flex; align-items: flex-end; justify-content: space-between;
   gap: 24px; flex-wrap: wrap;
 }
-.ph-sub { font-family: var(--font-mono); font-size: 10.5px; color: var(--text-faint); }
+.ph-sub { font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--text-faint); }
 .ph-nums { display: flex; gap: 30px; flex-shrink: 0; }
 .ph-nums .num {
   font-size: 23px; font-weight: 700; letter-spacing: -0.03em; line-height: 1.1;
   color: var(--tone, var(--text));
 }
-.ph-nums .cap { font-size: 11px; color: var(--text-faint); margin-top: 3px; }
+.ph-nums .cap { font-size: var(--fs-2xs); color: var(--text-faint); margin-top: 3px; }
 .prof-hero .note-plate { margin-top: 14px; }
 
 @media (max-width: 1080px) {
@@ -176,7 +185,7 @@
 }
 /* Селектор с типом обязателен: общее правило полей объявлено ниже по файлу и
    с той же специфичностью перебивало бы отступ под иконку. */
-.prof-search input[type="search"] { padding-left: 32px; font-size: 12px; height: 34px; }
+.prof-search input[type="search"] { padding-left: 32px; font-size: var(--fs-xs); height: 34px; }
 .prof-search input::-webkit-search-cancel-button { -webkit-appearance: none; }
 
 .prof-sort { position: relative; display: inline-flex; align-items: center; }
@@ -185,7 +194,7 @@
   color: var(--text-faint); pointer-events: none;
 }
 .prof-sort select {
-  width: auto; height: 34px; padding: 0 12px 0 32px; font-size: 12px;
+  width: auto; height: 34px; padding: 0 12px 0 32px; font-size: var(--fs-xs);
   cursor: pointer;
 }
 
@@ -194,7 +203,7 @@
 .seg.icons svg { width: 15px; height: 15px; }
 .seg.filters button { display: inline-flex; align-items: center; gap: 7px; }
 .seg.filters .count {
-  font-family: var(--font-mono); font-size: 9.5px;
+  font-family: var(--font-mono); font-size: var(--fs-2xs);
   padding: 1px 6px; border-radius: 20px;
   background: var(--glass-bg-2); color: var(--text-faint);
 }
@@ -222,14 +231,14 @@
 .stat > * { position: relative; z-index: 1; }
 .stat .label {
   color: var(--text-faint); font-family: var(--font-mono);
-  font-size: 9.5px; text-transform: uppercase; letter-spacing: var(--track-wide);
+  font-size: var(--fs-label); text-transform: uppercase; letter-spacing: var(--track-wide);
 }
 .stat .value {
   font-size: 28px; font-weight: 700; margin-top: 6px;
   letter-spacing: -0.035em; color: var(--tone);
   transition: color var(--dur) var(--ease);
 }
-.stat .foot { color: var(--text-faint); font-size: 10.5px; margin-top: 4px; }
+.stat .foot { color: var(--text-faint); font-size: var(--fs-2xs); margin-top: 4px; }
 
 /* Спарклайн - подложкой по низу плитки, а не в потоке: иначе пустой график
    оставлял дыру и подпись съезжала ниже, чем у соседних плиток. */
@@ -251,7 +260,7 @@
    .field, а по весу селектора эта подпись перебивала бы его inline-flex и
    раскладывала тумблер как заголовок поля. */
 .field > label:not(.switch) {
-  display: block; font-size: 11px; font-weight: 500;
+  display: block; font-size: var(--fs-2xs); font-weight: 500;
   color: var(--text-dim); margin-bottom: 7px;
   letter-spacing: 0;
 }
@@ -263,7 +272,7 @@ input[type="search"], select, textarea {
   width: 100%; background: var(--control-bg);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm); color: var(--text); padding: 10px 12px;
-  font-family: var(--font); font-size: 12.5px; outline: none;
+  font-family: var(--font); font-size: var(--fs-sm); outline: none;
   transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease),
     background var(--dur-fast) var(--ease);
 }
@@ -306,7 +315,7 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
 .switch input:checked + .track { background: var(--accent); }
 .switch input:checked + .track::after { transform: translateX(17px); }
 .switch:hover .track { box-shadow: var(--focus-ring); }
-.switch .lbl { font-size: 12.5px; }
+.switch .lbl { font-size: var(--fs-sm); }
 
 /* ── Кнопки ──────────────────────────────────────────────────
    Своего backdrop-filter у кнопки нет намеренно. Каждый такой фильтр -
@@ -320,7 +329,7 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
   background: var(--control-bg);
   border: 1px solid var(--border-strong);
   color: var(--text); padding: 9px 15px; border-radius: var(--radius-sm);
-  font-family: var(--font); font-size: 12.5px; font-weight: 550;
+  font-family: var(--font); font-size: var(--fs-sm); font-weight: 550;
   cursor: pointer;
   transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease),
     box-shadow var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease),
@@ -375,7 +384,7 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
 .seg button {
   background: transparent; border: none; color: var(--text-dim);
   padding: 6px 13px; border-radius: var(--radius-xs);
-  font-family: var(--font); font-size: 12px; cursor: pointer;
+  font-family: var(--font); font-size: var(--fs-xs); cursor: pointer;
   transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
 }
 .seg button:hover { color: var(--text); }
@@ -386,7 +395,7 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
   display: inline-flex; align-items: center; gap: 7px;
   padding: 7px 14px; border-radius: 20px;
   border: 1px solid var(--border-strong);
-  background: var(--control-bg); font-size: 11.5px; cursor: pointer; color: var(--text-dim);
+  background: var(--control-bg); font-size: var(--fs-xs); cursor: pointer; color: var(--text-dim);
   transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease),
     color var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
 }
@@ -396,7 +405,7 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
   color: var(--accent); font-weight: 600;
 }
 .chip .code {
-  font-family: var(--font-mono); font-size: 9.5px;
+  font-family: var(--font-mono); font-size: var(--fs-2xs);
   text-transform: uppercase; opacity: 0.7;
 }
 
@@ -438,12 +447,12 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
 .pc-name { font-weight: 650; font-size: 13px; display: flex; align-items: center; gap: 7px; }
 .pc-email {
   color: var(--text-faint); font-family: var(--font-mono);
-  font-size: 10.5px; margin-top: 3px;
+  font-size: var(--fs-2xs); margin-top: 3px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .pc-tags { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 6px; }
 .pc-tag {
-  font-size: 9.5px; padding: 2px 7px; border-radius: 20px;
+  font-size: var(--fs-2xs); padding: 2px 7px; border-radius: 20px;
   background: var(--bg-input); border: 1px solid var(--border);
   color: var(--text-dim);
 }
@@ -464,7 +473,7 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
   display: block; font-size: 19px; font-weight: 700; letter-spacing: -0.03em;
   color: var(--nt, var(--text));
 }
-.pc-nums .n span { font-size: 10px; color: var(--text-faint); }
+.pc-nums .n span { font-size: var(--fs-2xs); color: var(--text-faint); }
 .pc-nums .n[data-tone="ok"] { --nt: var(--green); }
 .pc-nums .n[data-tone="accent"] { --nt: var(--accent); }
 
@@ -475,7 +484,7 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
 .pc-live {
   display: flex; align-items: center; gap: 10px;
   padding: 0 15px 10px;
-  font-family: var(--font-mono); font-size: 9.5px; color: var(--text-faint);
+  font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--text-faint);
 }
 .pc-spark { flex: 0 0 78px; height: 18px; display: block; }
 .pc-spark path { fill: none; stroke: var(--accent); stroke-width: 1.4; stroke-linejoin: round; }
@@ -515,7 +524,7 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
 }
 .bulk-bar[hidden] { display: none; }
 .bulk-bar .grow { margin-left: auto; }
-.bb-count { font-size: 12.5px; font-weight: 550; }
+.bb-count { font-size: var(--fs-sm); font-weight: 550; }
 .bb-track {
   flex: 1 1 160px; height: 5px; border-radius: 5px;
   background: var(--border-strong); overflow: hidden;
@@ -528,7 +537,7 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
 .pc-meta {
   display: flex; gap: 10px; align-items: center;
   padding: 10px 15px; border-top: 1px solid var(--border);
-  font-family: var(--font-mono); font-size: 10px; color: var(--text-faint);
+  font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--text-faint);
 }
 .pc-meta .chip-mini {
   margin-left: auto;
@@ -540,7 +549,7 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
   padding: 9px 12px 9px 15px;
   border-top: 1px solid var(--border);
   background: rgba(0, 0, 0, 0.14);
-  font-family: var(--font-mono); font-size: 10px; color: var(--text-faint);
+  font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--text-faint);
 }
 .profile-card.error .pc-foot { background: var(--red-soft); color: var(--red); }
 .pc-foot .acts { margin-left: auto; display: flex; gap: 5px; }
@@ -572,15 +581,15 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
 .prow.selected { border-color: var(--accent-line); box-shadow: var(--focus-ring); }
 .prow.current { border-color: var(--accent); }
 .prow.error { border-color: rgba(255, 95, 109, 0.5); }
-.prow .pc-avatar { width: 30px; height: 30px; border-radius: 10px; font-size: 12px; }
+.prow .pc-avatar { width: 30px; height: 30px; border-radius: 10px; font-size: var(--fs-xs); }
 .prow-id { min-width: 0; flex: 1 1 200px; display: flex; flex-direction: column; }
 .prow-id .pc-email { margin-top: 1px; }
 .prow-tags { display: flex; gap: 5px; flex-wrap: wrap; flex: 0 1 auto; }
 /* Числа выровнены по колонке: строки читают сверху вниз, а не по одной. */
-.prow-num { flex: 0 0 74px; text-align: right; }
+.prow-num { flex: 0 0 92px; text-align: right; }
 .prow-num b { display: block; font-size: 15px; font-weight: 700; letter-spacing: -0.02em; }
-.prow-num span { font-size: 9.5px; color: var(--text-faint); }
-.prow-track { flex: 0 0 150px; display: flex; align-items: center; gap: 8px; }
+.prow-num span { font-size: var(--fs-2xs); color: var(--text-faint); }
+.prow-track { flex: 0 0 166px; display: flex; align-items: center; gap: 8px; }
 .prow-track .track {
   flex: 1 1 auto; height: 5px; border-radius: 5px;
   background: var(--border-strong); overflow: hidden;
@@ -590,7 +599,7 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
   transition: width var(--dur-slow) var(--ease);
 }
 .prow-track .cnt {
-  font-family: var(--font-mono); font-size: 9.5px; color: var(--text-faint);
+  font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--text-faint);
   flex: 0 0 auto;
 }
 .prow .acts { display: flex; gap: 5px; flex-shrink: 0; }
@@ -628,7 +637,7 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
 /* Усекаться должен адрес, а не пометка и не счётчик: длинный ящик встречается
    часто, а обрезанное "нет вклад..." или "4 / 1" читаются как поломка. */
 .pc-box .pb-mail {
-  flex: 0 1 auto; font-size: 11.5px; min-width: 24px;
+  flex: 0 1 auto; font-size: var(--fs-xs); min-width: 24px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .pc-box .pc-tag { flex-shrink: 0; }
@@ -641,14 +650,14 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
   transition: width var(--dur-slow) var(--ease);
 }
 .pc-box .pb-cnt {
-  flex-shrink: 0; font-family: var(--font-mono); font-size: 10px; color: var(--text-faint);
+  flex-shrink: 0; font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--text-faint);
 }
 .pc-box.off .pb-mail, .pc-box.off .pb-cnt { opacity: 0.55; }
 
 /* Пунктирная карточка "добавить" в конце сетки. */
 .add-card {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 10px; min-height: 190px;
+  gap: 10px; min-height: 204px;
   border: 1px dashed var(--border-strong); border-radius: var(--radius);
   color: var(--text-faint); cursor: pointer; background: transparent;
   transition: border-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease),
@@ -661,8 +670,8 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
   border: 1px solid var(--border-strong);
 }
 .add-card .plus svg { width: 17px; height: 17px; }
-.add-card .cap { font-size: 12.5px; font-weight: 500; }
-.add-card .sub { font-size: 10.5px; }
+.add-card .cap { font-size: var(--fs-sm); font-weight: 500; }
+.add-card .sub { font-size: var(--fs-2xs); }
 
 .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
 .dot.ready { background: var(--green); box-shadow: 0 0 0 3px var(--green-soft); }
@@ -674,7 +683,7 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
 
 .badge {
   font-family: var(--font-mono);
-  font-size: 9px; padding: 4px 9px; border-radius: var(--radius-xs);
+  font-size: var(--fs-label); padding: 4px 9px; border-radius: var(--radius-xs);
   font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;
   white-space: nowrap; flex-shrink: 0;
 }
@@ -689,12 +698,12 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
   margin-bottom: 12px;
 }
 .logs-head .grow { flex: 1 1 160px; min-width: 140px; }
-.logs-head input[type="text"] { padding: 7px 11px; font-size: 12px; }
-.logs-head .seg button { padding: 5px 10px; font-size: 11px; }
+.logs-head input[type="text"] { padding: 7px 11px; font-size: var(--fs-xs); }
+.logs-head .seg button { padding: 5px 10px; font-size: var(--fs-2xs); }
 /* Служебные подписи лежат прямо на фоне, без карточки, - своя подложка,
    иначе на светлой картинке они пропадают. */
 .logs-count {
-  font-family: var(--font-mono); font-size: 10.5px; color: var(--text-dim);
+  font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--text-dim);
   background: var(--control-bg); border: 1px solid var(--border);
   padding: 4px 10px; border-radius: 20px; white-space: nowrap;
 }
@@ -706,7 +715,7 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
   contain: strict;
   background: var(--bg-code);
   border: 1px solid var(--border); border-radius: var(--radius-sm);
-  font-family: var(--font-mono); font-size: 11.5px; line-height: 1.75;
+  font-family: var(--font-mono); font-size: var(--fs-xs); line-height: 1.75;
   padding: 10px 4px; height: 360px; overflow-y: auto;
   color: var(--text);
 }
@@ -743,7 +752,7 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
 /* ── Мелочи ──────────────────────────────────────────────── */
 .pill {
   display: inline-flex; align-items: center; gap: 8px;
-  padding: 7px 14px; border-radius: 20px; font-size: 11.5px; font-weight: 600;
+  padding: 7px 14px; border-radius: 20px; font-size: var(--fs-xs); font-weight: 600;
   border: 1px solid transparent;
   transition: background var(--dur) var(--ease), color var(--dur) var(--ease),
     border-color var(--dur) var(--ease);
@@ -763,24 +772,24 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
 
 .empty {
   display: flex; flex-direction: column; align-items: center; gap: 14px;
-  text-align: center; color: var(--text-dim); padding: 52px 20px; font-size: 12.5px;
+  text-align: center; color: var(--text-dim); padding: 52px 20px; font-size: var(--fs-sm);
 }
 .empty svg { width: 30px; height: 30px; opacity: 0.4; }
 .empty .btn svg { width: 15px; height: 15px; opacity: 1; }
 
 .kv {
   display: flex; justify-content: space-between; gap: 16px;
-  padding: 9px 0; border-bottom: 1px solid var(--border); font-size: 12px;
+  padding: 9px 0; border-bottom: 1px solid var(--border); font-size: var(--fs-xs);
 }
 .kv:last-child { border-bottom: none; }
 .kv .k { color: var(--text-faint); flex-shrink: 0; }
-.kv .v { font-family: var(--font-mono); font-size: 11px; text-align: right; word-break: break-word; }
+.kv .v { font-family: var(--font-mono); font-size: var(--fs-2xs); text-align: right; word-break: break-word; }
 /* Длинные машинные строки (User-Agent, видеокарта) в узкой панели не влезают
    в строку - разворачиваем их под подписью на всю ширину. */
 .kv.stacked { display: block; }
 .kv.stacked .v { display: block; text-align: left; margin-top: 5px; line-height: 1.6; }
 
-.hint { color: var(--text-faint); font-size: 11px; line-height: 1.6; }
+.hint { color: var(--text-faint); font-size: var(--fs-2xs); line-height: 1.6; }
 
 /* Скелетоны: пока данные не пришли, место занято, а не пустует. */
 .skeleton {
@@ -802,7 +811,7 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
   background: var(--glass-bg-2);
   border: 1px solid var(--glass-border); border-left: 3px solid var(--accent);
   padding: 12px 17px; border-radius: var(--radius-sm); box-shadow: var(--glass-shadow);
-  z-index: 300; max-width: 380px; font-size: 12.5px;
+  z-index: 300; max-width: 380px; font-size: var(--fs-sm);
   opacity: 0; transform: translateY(12px) scale(0.98);
   transition: opacity var(--dur) var(--ease), transform var(--dur) var(--ease-back);
   pointer-events: none; overflow: hidden;
@@ -837,7 +846,7 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
 /* Для содержимого в две колонки: список стран в 400 px не читается. */
 .modal.wide { width: 560px; }
 .modal h3 { margin-bottom: 14px; font-size: 15px; font-weight: 650; }
-.modal .modal-text { color: var(--text-dim); font-size: 12.5px; margin-bottom: 16px; line-height: 1.6; }
+.modal .modal-text { color: var(--text-dim); font-size: var(--fs-sm); margin-bottom: 16px; line-height: 1.6; }
 .modal .field { margin-bottom: 4px; }
 .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
 
@@ -868,12 +877,12 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
   position: absolute; z-index: 1; left: 10px; top: 50%; transform: translateY(-50%);
   width: 14px; height: 14px; color: var(--text-faint); pointer-events: none;
 }
-.set-search input[type="search"] { padding-left: 32px; padding-right: 54px; font-size: 12px; }
+.set-search input[type="search"] { padding-left: 32px; padding-right: 54px; font-size: var(--fs-xs); }
 .set-search input::-webkit-search-cancel-button { -webkit-appearance: none; }
 /* Сколько групп осталось после запроса. */
 .set-count {
   position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
-  font-family: var(--font-mono); font-size: 9.5px; color: var(--text-faint);
+  font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--text-faint);
   pointer-events: none;
 }
 
@@ -881,8 +890,8 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
 .set-sec + .set-sec { margin-top: 12px; }
 .set-sec-cap {
   padding: 4px 12px 6px;
-  font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.1em;
-  text-transform: uppercase; color: var(--text-faint);
+  font-family: var(--font-mono); font-size: var(--fs-label); letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--text-dim);
 }
 .set-nomatch { padding: 10px 12px; }
 
@@ -891,7 +900,7 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
   padding: 10px 12px; border-radius: var(--radius-sm);
   background: transparent; border: 1px solid transparent;
   color: var(--text-dim); cursor: pointer; text-align: left;
-  font-family: var(--font); font-size: 12.5px; font-weight: 500;
+  font-family: var(--font); font-size: var(--fs-sm); font-weight: 500;
   transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease),
     border-color var(--dur-fast) var(--ease);
 }
@@ -931,7 +940,7 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
   border-bottom: 1px solid var(--border);
 }
 .set-card-head h3 { font-size: 17px; margin: 0; }
-.set-card-head .sch-sub { color: var(--text-dim); font-size: 11.5px; margin-top: 5px; line-height: 1.6; max-width: 62ch; }
+.set-card-head .sch-sub { color: var(--text-dim); font-size: var(--fs-xs); margin-top: 5px; line-height: 1.6; max-width: 62ch; }
 .set-card-head .btn { flex-shrink: 0; }
 
 /* Подразделы. Отступы кратны четырём: между полями 14, между подразделами 26 -
@@ -956,7 +965,7 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
 /* Отметка "сохранено" у подписи поля. */
 .saved-mark {
   display: inline-flex; align-items: center; gap: 4px; margin-left: 8px;
-  color: var(--green, var(--accent)); font-size: 10px; font-weight: 600;
+  color: var(--green, var(--accent)); font-size: var(--fs-2xs); font-weight: 600;
   opacity: 0; transform: translateY(-2px);
   transition: opacity var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
 }
@@ -987,7 +996,7 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
   text-align: right; user-select: none; overflow: hidden;
   border-right: 1px solid var(--border);
   background: rgba(0, 0, 0, 0.16);
-  font-family: var(--font-mono); font-size: 11.5px; line-height: 1.6;
+  font-family: var(--font-mono); font-size: var(--fs-xs); line-height: 1.6;
   color: var(--text-faint);
 }
 .ar-gutter span { display: block; }
@@ -996,7 +1005,7 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
   flex: 1 1 auto; min-width: 0;
   min-height: 60vh; resize: vertical;
   border: none; border-radius: 0; background: transparent; padding: 12px 14px;
-  font-family: var(--font-mono); font-size: 11.5px; line-height: 1.6;
+  font-family: var(--font-mono); font-size: var(--fs-xs); line-height: 1.6;
   white-space: pre; overflow-wrap: normal; overflow-x: auto;
 }
 .ar-code .ar-area:focus { border: none; box-shadow: none; }
@@ -1004,7 +1013,7 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
 /* Строка состояния под редактором. Числа машинные, поэтому моноширинный. */
 .ar-status {
   display: flex; align-items: center; gap: 16px; margin-top: 8px;
-  font-family: var(--font-mono); font-size: 10px; color: var(--text-faint);
+  font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--text-faint);
 }
 .ar-status .grow { margin-left: auto; }
 .ar-status #arSaveHint.ok { color: var(--green); }
@@ -1081,7 +1090,7 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
   display: flex; align-items: center; gap: 11px;
   padding: 9px 8px; border-radius: var(--radius-sm);
   background: transparent; border: none; cursor: pointer;
-  color: var(--text-dim); font-family: var(--font); font-size: 12.5px;
+  color: var(--text-dim); font-family: var(--font); font-size: var(--fs-sm);
   text-align: left;
   transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
 }
@@ -1108,7 +1117,7 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
 .home-name { display: block; font-weight: 700; font-size: 15px; letter-spacing: -0.01em; }
 .home-ver {
   display: block; font-family: var(--font-mono);
-  font-size: 10px; color: var(--text-faint); letter-spacing: 0.06em;
+  font-size: var(--fs-2xs); color: var(--text-faint); letter-spacing: 0.06em;
 }
 
 .home-greet {
@@ -1126,7 +1135,7 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
 .home-facts .fact b {
   display: block; font-size: 23px; font-weight: 750; letter-spacing: -0.03em;
 }
-.home-facts .fact span { font-size: 11.5px; color: var(--text-faint); }
+.home-facts .fact span { font-size: var(--fs-xs); color: var(--text-faint); }
 
 /* Плитки-входы */
 .home-tiles {
@@ -1150,7 +1159,7 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
 .home-tile .ht-icon svg { width: 17px; height: 17px; }
 .home-tile .ht-val { font-size: 26px; font-weight: 750; letter-spacing: -0.035em; line-height: 1.1; }
 .home-tile .ht-title { font-size: 13px; font-weight: 600; margin-top: 3px; }
-.home-tile .ht-desc { font-size: 11px; color: var(--text-faint); line-height: 1.5; }
+.home-tile .ht-desc { font-size: var(--fs-2xs); color: var(--text-faint); line-height: 1.5; }
 .home-tile .ht-go {
   position: absolute; top: 18px; right: 16px;
   color: var(--text-faint);
@@ -1165,7 +1174,7 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
 .ready-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .ready-head h3 svg { width: 16px; height: 16px; }
 .ready-count {
-  font-family: var(--font-mono); font-size: 12px; color: var(--text-dim);
+  font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--text-dim);
   flex-shrink: 0;
 }
 .ready-bar {
@@ -1182,7 +1191,7 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
   padding: 9px 14px; border-radius: var(--radius-sm);
   background: var(--control-bg); border: 1px solid var(--border);
   color: var(--text-dim); cursor: pointer;
-  font-family: var(--font); font-size: 12px;
+  font-family: var(--font); font-size: var(--fs-xs);
   transition: border-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease),
     background var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
 }
@@ -1209,7 +1218,7 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
 
 /* ── График по дням ──────────────────────────────────────── */
 .chart-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
-.chart-head .legend { display: flex; gap: 14px; font-size: 11px; color: var(--text-faint); }
+.chart-head .legend { display: flex; gap: 14px; font-size: var(--fs-2xs); color: var(--text-faint); }
 .chart-head .legend span { display: inline-flex; align-items: center; gap: 6px; }
 .sw { width: 9px; height: 9px; border-radius: 3px; display: inline-block; }
 .sw.sent { background: var(--accent); }
@@ -1228,13 +1237,13 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
 .bar-col .b.sent { background: linear-gradient(180deg, var(--accent), rgba(var(--accent-rgb), 0.45)); }
 .bar-col .b.rep { background: linear-gradient(180deg, var(--green), rgba(61, 220, 132, 0.4)); }
 .bar-col:hover .b { filter: brightness(1.2); }
-.bar-cap { font-family: var(--font-mono); font-size: 9.5px; color: var(--text-faint); }
+.bar-cap { font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--text-faint); }
 
 /* ── Лента событий ───────────────────────────────────────── */
 .event {
   display: flex; align-items: center; gap: 10px;
   padding: 9px 0; border-bottom: 1px solid var(--border);
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 .event:last-child { border-bottom: none; }
 .event .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; background: var(--text-faint); }
@@ -1245,7 +1254,7 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
   flex: 1 1 auto; min-width: 0; color: var(--text-dim);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.event .ts { font-family: var(--font-mono); font-size: 10px; color: var(--text-faint); flex-shrink: 0; }
+.event .ts { font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--text-faint); flex-shrink: 0; }
 
 /* ── Колокольчик и лента уведомлений ─────────────────────── */
 .bell-wrap { position: relative; }
@@ -1254,7 +1263,7 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
   min-width: 16px; height: 16px; padding: 0 4px;
   border-radius: 20px; display: none; place-items: center;
   background: var(--red); color: #fff;
-  font-family: var(--font-mono); font-size: 9px; font-weight: 700;
+  font-family: var(--font-mono); font-size: var(--fs-2xs); font-weight: 700;
   pointer-events: none;
 }
 .bell-dot.on { display: grid; }
@@ -1269,13 +1278,13 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
 }
 .notes.open { opacity: 1; pointer-events: auto; transform: none; }
 .notes-head {
-  font-family: var(--font-mono); font-size: 9px;
+  font-family: var(--font-mono); font-size: var(--fs-label);
   text-transform: uppercase; letter-spacing: var(--track-wide);
-  color: var(--text-faint); padding: 10px 0 6px;
+  color: var(--text-dim); padding: 10px 0 6px;
 }
 
 /* Быстрый пуск в шапке - компактнее обычной кнопки. */
-.btn.quick { height: 34px; padding: 0 14px; border-radius: 20px; font-size: 12px; }
+.btn.quick { height: 34px; padding: 0 14px; border-radius: 20px; font-size: var(--fs-xs); }
 
 /* ── Тексты рассылки ─────────────────────────────────────── */
 .txt-drop {
@@ -1290,18 +1299,18 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
 .txt-schema > .section-label { display: block; margin-bottom: 8px; }
 .schema-row {
   display: flex; align-items: baseline; gap: 12px;
-  padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 12px;
+  padding: 8px 0; border-bottom: 1px solid var(--border); font-size: var(--fs-xs);
 }
 .schema-row:last-child { border-bottom: none; }
 .schema-row .sk {
-  font-family: var(--font-mono); font-size: 11px; color: var(--accent);
+  font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--accent);
   flex: 0 0 152px;
 }
 .schema-row .sv { color: var(--text-dim); }
 
 .txt-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 .txt-sum { display: flex; gap: 22px; }
-.txt-sum .s { font-size: 11.5px; color: var(--text-faint); }
+.txt-sum .s { font-size: var(--fs-xs); color: var(--text-faint); }
 .txt-sum .s b {
   display: block; font-size: 22px; font-weight: 750;
   letter-spacing: -0.03em; color: var(--text);
@@ -1312,7 +1321,7 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
 .issue {
   display: flex; align-items: flex-start; gap: 9px;
   padding: 9px 12px; border-radius: var(--radius-sm);
-  font-size: 11.5px; line-height: 1.5;
+  font-size: var(--fs-xs); line-height: 1.5;
 }
 .issue svg { width: 14px; height: 14px; flex-shrink: 0; margin-top: 1px; }
 .issue.ok { background: var(--green-soft); color: var(--green); }
@@ -1338,10 +1347,10 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
 .td-title { display: block; font-size: 13px; font-weight: 650; }
 .td-code {
   display: block; font-family: var(--font-mono);
-  font-size: 9.5px; color: var(--text-faint); letter-spacing: 0.04em;
+  font-size: var(--fs-2xs); color: var(--text-faint); letter-spacing: 0.04em;
 }
 .td-count {
-  font-family: var(--font-mono); font-size: 11px; color: var(--text-dim);
+  font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--text-dim);
   background: var(--control-bg); border: 1px solid var(--border);
   padding: 3px 10px; border-radius: 20px; flex-shrink: 0;
 }
@@ -1355,7 +1364,7 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
   counter-increment: tl;
   display: flex; align-items: flex-start; gap: 12px;
   padding: 9px 0; border-top: 1px solid var(--border);
-  font-size: 12px; line-height: 1.6;
+  font-size: var(--fs-xs); line-height: 1.6;
   border-radius: var(--radius-xs);
   transition: background var(--dur-fast) var(--ease);
 }
@@ -1363,16 +1372,16 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
 .td-list li::before {
   content: counter(tl);
   flex: 0 0 22px; text-align: right;
-  font-family: var(--font-mono); font-size: 10px; color: var(--text-faint);
+  font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--text-faint);
   padding-top: 2px;
 }
 .td-list .tl-body { flex: 1 1 auto; min-width: 0; color: var(--text-dim); word-break: break-word; }
 .td-list mark.slot {
   background: rgba(var(--accent-rgb), 0.18); color: var(--accent);
   border-radius: 4px; padding: 1px 4px;
-  font-family: var(--font-mono); font-size: 11px;
+  font-family: var(--font-mono); font-size: var(--fs-2xs);
 }
-.td-list .nl { color: var(--text-faint); opacity: 0.5; font-size: 10px; margin-left: 2px; }
+.td-list .nl { color: var(--text-faint); opacity: 0.5; font-size: var(--fs-2xs); margin-left: 2px; }
 
 /* Действия строки появляются при наведении - в спокойном состоянии список
    читается как текст, а не как панель управления. */
@@ -1389,11 +1398,11 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
 .tl-edit { flex: 1 1 auto; min-width: 0; padding: 2px 0 6px; }
 .tl-area {
   width: 100%; min-height: 96px; resize: vertical;
-  font-family: var(--font); font-size: 12.5px; line-height: 1.6;
+  font-family: var(--font); font-size: var(--fs-sm); line-height: 1.6;
 }
 .tl-slots { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
 .slot-btn {
-  font-family: var(--font-mono); font-size: 10px;
+  font-family: var(--font-mono); font-size: var(--fs-2xs);
   padding: 3px 8px; border-radius: 20px; cursor: pointer;
   background: rgba(var(--accent-rgb), 0.12); color: var(--accent);
   border: 1px solid var(--accent-line);
@@ -1431,7 +1440,7 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
   padding: 14px 13px 9px; flex-shrink: 0;
 }
 .cr-count {
-  font-family: var(--font-mono); font-size: 9.5px; color: var(--text-faint);
+  font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--text-faint);
 }
 .cr-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 0 8px 10px; }
 
@@ -1446,7 +1455,7 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
 }
 .cr-item:hover { background: rgba(255, 255, 255, 0.05); }
 .cr-item.on { background: var(--accent-soft); border-color: var(--accent-line); }
-.cr-item .pc-avatar { width: 30px; height: 30px; border-radius: 10px; font-size: 12px; }
+.cr-item .pc-avatar { width: 30px; height: 30px; border-radius: 10px; font-size: var(--fs-xs); }
 .cr-all {
   flex-shrink: 0; width: 30px; height: 30px; border-radius: 10px;
   display: grid; place-items: center;
@@ -1455,17 +1464,17 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
 .cr-all svg { width: 15px; height: 15px; }
 .cr-id { flex: 1 1 auto; min-width: 0; }
 .cr-name {
-  display: block; font-size: 12px; font-weight: 600;
+  display: block; font-size: var(--fs-xs); font-weight: 600;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .cr-sub {
   display: block; margin-top: 2px;
-  font-family: var(--font-mono); font-size: 9px; color: var(--text-faint);
+  font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--text-faint);
 }
 /* Ожидание ответа - не только цветом: рядом с ним всегда стоит число. */
-.cr-wait { display: block; margin-top: 2px; font-size: 9.5px; color: var(--amber); }
+.cr-wait { display: block; margin-top: 2px; font-size: var(--fs-2xs); color: var(--amber); }
 .cr-n {
-  flex-shrink: 0; font-family: var(--font-mono); font-size: 10px;
+  flex-shrink: 0; font-family: var(--font-mono); font-size: var(--fs-2xs);
   color: var(--text-faint);
 }
 .cr-item.on .cr-n { color: var(--accent); }
@@ -1489,13 +1498,13 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
 }
 .cl-head .seg { flex: 1 1 auto; }
 .cl-head .seg button {
-  flex: 1 1 0; justify-content: center; padding: 6px 8px; font-size: 11.5px;
+  flex: 1 1 0; justify-content: center; padding: 6px 8px; font-size: var(--fs-xs);
   white-space: nowrap; min-width: 0;
 }
 /* Иконка лежит поверх поля, а не рядом: так поле остаётся во всю ширину
    колонки и не прыгает, когда в него встаёт курсор. */
 .cl-search { padding: 0 12px 10px; flex-shrink: 0; position: relative; }
-.cl-search input { padding: 8px 11px 8px 31px; font-size: 12px; }
+.cl-search input { padding: 8px 11px 8px 31px; font-size: var(--fs-xs); }
 .cl-search > svg {
   position: absolute; left: 22px; top: 9px;
   width: 13px; height: 13px; color: var(--text-faint); pointer-events: none;
@@ -1517,7 +1526,7 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
 .cl-row:hover { background: rgba(255, 255, 255, 0.05); }
 .cl-row.on { background: var(--accent-soft); border-color: var(--accent-line); }
 .cl-row:focus-visible { outline: none; box-shadow: var(--focus-ring); }
-.cl-row .pc-avatar { width: 30px; height: 30px; border-radius: 10px; font-size: 12px; }
+.cl-row .pc-avatar { width: 30px; height: 30px; border-radius: 10px; font-size: var(--fs-xs); }
 /* Миниатюра товара на месте буквы адресата - тот же прямоугольник, чтобы
    строки с фото и без него стояли в одну линию. */
 .cl-photo { flex-shrink: 0; width: 30px; height: 30px; border-radius: 10px; }
@@ -1525,31 +1534,31 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
 .clr-id { flex: 1 1 auto; min-width: 0; }
 .clr-top { display: flex; align-items: baseline; gap: 8px; }
 .clr-name {
-  flex: 1 1 auto; min-width: 0; font-size: 12px; font-weight: 600;
+  flex: 1 1 auto; min-width: 0; font-size: var(--fs-xs); font-weight: 600;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.clr-time { font-family: var(--font-mono); font-size: 9.5px; color: var(--text-faint); flex-shrink: 0; }
+.clr-time { font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--text-faint); flex-shrink: 0; }
 .clr-title {
   display: flex; align-items: center; gap: 5px; margin-top: 3px;
-  font-size: 10.5px; color: var(--accent);
+  font-size: var(--fs-2xs); color: var(--accent);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .clr-title svg { width: 11px; height: 11px; flex-shrink: 0; }
 .clr-last {
   display: block; margin-top: 2px;
-  font-size: 11px; color: var(--text-faint);
+  font-size: var(--fs-2xs); color: var(--text-faint);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .clr-prof {
   display: block; margin-top: 3px;
-  font-size: 10px; color: var(--text-dim);
+  font-size: var(--fs-2xs); color: var(--text-dim);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .clr-badge {
   min-width: 18px; height: 18px; padding: 0 6px;
   border-radius: 20px; display: grid; place-items: center;
   background: var(--accent); color: var(--on-accent);
-  font-family: var(--font-mono); font-size: 9.5px; font-weight: 700;
+  font-family: var(--font-mono); font-size: var(--fs-2xs); font-weight: 700;
 }
 .clr-side {
   flex-shrink: 0; display: flex; flex-direction: column; align-items: flex-end; gap: 6px;
@@ -1578,7 +1587,7 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
 }
 .cm-id { flex: 1 1 auto; min-width: 0; }
 .cm-name { display: block; font-size: 13px; font-weight: 650; }
-.cm-sub { display: block; font-size: 10.5px; color: var(--text-faint); margin-top: 2px; }
+.cm-sub { display: block; font-size: var(--fs-2xs); color: var(--text-faint); margin-top: 2px; }
 
 .cm-feed {
   flex: 1 1 auto; min-height: 0; overflow-y: auto;
@@ -1592,7 +1601,7 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
   position: sticky; top: -18px; z-index: 1;
   padding: 4px 0; margin: 10px 0 6px;
   color: var(--text-faint);
-  font-family: var(--font-mono); font-size: 9px;
+  font-family: var(--font-mono); font-size: var(--fs-label);
   text-transform: uppercase; letter-spacing: var(--track-wide);
 }
 .cm-day::before, .cm-day::after {
@@ -1619,16 +1628,16 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
   padding: 0 4px 4px; max-width: 100%;
 }
 .bb-who {
-  font-size: 10.5px; font-weight: 600; color: var(--text-dim);
+  font-size: var(--fs-2xs); font-weight: 600; color: var(--text-dim);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .bb-kind, .bb-time {
-  flex-shrink: 0; font-family: var(--font-mono); font-size: 9px; color: var(--text-faint);
+  flex-shrink: 0; font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--text-faint);
 }
 
 .bb-body {
   padding: 10px 13px; border-radius: 13px;
-  font-size: 12.5px; line-height: 1.55;
+  font-size: var(--fs-sm); line-height: 1.55;
   word-break: break-word;
   background: var(--bubble-in); border: 1px solid var(--border);
   /* Пузыри за экраном не размечаем: переписка может быть длинной. */
@@ -1654,12 +1663,12 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
 .bb-photo.empty-photo svg { width: 18px; height: 18px; }
 .bb-view {
   display: inline-flex; align-items: center; gap: 5px; width: auto;
-  margin-top: 8px; padding: 3px 8px; font-size: 10.5px;
+  margin-top: 8px; padding: 3px 8px; font-size: var(--fs-2xs);
 }
 .bb-view svg { width: 12px; height: 12px; }
 .bb-partial {
   flex-shrink: 0; padding: 1px 6px; border-radius: 20px;
-  font-family: var(--font-mono); font-size: 9px;
+  font-family: var(--font-mono); font-size: var(--fs-2xs);
   background: var(--amber-soft); color: var(--amber);
 }
 
@@ -1677,7 +1686,7 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
   display: flex; align-items: center; justify-content: center; gap: 9px;
   padding: 15px 16px; flex-shrink: 0;
   border-top: 1px solid var(--border);
-  color: var(--text-faint); font-size: 11.5px; text-align: center;
+  color: var(--text-faint); font-size: var(--fs-xs); text-align: center;
 }
 .cm-locked svg { width: 14px; height: 14px; flex-shrink: 0; }
 
@@ -1708,12 +1717,12 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
 .cs-photo.empty-photo svg { width: 26px; height: 26px; }
 .cs-title { font-size: 13px; font-weight: 650; line-height: 1.4; margin-bottom: 10px; }
 .cs-rows { margin-bottom: 14px; }
-.cs-rows .kv { padding: 7px 0; font-size: 11.5px; }
+.cs-rows .kv { padding: 7px 0; font-size: var(--fs-xs); }
 .cs-acts { display: flex; flex-direction: column; gap: 7px; }
 .cs-acts .btn { justify-content: flex-start; }
 
 @media (max-width: 1320px) {
-  .chats { grid-template-columns: 184px 258px minmax(0, 1fr); }
+  .chats { grid-template-columns: 196px 272px minmax(0, 1fr); }
   .chat-side { display: none; }
 }
 /* Совсем узкое окно: от списка профилей остаются аватар и число, имя живёт в
@@ -1754,25 +1763,25 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
 }
 .palette-search input:focus { box-shadow: none; }
 .palette-search kbd {
-  font-family: var(--font-mono); font-size: 9.5px;
+  font-family: var(--font-mono); font-size: var(--fs-2xs);
   background: var(--bg-input); border: 1px solid var(--border);
   border-radius: 5px; padding: 3px 6px; color: var(--text-faint); flex-shrink: 0;
 }
 .palette-list { max-height: 46vh; overflow-y: auto; padding: 4px 8px 8px; }
 .palette-group {
-  font-family: var(--font-mono); font-size: 9px;
+  font-family: var(--font-mono); font-size: var(--fs-label);
   text-transform: uppercase; letter-spacing: var(--track-wide);
-  color: var(--text-faint); padding: 10px 10px 6px;
+  color: var(--text-dim); padding: 10px 10px 6px;
 }
 .palette-item {
   display: flex; align-items: center; gap: 11px;
   padding: 9px 10px; border-radius: var(--radius-sm);
   color: var(--text-dim); cursor: pointer;
-  font-size: 12.5px;
+  font-size: var(--fs-sm);
 }
 .palette-item .icon { display: grid; place-items: center; flex-shrink: 0; }
 .palette-item .icon svg { width: 16px; height: 16px; }
-.palette-item .go { margin-left: auto; font-size: 10.5px; color: var(--text-faint); }
+.palette-item .go { margin-left: auto; font-size: var(--fs-2xs); color: var(--text-faint); }
 .palette-item.on {
   background: var(--accent-soft); color: var(--accent);
   outline: 1px solid var(--accent-line);
@@ -1781,14 +1790,14 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
 .palette-foot {
   display: flex; gap: 16px; align-items: center;
   padding: 9px 16px; border-top: 1px solid var(--border);
-  font-size: 10.5px; color: var(--text-faint);
+  font-size: var(--fs-2xs); color: var(--text-faint);
 }
 .palette-foot kbd {
-  font-family: var(--font-mono); font-size: 9.5px;
+  font-family: var(--font-mono); font-size: var(--fs-2xs);
   background: var(--bg-input); border: 1px solid var(--border);
   border-radius: 5px; padding: 2px 6px; margin-right: 5px;
 }
-.palette-empty { padding: 26px; text-align: center; color: var(--text-faint); font-size: 12px; }
+.palette-empty { padding: 26px; text-align: center; color: var(--text-faint); font-size: var(--fs-xs); }
 
 /* ── Центр управления рассылкой ──────────────────────────── */
 .control {
@@ -1801,17 +1810,17 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
   font-size: 26px; font-weight: 750; letter-spacing: -0.035em;
   line-height: 1.1; margin: 8px 0 8px; max-width: 18ch;
 }
-.control .sub { color: var(--text-dim); font-size: 12.5px; max-width: 52ch; }
+.control .sub { color: var(--text-dim); font-size: var(--fs-sm); max-width: 52ch; }
 .control-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 18px; }
-.control-note { color: var(--text-faint); font-size: 11.5px; margin-top: 12px; min-height: 17px; }
+.control-note { color: var(--text-faint); font-size: var(--fs-xs); margin-top: 12px; min-height: 17px; }
 
 /* Кольцо и цифры темпа - одной колонкой справа от пульта. */
 .control-side { display: flex; align-items: center; gap: 22px; flex-shrink: 0; }
-.pace { display: flex; flex-direction: column; gap: 14px; min-width: 118px; }
+.pace { display: flex; flex-direction: column; gap: 14px; min-width: 132px; }
 .pace-row { display: flex; flex-direction: column; gap: 2px; }
 .pace-row .k {
-  font-family: var(--font-mono); font-size: 9.5px; letter-spacing: var(--track-wide);
-  text-transform: uppercase; color: var(--text-faint);
+  font-family: var(--font-mono); font-size: var(--fs-label); letter-spacing: var(--track-wide);
+  text-transform: uppercase; color: var(--text-dim);
 }
 .pace-row b { font-size: 17px; font-weight: 700; letter-spacing: -0.02em; }
 
@@ -1821,7 +1830,7 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
 .chk {
   display: flex; align-items: center; gap: 9px;
   padding: 6px 8px; border-radius: var(--radius-sm);
-  font-size: 12px; color: var(--text-dim);
+  font-size: var(--fs-xs); color: var(--text-dim);
   transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
 }
 .chk-mark { display: grid; place-items: center; flex-shrink: 0; }
@@ -1834,7 +1843,7 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
 .chk-go {
   margin-left: auto; flex-shrink: 0;
   display: inline-flex; align-items: center; gap: 2px;
-  font-size: 11px; color: var(--accent);
+  font-size: var(--fs-2xs); color: var(--accent);
 }
 .chk-go svg { width: 12px; height: 12px; }
 
@@ -1852,7 +1861,7 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
   display: flex; flex-direction: column; align-items: center; justify-content: center;
 }
 .gauge .mid b { font-size: 25px; font-weight: 750; letter-spacing: -0.03em; }
-.gauge .mid span { font-family: var(--font-mono); font-size: 9.5px; color: var(--text-faint); margin-top: 2px; }
+.gauge .mid span { font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--text-faint); margin-top: 2px; }
 
 @media (max-width: 1080px) {
   .control { grid-template-columns: 1fr; }
@@ -1865,7 +1874,7 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
 .sess-card { margin-bottom: 14px; }
 .sess-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 12px; }
 .sess-head h3 { font-size: 15px; }
-.sess-head .hint { margin: 0; margin-left: auto; font-family: var(--font-mono); font-size: 10px; }
+.sess-head .hint { margin: 0; margin-left: auto; font-family: var(--font-mono); font-size: var(--fs-2xs); }
 /* Высоту держит обёртка, а не сам график: иначе на пустом ряду карточка
    схлопывалась и снова распухала, когда пошли первые замеры. */
 .sess-wrap { height: 74px; display: grid; }
@@ -1875,7 +1884,7 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
 .sess-chart .area { fill: rgba(var(--accent-rgb), 0.14); stroke: none; }
 .sess-empty {
   place-self: center; color: var(--text-faint);
-  font-family: var(--font-mono); font-size: 10.5px;
+  font-family: var(--font-mono); font-size: var(--fs-2xs);
 }
 .sess-empty[hidden] { display: none; }
 /* Отступ задан с весом карточки: общее правило .card .hint тянет подсказки
@@ -1903,7 +1912,7 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
   padding: 10px 0; border-bottom: 1px solid var(--border);
 }
 .acc-row:last-child { border-bottom: none; }
-.acc-row .nm { font-size: 12.5px; font-weight: 550; min-width: 0; flex: 0 0 auto; }
+.acc-row .nm { font-size: var(--fs-sm); font-weight: 550; min-width: 0; flex: 0 0 auto; }
 .acc-row .track {
   flex: 1 1 auto; height: 5px; border-radius: 5px;
   background: var(--border-strong); overflow: hidden;
@@ -1913,11 +1922,11 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
   transition: width var(--dur-slow) var(--ease);
 }
 .acc-row .cnt {
-  font-family: var(--font-mono); font-size: 10.5px; color: var(--text-faint);
+  font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--text-faint);
   flex: 0 0 auto;
 }
 .acc-row .nm { display: flex; align-items: center; gap: 6px; }
-.acc-row .acc-prof { font-size: 10.5px; color: var(--text-faint); }
+.acc-row .acc-prof { font-size: var(--fs-2xs); color: var(--text-faint); }
 /* Почта без вкладки в рассылке не участвует, и строка это показывает. */
 .acc-row.off .nm, .acc-row.off .cnt { opacity: 0.55; }
 
@@ -1936,14 +1945,14 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
 .pf-logo { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 
 .tg-name { font-size: 13.5px; font-weight: 650; display: block; }
-.tg-note { font-size: 11px; color: var(--text-faint); display: block; }
+.tg-note { font-size: var(--fs-2xs); color: var(--text-faint); display: block; }
 
 /* Сводка выбранного - и в настройках, и в центре управления. */
 .tg-sum { display: flex; align-items: center; gap: 12px; }
 .tg-sum-id { min-width: 0; }
 .tg-sum-countries { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
 .tg-flag {
-  font-size: 10.5px; padding: 3px 9px; border-radius: 20px;
+  font-size: var(--fs-2xs); padding: 3px 9px; border-radius: 20px;
   background: var(--accent-soft); color: var(--accent);
   border: 1px solid var(--accent-line);
 }
@@ -1973,7 +1982,7 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
   display: flex; align-items: center; gap: 9px; text-align: left;
   padding: 7px 9px; border-radius: var(--radius-sm);
   background: transparent; border: 1px solid transparent;
-  color: var(--text-dim); cursor: pointer; font-size: 12px;
+  color: var(--text-dim); cursor: pointer; font-size: var(--fs-xs);
 }
 .tg-c:hover { background: rgba(255, 255, 255, 0.05); color: var(--text); }
 .tg-c.on { color: var(--text); }
@@ -2050,13 +2059,13 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
 .accent-dot.on { border-color: var(--text); box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.12); }
 
 .slider-row { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
-.slider-row .lbl { font-size: 11.5px; color: var(--text-dim); flex: 0 0 110px; }
-.slider-row .num { font-family: var(--font-mono); font-size: 10.5px; color: var(--text-faint); flex: 0 0 38px; text-align: right; }
+.slider-row .lbl { font-size: var(--fs-xs); color: var(--text-dim); flex: 0 0 110px; }
+.slider-row .num { font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--text-faint); flex: 0 0 38px; text-align: right; }
 
 .keys { display: grid; gap: 6px; }
-.keys .k-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 11.5px; }
+.keys .k-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: var(--fs-xs); }
 .keys kbd {
-  font-family: var(--font-mono); font-size: 10px;
+  font-family: var(--font-mono); font-size: var(--fs-2xs);
   background: var(--bg-input); border: 1px solid var(--border-strong);
   border-bottom-width: 2px; border-radius: 5px; padding: 2px 6px; color: var(--text-dim);
 }

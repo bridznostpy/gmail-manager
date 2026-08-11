@@ -36,6 +36,18 @@ const DEFAULTS = {
     reduceMotion: false,
   },
 
+  // ── Память интерфейса ────────────────────────────────────────────
+  // Выбор вида списка и открытых панелей. Держим рядом с остальными
+  // настройками, чтобы не заводить второе хранилище: пользователь ждёт, что
+  // приложение откроется таким же, каким он его закрыл.
+  ui: {
+    profileView: 'grid', // 'grid' | 'list'
+    profileSort: 'created', // 'created' | 'written' | 'status' | 'label'
+    arPreviewOpen: false, // панель превью HTML-шаблона авто-ответа
+    arPreviewDevice: 'desktop', // 'desktop' | 'mobile' - ширина письма в превью
+    logsPaused: false, // поток живых логов на паузе
+  },
+
   // ── System settings ──────────────────────────────────────────────
   system: {
     mailsPerAccount: 50, // limit of first-messages per Gmail account

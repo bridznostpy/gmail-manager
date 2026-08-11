@@ -171,10 +171,12 @@
 /* Поиск по профилям. Иконка поверх поля, как в поиске по настройкам. */
 .prof-search { position: relative; flex: 0 1 300px; min-width: 160px; }
 .prof-search svg {
-  position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
+  position: absolute; z-index: 1; left: 10px; top: 50%; transform: translateY(-50%);
   width: 14px; height: 14px; color: var(--text-faint); pointer-events: none;
 }
-.prof-search input { padding-left: 32px; font-size: 12px; height: 34px; }
+/* Селектор с типом обязателен: общее правило полей объявлено ниже по файлу и
+   с той же специфичностью перебивало бы отступ под иконку. */
+.prof-search input[type="search"] { padding-left: 32px; font-size: 12px; height: 34px; }
 .prof-search input::-webkit-search-cancel-button { -webkit-appearance: none; }
 
 .prof-sort { position: relative; display: inline-flex; align-items: center; }
@@ -253,7 +255,11 @@
   color: var(--text-dim); margin-bottom: 7px;
   letter-spacing: 0;
 }
-input[type="text"], input[type="number"], input[type="password"], select, textarea {
+/* type="search" в списке обязателен: без него поля поиска в настройках и в
+   профилях отваливались на браузерный вид - белая заливка и системная рамка
+   посреди тёмного стекла. */
+input[type="text"], input[type="number"], input[type="password"],
+input[type="search"], select, textarea {
   width: 100%; background: var(--control-bg);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm); color: var(--text); padding: 10px 12px;
@@ -261,6 +267,9 @@ input[type="text"], input[type="number"], input[type="password"], select, textar
   transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease),
     background var(--dur-fast) var(--ease);
 }
+/* Только полю поиска: у него своя отрисовка, которая перебивает фон. Селектам
+   appearance трогать нельзя - вместе с ней пропадает стрелка списка. */
+input[type="search"] { -webkit-appearance: none; appearance: none; }
 textarea { font-family: var(--font-mono); resize: vertical; min-height: 96px; line-height: 1.6; }
 input::placeholder, textarea::placeholder { color: var(--text-faint); }
 input:focus, select:focus, textarea:focus { border-color: var(--accent); box-shadow: var(--focus-ring); }
@@ -851,10 +860,10 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
    левый отступ - иначе текст запроса наезжал бы на лупу. */
 .set-search { position: relative; }
 .set-search svg {
-  position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
+  position: absolute; z-index: 1; left: 10px; top: 50%; transform: translateY(-50%);
   width: 14px; height: 14px; color: var(--text-faint); pointer-events: none;
 }
-.set-search input { padding-left: 32px; padding-right: 54px; font-size: 12px; }
+.set-search input[type="search"] { padding-left: 32px; padding-right: 54px; font-size: 12px; }
 .set-search input::-webkit-search-cancel-button { -webkit-appearance: none; }
 /* Сколько групп осталось после запроса. */
 .set-count {

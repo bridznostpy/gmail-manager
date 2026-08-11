@@ -3838,14 +3838,36 @@ function dropArPreview() {
  */
 function paintHtmlPreview(frame, html) {
   if (!frame) return;
-  const doc = frame.contentDocument;
-  if (!doc) return;
+  let doc = frame.contentDocument;
+  // Клик по ссылке в письме мог увести рамку на настоящий адрес: CSP его
+  // резал, и на месте превью оставался пустой кадр, который сам не
+  // восстанавливался. Такую рамку возвращаем на about:blank и рисуем заново.
+  if (!doc || !doc.body) {
+    frame.src = 'about:blank';
+    setTimeout(() => paintHtmlPreview(frame, html), 60);
+    return;
+  }
   doc.open();
   doc.write('<!doctype html><html><head><meta charset="utf-8">'
     + '<style>html,body{margin:0}body{padding:16px;background:#ffffff;'
-    + 'font-family:Arial,Helvetica,sans-serif;color:#202124}img{max-width:100%}</style>'
+    + 'font-family:Arial,Helvetica,sans-serif;color:#202124}img{max-width:100%}'
+    + 'a{cursor:default}</style>'
     + '</head><body>' + String(html == null ? '' : html) + '</body></html>');
   doc.close();
+
+  // Превью - картинка письма, а не рабочая страница: ссылка в нём ведёт на
+  // боевой адрес подтверждения, и открывать его из редактора шаблона нельзя.
+  // Гасим переход и вместо него показываем, куда ссылка ведёт - при проверке
+  // шаблона это как раз то, что нужно увидеть.
+  doc = frame.contentDocument;
+  if (!doc) return;
+  doc.addEventListener('click', (e) => {
+    const link = e.target && e.target.closest ? e.target.closest('a') : null;
+    e.preventDefault();
+    if (!link) return;
+    const href = link.getAttribute('href') || '';
+    toast(href ? t('ar.linkTo', { url: shorten(href, 60) }) : t('ar.linkNone'));
+  });
 }
 
 /** Письмо крупно, в модалке - в колонке редактора вёрстку на 600 px не видно. */

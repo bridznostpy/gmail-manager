@@ -37,6 +37,9 @@ const state = {
   // Выбранная группа на странице настроек - переживает уход на другой раздел.
   settingsGroup: 'limits',
   settingsQuery: '', // поиск по настройкам, тоже переживает уход со страницы
+  // Значения по умолчанию из main - по ним видно, какие разделы человек трогал.
+  // Тянем один раз при первом заходе в настройки, они не меняются.
+  settingsDefaults: null,
   textsLang: 'en', // язык, открытый на экране текстов рассылки
   runStatus: { running: false, paused: false, uptimeSec: 0, queueSize: 0 },
   // Живые логи держим массивом, а не только в DOM: иначе их нечем фильтровать.
@@ -181,6 +184,9 @@ function toast(msg, kind = '') {
 
 async function saveSection(key, patch) {
   state.settings[key] = await api.settings.setSection(key, patch);
+  // Пометки "раздел изменён" считаются от текущих значений, поэтому обновляем
+  // их сразу после записи, а не только при переключении групп.
+  if (state.route === 'settings') paintSettingsDots();
   return state.settings[key];
 }
 
@@ -2492,6 +2498,7 @@ VIEWS.settings = () => {
         ${ICONS.search}
         <input type="search" id="setSearch" autocomplete="off" spellcheck="false"
           placeholder="${esc(t('set.searchPh'))}" aria-label="${esc(t('set.searchPh'))}"/>
+        <span class="set-count" id="setCount"></span>
       </div>
       <div class="set-nav" id="setNav">
         ${SETTINGS_SECTIONS.map((sec) => `<div class="set-sec" data-sec="${sec}">
@@ -2499,6 +2506,7 @@ VIEWS.settings = () => {
           ${SETTINGS_GROUPS.filter((g) => g.section === sec).map((g) => `
             <button class="set-tab" data-g="${g.id}">
               <span class="icon">${ICONS[g.icon]}</span><span>${esc(t('set.g.' + g.id))}</span>
+              <span class="set-dot" title="${esc(t('set.changed'))}"></span>
             </button>`).join('')}
         </div>`).join('')}
       </div>
@@ -2519,12 +2527,66 @@ VIEWS.settings = () => {
     filterSettings(wrap);
   }, 160));
 
-  setTimeout(() => {
+  // Найдя раздел поиском, за ним обычно тянутся мышью. Стрелки и Enter
+  // избавляют от этого: руки уже на клавиатуре.
+  search.addEventListener('keydown', (e) => {
+    const tabs = $$('.set-tab', wrap).filter((b) => !b.hidden);
+    if (!tabs.length) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const at = tabs.findIndex((b) => b.classList.contains('marked'));
+      const next = e.key === 'ArrowDown'
+        ? (at + 1) % tabs.length
+        : (at <= 0 ? tabs.length - 1 : at - 1);
+      tabs.forEach((b, i) => b.classList.toggle('marked', i === next));
+      tabs[next].scrollIntoView({ block: 'nearest' });
+      return;
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const pick = tabs.find((b) => b.classList.contains('marked')) || tabs[0];
+      state.settingsGroup = pick.dataset.g;
+      renderSettingsGroup(wrap);
+    }
+  });
+
+  setTimeout(async () => {
     renderSettingsGroup(wrap);
     if (state.settingsQuery) filterSettings(wrap);
+    if (!state.settingsDefaults) state.settingsDefaults = await api.settings.defaults();
+    paintSettingsDots(wrap);
   }, 0);
   return wrap;
 };
+
+/**
+ * Точка у раздела, значения которого отличаются от поставочных. Разделов
+ * десять, и по виду меню нельзя было понять, где человек что-то менял, а где
+ * всё осталось как из коробки.
+ *
+ * Помечаем только группы со своим разделом настроек (у них есть reset):
+ * "Тексты", "Цели" и "Оформление" - это части чужих разделов, и точка на них
+ * означала бы неправду.
+ */
+function paintSettingsDots(root) {
+  const defaults = state.settingsDefaults;
+  if (!defaults) return;
+  const box = root || $('.settings');
+  if (!box) return;
+  $$('.set-tab', box).forEach((b) => {
+    const group = SETTINGS_GROUPS.find((g) => g.id === b.dataset.g);
+    b.classList.toggle('changed', !!(group && group.reset && sectionChanged(defaults, group.reset)));
+  });
+}
+
+/** Раздел отличается от поставочного? Сравниваем по ключам умолчаний: лишние
+    поля в настройках изменением не считаем. */
+function sectionChanged(defaults, key) {
+  const base = defaults[key];
+  const now = state.settings[key];
+  if (!base || typeof base !== 'object') return false;
+  return Object.keys(base).some((k) => JSON.stringify(base[k]) !== JSON.stringify(now && now[k]));
+}
 
 /**
  * Поиск по настройкам. Прячет непопавшие группы и подсвечивает найденные поля в
@@ -2540,6 +2602,8 @@ function filterSettings(root) {
   const shown = SETTINGS_GROUPS.filter(hit);
   $$('.set-tab', root).forEach((b) => {
     b.hidden = !shown.some((g) => g.id === b.dataset.g);
+    // Отметка стрелками относится к прошлому запросу - снимаем.
+    b.classList.remove('marked');
   });
   // Подпись раздела без единой видимой группы только мешает.
   $$('.set-sec', root).forEach((sec) => {
@@ -2547,6 +2611,10 @@ function filterSettings(root) {
   });
   const none = $('#setNoMatch', root);
   if (none) none.hidden = !!shown.length;
+  // Сколько групп осталось. Без счётчика по короткому списку не видно, сузил
+  // запрос выборку до одной группы или просто совпало.
+  const count = $('#setCount', root);
+  if (count) count.textContent = q ? shown.length + ' / ' + SETTINGS_GROUPS.length : '';
 
   // Открытая группа выпала из поиска - показываем первую найденную, иначе
   // справа осталась бы карточка, которой в списке уже нет.

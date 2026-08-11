@@ -266,6 +266,7 @@ const DICT = {
 
     'set.searchPh': 'Поиск по настройкам',
     'set.noMatch': 'Ничего не нашлось. Попробуйте другое слово.',
+    'set.changed': 'Раздел изменён',
     'set.saved': 'сохранено',
     'set.reset': 'Сбросить раздел',
     'set.resetTitle': 'Сбросить раздел настроек?',
@@ -839,6 +840,7 @@ const DICT = {
 
     'set.searchPh': 'Search settings',
     'set.noMatch': 'Nothing found. Try another word.',
+    'set.changed': 'Section changed',
     'set.saved': 'saved',
     'set.reset': 'Reset section',
     'set.resetTitle': 'Reset this section?',

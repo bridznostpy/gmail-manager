@@ -684,8 +684,14 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
   position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
   width: 14px; height: 14px; color: var(--text-faint); pointer-events: none;
 }
-.set-search input { padding-left: 32px; font-size: 12px; }
+.set-search input { padding-left: 32px; padding-right: 54px; font-size: 12px; }
 .set-search input::-webkit-search-cancel-button { -webkit-appearance: none; }
+/* Сколько групп осталось после запроса. */
+.set-count {
+  position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+  font-family: var(--font-mono); font-size: 9.5px; color: var(--text-faint);
+  pointer-events: none;
+}
 
 .set-nav { display: flex; flex-direction: column; gap: 2px; }
 .set-sec + .set-sec { margin-top: 12px; }
@@ -715,6 +721,16 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
   background: var(--accent-soft); border-color: var(--accent-line);
   color: var(--accent); font-weight: 600;
 }
+/* Отметка стрелками в поиске: показывает, что откроется по Enter. */
+.set-tab.marked { background: rgba(255, 255, 255, 0.07); border-color: var(--border-strong); color: var(--text); }
+/* Точка "раздел трогали": значения не совпадают с поставочными. */
+.set-tab .set-dot {
+  margin-left: auto; flex-shrink: 0;
+  width: 6px; height: 6px; border-radius: 50%;
+  background: currentColor; opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+.set-tab.changed .set-dot { opacity: 0.75; }
 .set-panel > .card { padding: 22px 24px; }
 /* Подсказки в настройках сами держат отступы: общее правило .card .hint тянет
    их вверх отрицательным margin, и под ползунками текст наезжал на кнопки.

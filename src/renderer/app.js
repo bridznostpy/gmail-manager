@@ -1008,6 +1008,8 @@ VIEWS.run = () => {
           <path class="area"/><path vector-effect="non-scaling-stroke"/>
         </svg>
         <div class="cap">${esc(t('dash.sentFoot'))}</div></div>
+      <div class="stat-cell" id="cReplies"><div class="num" id="sReplies">0</div><div class="cap">${esc(t('dash.replies'))}</div></div>
+      <div class="stat-cell" id="cLinks"><div class="num" id="sLinks">0</div><div class="cap">${esc(t('dash.links'))}</div></div>
       <div class="stat-cell" id="cQueue"><div class="num" id="sQueue">0</div><div class="cap">${esc(t('dash.queue'))}</div></div>
       <div class="stat-cell" id="cReady"><div class="num" id="sReadyN">0</div><div class="cap">${esc(t('dash.ready'))}</div></div>
       <div class="stat-cell"><div class="num" id="sUptime">0s</div><div class="cap">${esc(t('dash.uptime'))}</div></div>
@@ -1071,7 +1073,7 @@ VIEWS.run = () => {
       <div class="hint sess-sub">${esc(t('dash.sessSub'))}</div>
     </div>
 
-    <div class="card glass">
+    <div class="card glass" id="logsCard">
       <div class="logs-head">
         <h3 style="margin:0">${esc(t('dash.logs'))}</h3>
         <div class="seg filters" id="logLevels">
@@ -1084,6 +1086,7 @@ VIEWS.run = () => {
         <span class="logs-count" id="logCount"></span>
       </div>
       <div class="logs" id="logs"></div>
+      <div class="logs-idle" id="logsIdle">${ICONS.play}<span>${esc(t('logs.idle'))}</span></div>
     </div>
   </div>`);
 
@@ -1158,6 +1161,10 @@ async function runAction(kind) {
   paintRunControls();
   try {
     if (kind === 'start') {
+      // Чистим журнал и ряды ДО запуска, а не по факту смены состояния: движок
+      // пишет первые строки прямо в start(), и сброс после него стирал бы
+      // именно их.
+      resetRunSession();
       const res = await api.run.start();
       if (res && res.ok) {
         toast(t('dash.started'), 'success');
@@ -1198,19 +1205,26 @@ function paintRunControls() {
   const mode = runState();
 
   const primaryStart = mode === 'idle';
+  // Когда все аккаунты добрали лимит, останавливать уже нечего кроме
+  // автоответчика - и кнопка обязана называть то, что она делает.
+  const autoOnly = !!state.runStatus.autoReplyOnly;
+  const label = t(primaryStart ? 'dash.start' : autoOnly ? 'dash.stopAutoReply' : 'dash.stop');
   primary.dataset.action = primaryStart ? 'start' : 'stop';
   primary.className = 'btn big ' + (primaryStart ? 'primary' : 'stop');
   primary.innerHTML = state.runBusy
-    ? `<span class="spinner"></span><span>${esc(t(primaryStart ? 'dash.start' : 'dash.stop'))}</span>`
-    : (primaryStart ? ICONS.play : ICONS.stop) + `<span>${esc(t(primaryStart ? 'dash.start' : 'dash.stop'))}</span>`;
+    ? `<span class="spinner"></span><span>${esc(label)}</span>`
+    : (primaryStart ? ICONS.play : ICONS.stop) + `<span>${esc(label)}</span>`;
   primary.disabled = state.runBusy;
 
-  const canPause = mode !== 'idle';
+  // На авто-ответе паузу гасим: останавливать нечего, писем всё равно нет, а
+  // отвечать продавцам приложение продолжает и на паузе.
+  const canPause = mode !== 'idle' && !autoOnly;
   const resuming = mode === 'paused';
   secondary.dataset.action = resuming ? 'resume' : 'pause';
   secondary.innerHTML = (resuming ? ICONS.play : ICONS.pause) +
     `<span>${esc(t(resuming ? 'dash.resume' : 'dash.pause'))}</span>`;
   secondary.disabled = !canPause || state.runBusy;
+  secondary.title = autoOnly ? t('dash.pauseOffAuto') : '';
 }
 
 function paintRun() {
@@ -1224,8 +1238,20 @@ function paintRun() {
 
   const note = $('#runNote');
   if (note) {
-    note.textContent = mode === 'running' ? t('dash.noteRunning')
-      : mode === 'paused' ? t('dash.notePaused') : t('dash.noteIdle');
+    note.textContent = r.autoReplyOnly ? t('dash.noteAutoReply')
+      : mode === 'running' ? t('dash.noteRunning')
+        : mode === 'paused' ? t('dash.notePaused') : t('dash.noteIdle');
+  }
+
+  // Живые логи - журнал текущего запуска. У остановленного прогона показывать
+  // нечего: строки прошлого запуска только сбивают с толку, а свежих не будет.
+  const logsCard = $('#logsCard');
+  if (logsCard) {
+    const idle = mode === 'idle';
+    if (logsCard.dataset.idle !== String(idle)) {
+      logsCard.dataset.idle = String(idle);
+      logsCard.classList.toggle('logs-off', idle);
+    }
   }
 
   // Готовыми считаем ПОЧТЫ с открытой вкладкой: именно они и есть аккаунты, с
@@ -1233,7 +1259,10 @@ function paintRun() {
   const slots = mailboxSlots();
   const ready = slots.filter((s) => s.hasTab).length;
   const noTab = slots.filter((s) => !s.hasTab).length;
-  const sent = slots.reduce((n, s) => n + s.sentCount, 0);
+  // Отправлено - за ТЕКУЩИЙ запуск, а не за всю жизнь почт: полоса статов
+  // отвечает на вопрос "сколько ушло с этого запуска", и накопительный счёт
+  // после остановки оставался бы висеть цифрой, которую нечем объяснить.
+  const sent = r.sentThisSession || 0;
   const plan = sessionPlan();
 
   const st = $('#sRunState');
@@ -1247,6 +1276,10 @@ function paintRun() {
   setNumber($('#sQueue'), r.queueSize);
   setNumber($('#sReadyN'), ready);
   setNumber($('#sSent'), sent);
+  setNumber($('#sReplies'), r.repliesThisSession || 0);
+  setNumber($('#sLinks'), r.linksThisSession || 0);
+  setTone($('#cReplies'), r.repliesThisSession > 0 ? 'ok' : '');
+  setTone($('#cLinks'), r.linksThisSession > 0 ? 'accent' : '');
 
   // Цифры красим по смыслу: ноль готовых аккаунтов - это проблема, а не
   // просто число, и выглядеть оно должно иначе, чем пустая очередь.
@@ -5124,8 +5157,28 @@ async function refreshProfiles() {
 }
 
 async function refreshRun() {
+  const was = state.runStatus.running;
   state.runStatus = await api.run.status();
+  // Остановка - граница сессии: журнал и ряды графиков живут ровно от запуска
+  // до остановки. Запуск чистит их сам, до первой строки движка (см.
+  // runAction), поэтому здесь ловим только обратный переход.
+  if (was && !state.runStatus.running) resetRunSession();
   paintRun();
+}
+
+/** Обнулить всё, что показывается "за запуск". */
+function resetRunSession() {
+  state.logs = [];
+  logsHeld = 0;
+  state.sendSeries = [];
+  state.lastSentTotal = null;
+  for (const row of Object.values(state.profileSeries)) {
+    row.values = [];
+    row.first = 0;
+  }
+  renderLogs();
+  paintSpark();
+  paintSessionChart();
 }
 
 // ── запуск ─────────────────────────────────────────────────────────

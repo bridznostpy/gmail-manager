@@ -66,14 +66,29 @@ class SenderEngine {
     this._rr = 0;
   }
 
+  /**
+   * Состояние прогона для интерфейса. Все счётчики - за ТЕКУЩИЙ запуск: экран
+   * прогона отвечает на вопрос "что происходит сейчас", а накопленные за всю
+   * историю числа лежат на своих экранах (профили, обзор).
+   *
+   * Очередь у остановленного прогона показываем нулём: лиды в памяти ещё
+   * лежат, но следующий запуск начинает с чистой очереди (см. start), и
+   * показывать число, которое всё равно исчезнет, - врать.
+   */
   status() {
     return {
       running: this.running,
       paused: this.running && this.paused,
       startedAt: this.startedAt,
       uptimeSec: this.startedAt ? Math.floor((Date.now() - this.startedAt) / 1000) : 0,
-      queueSize: this.parser.queueSize(),
+      queueSize: this.running ? this.parser.queueSize() : 0,
       sentThisSession: this.sentThisSession,
+      repliesThisSession: this.repliesThisSession,
+      linksThisSession: this.linksThisSession,
+      // Все почты добрали лимит: писем больше не будет, приложение осталось на
+      // аккаунтах и отвечает на ответы. Кнопка остановки говорит именно об
+      // этом, см. paintRunControls в рендере.
+      autoReplyOnly: this.running && this._allLimitsReached(),
     };
   }
 
@@ -150,8 +165,13 @@ class SenderEngine {
     this.paused = false;
     this.startedAt = Date.now();
     this.sentThisSession = 0;
+    this.repliesThisSession = 0;
+    this.linksThisSession = 0;
     this._notifiedAllLimits = false;
     this._rr = 0;
+    // Очередь начинаем с чистого листа: лиды прошлого прогона собраны под
+    // прошлую цель рассылки, а парсер дольёт свежие за первые же секунды.
+    this.parser.clear();
     logger.success('system', t('run.started', { count: ready.length }));
 
     // Поднимаем Chrome каждому готовому профилю, если он ещё не запущен. Адрес
@@ -639,6 +659,14 @@ class SenderEngine {
     if (!this.running) return { ok: false };
     this.running = false;
     this.paused = false;
+    // Время прогона и его счётчики обнуляем здесь же. Раньше startedAt
+    // оставался, и аптайм остановленной рассылки продолжал расти - экран
+    // показывал длительность, которой никто не считал.
+    this.startedAt = null;
+    this.sentThisSession = 0;
+    this.repliesThisSession = 0;
+    this.linksThisSession = 0;
+    this._notifiedAllLimits = false;
     if (this._sendTimer) clearTimeout(this._sendTimer);
     if (this._replyTimer) clearTimeout(this._replyTimer);
     this.parser.stop();

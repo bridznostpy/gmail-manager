@@ -722,7 +722,25 @@ input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.15); }
 .badge.new, .badge.unknown { background: var(--bg-input); color: var(--text-dim); }
 .badge.error { background: var(--red-soft); color: var(--red); }
 
-/* ── Живые логи ──────────────────────────────────────────── */
+/* ── Живые логи ────────────────────────────────────────────
+   У остановленного прогона журнала нет: он ведётся за запуск. Карточку
+   оставляем на месте с заглушкой - если её убирать целиком, вёрстка прыгает
+   на каждый старт и стоп. Вместе со строками прячем и панель фильтров: искать
+   в пустом списке нечего. */
+.logs-off .logs { display: none; }
+.logs-off .logs-head .seg,
+.logs-off .logs-head .grow,
+.logs-off .logs-head .btn,
+.logs-off .logs-head .logs-count { display: none; }
+.logs-idle { display: none; }
+.logs-off .logs-idle {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  padding: 34px 18px; text-align: center;
+  color: var(--text-faint); font-size: var(--fs-2xs);
+  border: 1px dashed var(--border-strong); border-radius: var(--radius-sm);
+}
+.logs-idle svg { width: 14px; height: 14px; flex-shrink: 0; }
+
 .logs-head {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
   margin-bottom: 12px;

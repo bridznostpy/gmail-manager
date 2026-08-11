@@ -70,6 +70,12 @@ function wireShotMode(win) {
         catch (e) { console.log('[shot-js]', e.message); }
         await new Promise((r) => setTimeout(r, 900));
       }
+      // Снимаем дважды. Первый вызов может вернуть кадр, скомпонованный до
+      // наших изменений: у неактивного окна композитор засыпает, и в файл
+      // попадал экран, который был открыт до SHOT_JS. Первый кадр будит
+      // отрисовку, второй показывает то, что действительно на экране.
+      await win.webContents.capturePage();
+      await new Promise((r) => setTimeout(r, 400));
       const img = await win.webContents.capturePage();
       fs.writeFileSync(process.env.SHOT_PATH || 'shot.png', img.toPNG());
       console.log('[shot] saved');

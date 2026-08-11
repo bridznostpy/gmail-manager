@@ -38,6 +38,15 @@ const state = {
   settingsGroup: 'limits',
   settingsQuery: '', // поиск по настройкам, тоже переживает уход со страницы
   profileQuery: '', // поиск по профилям: имя, почта профиля и почты внутри него
+  // Отмеченные карточки. Массив, а не Set: список попадает в подпись
+  // JSON.stringify, по которой решается, пересобирать ли сетку.
+  selectedProfiles: [],
+  // Идёт массовое действие: { kind, total, done, cancel }.
+  bulk: null,
+  // Прирост отправленного по каждому профилю за тик опроса - для спарклайна и
+  // прогноза. Общий ряд sendSeries суммарный, и по нему не видно, какой
+  // аккаунт встал.
+  profileSeries: {},
   // Значения по умолчанию из main - по ним видно, какие разделы человек трогал.
   // Тянем один раз при первом заходе в настройки, они не меняются.
   settingsDefaults: null,
@@ -1296,26 +1305,48 @@ function setTone(el, tone) {
   if (el) el.dataset.tone = tone;
 }
 
+/**
+ * Пути спарклайна по ряду значений. Один код на искру в полосе статов, на
+ * карточку профиля и на график сессии - иначе три одинаковых графика рисовались
+ * бы тремя разными формулами и выглядели по-разному.
+ *
+ * Пока истории нет, получается ровная линия по низу: пустой спарклайн оставлял
+ * в плитке дыру, и подпись съезжала ниже, чем у соседних плиток.
+ */
+function sparkPath(values, w, hh) {
+  const vals = values && values.length >= 2 ? values : [0, 0];
+  const max = Math.max(1, ...vals);
+  const step = w / (vals.length - 1);
+  const pts = vals.map((v, i) => [i * step, hh - (v / max) * (hh - 4) - 2]);
+  const line = 'M' + pts.map((p) => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' L');
+  return { line, area: line + ` L${w},${hh} L0,${hh} Z` };
+}
+
 function paintSpark() {
   const svg = $('#dSpark');
   if (!svg) return;
-  // Пока истории нет, рисуем ровную линию по низу: пустой спарклайн оставлял
-  // в плитке дыру, и подпись съезжала ниже, чем у соседних плиток.
-  const values = state.sendSeries.length >= 2 ? state.sendSeries : [0, 0];
   const [area, line] = svg.children;
-  const w = 100, hh = 22;
-  const max = Math.max(1, ...values);
-  const step = w / (values.length - 1);
-  const pts = values.map((v, i) => [i * step, hh - (v / max) * (hh - 4) - 2]);
-  const d = 'M' + pts.map((p) => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' L');
-  line.setAttribute('d', d);
-  area.setAttribute('d', d + ` L${w},${hh} L0,${hh} Z`);
+  const d = sparkPath(state.sendSeries, 100, 22);
+  line.setAttribute('d', d.line);
+  area.setAttribute('d', d.area);
 }
 
 function fmtUptime(sec) {
   if (!sec) return '0s';
   const hrs = Math.floor(sec / 3600), min = Math.floor((sec % 3600) / 60), s = sec % 60;
   return (hrs ? hrs + 'h ' : '') + (min ? min + 'm ' : '') + s + 's';
+}
+
+/** "5 мин назад". Точное время здесь не нужно - важен порядок величины. */
+function fmtAgo(ts) {
+  if (!ts) return '';
+  const sec = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+  if (sec < 60) return t('time.justNow');
+  const min = Math.floor(sec / 60);
+  if (min < 60) return t('time.minAgo', { n: min });
+  const hrs = Math.floor(min / 60);
+  if (hrs < 24) return t('time.hrAgo', { n: hrs });
+  return t('time.dayAgo', { n: Math.floor(hrs / 24) });
 }
 
 // ── живые логи ─────────────────────────────────────────────────────
@@ -2080,7 +2111,19 @@ VIEWS.profiles = () => {
     </div>
 
     <div class="cards-grid cascade" id="cards"></div>
+    <div class="bulk-bar glass" id="pBulk" hidden></div>
   </div>`);
+
+  // Панель массовых действий одна на оба вида списка, поэтому и обработчик
+  // один: кнопки в ней перерисовываются, вешать слушателей на каждую нельзя.
+  $('#pBulk', wrap).addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-bulk]');
+    if (!btn) return;
+    const kind = btn.dataset.bulk;
+    if (kind === 'cancel') { if (state.bulk) state.bulk.cancel = true; return; }
+    if (kind === 'clear') { clearProfilePicks(); return; }
+    runBulk(kind);
+  });
 
   const search = $('#pSearch', wrap);
   search.value = state.profileQuery;
@@ -2105,6 +2148,8 @@ VIEWS.profiles = () => {
     paintProfileStats(s);
     renderProfileFilters(wrap);
     renderProfileCards(wrap);
+    paintProfileLive();
+    paintBulkBar();
   }, 0);
   return wrap;
 };
@@ -2217,7 +2262,7 @@ function renderProfileCards(root) {
   const current = sessionPlan().current;
   const sign = JSON.stringify([
     state.booted, state.profileFilter, limit, state.selectedProfile,
-    state.profileQuery, ui.profileSort, ui.profileView,
+    state.profileQuery, ui.profileSort, ui.profileView, state.selectedProfiles,
     current && state.runStatus.running ? current.key : '',
     state.profiles.map((p) => [p.id, p.label, p.email, p.gmailStatus, p.running, p.port, p.sentCount,
       (p.mailboxes || []).map((m) => [m.email, m.hasTab, m.sentCount]),
@@ -2253,6 +2298,7 @@ function renderProfileCards(root) {
     const info = profileInfo(p, limit, current);
     const el = h(list ? profileRowHtml(p, info, limit) : profileCardHtml(p, info, limit, current));
     el.addEventListener('click', (e) => {
+      if (e.target.closest('[data-pick]')) { e.stopPropagation(); toggleProfilePick(p.id); return; }
       const btn = e.target.closest('[data-act]');
       if (!btn) { openProfileDrawer(p.id); return; }
       e.stopPropagation();
@@ -2302,8 +2348,9 @@ function profileInfo(p, limit, current) {
 
 function profileCardHtml(p, info, limit, current) {
   const { boxes, cap, sent, done, isCurrent, m, bad } = info;
-  return `<div class="profile-card glass glass-sheen ${state.selectedProfile === p.id ? 'selected' : ''} ${isCurrent ? 'current' : ''} ${bad ? 'error' : ''}">
+  return `<div class="profile-card glass glass-sheen ${state.selectedProfile === p.id ? 'selected' : ''} ${isCurrent ? 'current' : ''} ${bad ? 'error' : ''} ${state.selectedProfiles.includes(p.id) ? 'picked' : ''}" data-id="${esc(p.id)}">
     <div class="pc-head">
+      ${pickHtml(p)}
       <span class="pc-avatar" style="--av:${avatarColor(p)}">${esc(avatarLetter(p))}
         <span class="mark ${p.gmailStatus}"></span></span>
       <span class="pc-id">
@@ -2324,6 +2371,8 @@ function profileCardHtml(p, info, limit, current) {
       <span class="n" ${m.dialogs ? 'data-tone="accent"' : ''}><b>${m.dialogs}</b><span>${esc(t('prof.dialogs'))}</span></span>
       <span class="n" ${m.replies ? 'data-tone="ok"' : ''}><b>${m.replies}</b><span>${esc(t('prof.replies'))}</span></span>
     </div>
+
+    ${profileLiveHtml(p, info)}
 
     ${mailboxListHtml(p, limit, current)}
 
@@ -2353,7 +2402,8 @@ function profileCardHtml(p, info, limit, current) {
  */
 function profileRowHtml(p, info, limit) {
   const { boxes, cap, sent, done, isCurrent, m, bad } = info;
-  return `<div class="prow glass ${state.selectedProfile === p.id ? 'selected' : ''} ${isCurrent ? 'current' : ''} ${bad ? 'error' : ''}">
+  return `<div class="prow glass ${state.selectedProfile === p.id ? 'selected' : ''} ${isCurrent ? 'current' : ''} ${bad ? 'error' : ''} ${state.selectedProfiles.includes(p.id) ? 'picked' : ''}" data-id="${esc(p.id)}">
+    ${pickHtml(p)}
     <span class="pc-avatar" style="--av:${avatarColor(p)}">${esc(avatarLetter(p))}
       <span class="mark ${p.gmailStatus}"></span></span>
     <span class="prow-id">
@@ -2375,6 +2425,194 @@ function profileRowHtml(p, info, limit) {
       <button class="mini danger" data-act="del" title="${esc(t('prof.delete'))}">${ICONS.trash}</button>
     </span>
   </div>`;
+}
+
+// ── массовые действия над профилями ────────────────────────────────
+// Каждое действие тут - это запуск или остановка отдельного Chrome, поэтому
+// идём строго по очереди и с возможностью прервать: одновременный старт
+// десятка браузеров упирается в память и в выдачу отладочных портов.
+
+function toggleProfilePick(id) {
+  const at = state.selectedProfiles.indexOf(id);
+  if (at === -1) state.selectedProfiles.push(id);
+  else state.selectedProfiles.splice(at, 1);
+  renderProfileCards(document);
+  paintBulkBar();
+}
+
+function clearProfilePicks() {
+  if (!state.selectedProfiles.length) return;
+  state.selectedProfiles = [];
+  renderProfileCards(document);
+  paintBulkBar();
+}
+
+const BULK_ACTIONS = [
+  { kind: 'launch', icon: 'play', key: 'prof.bulkLaunch', cls: '' },
+  { kind: 'stop', icon: 'stop', key: 'prof.bulkStop', cls: '' },
+  { kind: 'scan', icon: 'reset', key: 'prof.bulkScan', cls: '' },
+  { kind: 'del', icon: 'trash', key: 'prof.bulkDel', cls: 'danger' },
+];
+
+function paintBulkBar() {
+  const bar = $('#pBulk');
+  if (!bar) return;
+  const busy = state.bulk;
+  const n = state.selectedProfiles.length;
+  bar.hidden = !busy && !n;
+  if (bar.hidden) return;
+
+  if (busy) {
+    const pct = busy.total ? (busy.done / busy.total) * 100 : 0;
+    bar.innerHTML = `
+      <span class="bb-count">${esc(t('prof.bulkProgress', { done: busy.done, total: busy.total }))}</span>
+      <span class="bb-track"><span style="width:${pct.toFixed(1)}%"></span></span>
+      <button class="btn ghost" data-bulk="cancel">${esc(t('prof.bulkCancel'))}</button>`;
+    return;
+  }
+  bar.innerHTML = `
+    <span class="bb-count">${esc(t('prof.bulkSelected', { n }))}</span>
+    <span class="grow"></span>
+    ${BULK_ACTIONS.map((a) => `<button class="btn ${a.cls}" data-bulk="${a.kind}">${ICONS[a.icon]}<span>${esc(t(a.key))}</span></button>`).join('')}
+    <button class="btn ghost" data-bulk="clear">${esc(t('prof.bulkClear'))}</button>`;
+  wireRipples(bar);
+}
+
+async function runBulk(kind) {
+  if (state.bulk) return;
+  const list = state.profiles.filter((p) => state.selectedProfiles.includes(p.id));
+  if (!list.length) return;
+  const names = list.map((p) => p.label).join(', ');
+
+  // Запуск и удаление спрашивают подтверждение со списком имён: оба
+  // необратимы по последствиям, и промахнуться выбором тут легко.
+  if (kind === 'launch') {
+    const ok = await askConfirm(t('prof.confirmBulkLaunchTitle', { n: list.length }),
+      t('prof.confirmBulkLaunchText', { list: names }));
+    if (!ok) return;
+  }
+  if (kind === 'del') {
+    const ok = await askConfirm(t('prof.confirmBulkDelTitle', { n: list.length }),
+      t('prof.confirmBulkDelText', { list: names }), { danger: true, okLabel: t('common.delete') });
+    if (!ok) return;
+  }
+
+  state.bulk = { kind, total: list.length, done: 0, cancel: false };
+  paintBulkBar();
+  let failed = 0;
+  for (const p of list) {
+    if (state.bulk.cancel) break;
+    try {
+      if (kind === 'launch') await api.profiles.launch(p.id, true);
+      else if (kind === 'stop') await api.profiles.stop(p.id);
+      else if (kind === 'scan') await api.profiles.scan(p.id);
+      else if (kind === 'del') await api.profiles.remove(p.id);
+    } catch (e) {
+      failed++;
+      toast(t('prof.bulkFailed', { label: p.label, error: e.message }), 'error');
+    }
+    state.bulk.done++;
+    paintBulkBar();
+  }
+
+  const { done, total, cancel } = state.bulk;
+  state.bulk = null;
+  state.selectedProfiles = [];
+  await refreshProfiles();
+  paintBulkBar();
+  if (cancel) toast(t('prof.bulkStopped', { done, total }), 'warn');
+  else if (failed) toast(t('prof.bulkPartial', { done: done - failed, total }), 'warn');
+  else toast(t('prof.bulkDone', { n: done }), 'success');
+}
+
+/** Отметка карточки для массового действия. */
+function pickHtml(p) {
+  const on = state.selectedProfiles.includes(p.id);
+  return `<button class="pick ${on ? 'on' : ''}" data-pick="1" aria-pressed="${on}"
+    title="${esc(t('prof.pick'))}">${on ? ICONS.check : ''}</button>`;
+}
+
+/**
+ * Живая строка карточки: график отправок за сессию, когда профиль писал в
+ * последний раз и когда упрётся в лимит.
+ *
+ * График копится в рендере с момента запуска приложения, а время последнего
+ * письма приходит из main и переживает перезапуск - поэтому пустой график
+ * рядом с "писал 2 часа назад" это не противоречие.
+ */
+function profileLiveHtml(p, info) {
+  const row = state.profileSeries[p.id];
+  const d = sparkPath(row && row.values, 100, 18);
+  const when = info.m.lastSentAt ? t('prof.lastSent', { ago: fmtAgo(info.m.lastSentAt) }) : t('prof.neverSent');
+  const eta = profileEta(p, info);
+  return `<div class="pc-live">
+    <svg class="pc-spark" viewBox="0 0 100 18" preserveAspectRatio="none">
+      <path class="area" d="${d.area}"/><path d="${d.line}" vector-effect="non-scaling-stroke"/>
+    </svg>
+    <span class="pc-when">${esc(when)}</span>
+    ${eta ? `<span class="pc-eta">${ICONS.clock}<span>${esc(eta)}</span></span>` : ''}
+  </div>`;
+}
+
+/**
+ * Живые части карточек: график, "писал N назад" и прогноз.
+ *
+ * Обновляем на месте, не пересобирая список. Спарклайн меняется на каждом
+ * такте опроса, а пересборка сетки каждые четыре секунды рвёт наведение, блик
+ * и каскад - ровно то, от чего защищает подпись в renderProfileCards.
+ */
+function paintProfileLive() {
+  const boxes = $$('.pc-live');
+  if (!boxes.length) return;
+  const limit = state.settings.system.mailsPerAccount;
+  const current = sessionPlan().current;
+  for (const box of boxes) {
+    const host = box.closest('[data-id]');
+    const p = host && state.profiles.find((x) => x.id === host.dataset.id);
+    if (!p) continue;
+    const info = profileInfo(p, limit, current);
+    const row = state.profileSeries[p.id];
+    const d = sparkPath(row && row.values, 100, 18);
+    const svg = box.querySelector('svg');
+    if (svg) {
+      svg.children[0].setAttribute('d', d.area);
+      svg.children[1].setAttribute('d', d.line);
+    }
+    const when = box.querySelector('.pc-when');
+    if (when) {
+      when.textContent = info.m.lastSentAt
+        ? t('prof.lastSent', { ago: fmtAgo(info.m.lastSentAt) })
+        : t('prof.neverSent');
+    }
+    const eta = profileEta(p, info);
+    let tag = box.querySelector('.pc-eta');
+    if (eta && !tag) {
+      tag = h(`<span class="pc-eta">${ICONS.clock}<span></span></span>`);
+      box.appendChild(tag);
+    }
+    if (!tag) continue;
+    tag.hidden = !eta;
+    if (eta) tag.lastElementChild.textContent = eta;
+  }
+}
+
+/**
+ * Сколько ждать, пока профиль упрётся в лимит.
+ *
+ * Темп берём из накопленного ряда: за наблюдаемое время ушло столько-то писем.
+ * Пока писем мало или наблюдаем меньше минуты, темпа ещё нет - и честнее не
+ * показать ничего, чем красивое, но выдуманное число.
+ */
+function profileEta(p, info) {
+  if (!state.runStatus.running) return '';
+  const row = state.profileSeries[p.id];
+  if (!row || !row.first) return '';
+  const sec = (Date.now() - row.first) / 1000;
+  const sum = row.values.reduce((n, v) => n + v, 0);
+  if (sum < 2 || sec < 60) return '';
+  const left = Math.max(0, info.cap - info.sent);
+  if (!left) return '';
+  return t('prof.etaLimit', { time: fmtUptime(Math.round(left * sec / sum)) });
 }
 
 /**
@@ -4341,9 +4579,26 @@ async function refreshProfiles() {
   }
   state.lastSentTotal = total;
 
+  // То же самое по каждому профилю отдельно. Ряды удалённых профилей выбрасываем,
+  // иначе объект растёт до бесконечности.
+  const series = {};
+  for (const p of state.profiles) {
+    const row = state.profileSeries[p.id] || { last: null, first: 0, values: [] };
+    const now = p.sentCount || 0;
+    if (row.last !== null) {
+      row.values.push(Math.max(0, now - row.last));
+      while (row.values.length > 30) row.values.shift();
+      if (!row.first) row.first = Date.now();
+    }
+    row.last = now;
+    series[p.id] = row;
+  }
+  state.profileSeries = series;
+
   if (state.route === 'profiles') {
     renderProfileFilters(document);
     renderProfileCards(document);
+    paintProfileLive();
     paintProfileStats(state.profileStats);
   } else if (state.route === 'run') {
     paintRun();

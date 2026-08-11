@@ -384,9 +384,6 @@ const DICT = {
     'time.hrAgo': '{n} ч назад',
     'time.dayAgo': '{n} дн назад',
     'prof.writingNow': 'пишет сейчас',
-    'prof.written': 'написано',
-    'prof.dialogs': 'диалогов',
-    'prof.replies': 'ответов',
     // Подписи под числами карточки и шапки: коротко, но своими словами -
     // "написано" не отличить от "отправлено", а "диалогов" ничего не считает.
     'prof.numSent': 'отправлено писем',
@@ -1086,9 +1083,6 @@ const DICT = {
     'time.hrAgo': '{n} h ago',
     'time.dayAgo': '{n} d ago',
     'prof.writingNow': 'writing now',
-    'prof.written': 'written',
-    'prof.dialogs': 'dialogs',
-    'prof.replies': 'replies',
     'prof.numSent': 'mails sent',
     'prof.numReplies': 'replies',
     'prof.numLinks': 'links created',

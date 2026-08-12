@@ -294,7 +294,7 @@ const DICT = {
     'flt.testHint': 'Один запрос теми же условиями, что и рассылка. Письма при этом не уходят.',
     'flt.testRunning': 'Спрашиваем площадку...',
     'flt.testOk': 'Пришло объявлений с почтой: {count} (за {sec} с)',
-    'flt.testEmpty': 'Ни одного объявления. Условия слишком узкие или запрос не прошёл - смотрите живые логи.',
+    'flt.testEmpty': 'Ни одного объявления за {sec} с. Чаще всего условия слишком узкие: при сроке "только что" объявления появляются по одному, попробуйте срок побольше. Подробности запроса - в живых логах.',
     'flt.testNoKey': 'Сначала укажите ключ API в разделе "Парсер".',
     'flt.testFailed': 'Проверка не удалась - смотрите живые логи.',
 
@@ -1264,7 +1264,7 @@ const DICT = {
     'flt.testHint': 'One request with the same conditions the outreach uses. No mail is sent.',
     'flt.testRunning': 'Asking the platform...',
     'flt.testOk': 'Listings with an email: {count} (in {sec} s)',
-    'flt.testEmpty': 'No listings at all. The conditions are too narrow or the request failed - check the live logs.',
+    'flt.testEmpty': 'No listings in {sec} s. Usually the conditions are too narrow: with the "just now" period listings appear one at a time, try a longer one. Request details are in the live logs.',
     'flt.testNoKey': 'Set the API key in the "Parser" section first.',
     'flt.testFailed': 'The check failed - see the live logs.',
 

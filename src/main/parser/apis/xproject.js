@@ -268,7 +268,7 @@ async function fetchBatch({ apiKey, platform: want, countries, filters: extra, l
  * несколько секунд. Если задача под эти же условия уже есть, значит идёт
  * рассылка: читаем её страницу, курсор не двигаем и задачу не трогаем.
  */
-async function probe({ apiKey, platform: want, countries, filters: extra, limit, attempts = 4, waitMs = 5000 }) {
+async function probe({ apiKey, platform: want, countries, filters: extra, limit, attempts = 6, waitMs = 5000 }) {
   if (!apiKey) {
     logger.warn('parser', t('xp.noKey'));
     return [];

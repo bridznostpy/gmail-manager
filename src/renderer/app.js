@@ -4185,9 +4185,11 @@ async function runFilterTest(el) {
     }
     // Ноль - это и "условия слишком узкие", и "запрос не прошёл": разницу
     // знает только журнал, туда и отправляем.
+    // Время ожидания говорим и в пустом ответе: "ноль за полминуты" при узком
+    // сроке свежести - это не поломка, а именно узкие условия.
     out.textContent = res.count
       ? t('flt.testOk', { count: res.count, sec: (res.ms / 1000).toFixed(1) })
-      : t('flt.testEmpty');
+      : t('flt.testEmpty', { sec: Math.round(res.ms / 1000) });
     out.className = 'hint flt-test-note ' + (res.count ? 'good' : 'bad');
   } finally {
     if (el.isConnected) btn.disabled = false;

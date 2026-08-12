@@ -64,8 +64,11 @@ const CATALOG = {
 
     { key: 'created_at_period', type: 'enum', options: XP_PERIODS, group: 'listing' },
     { key: 'stop_words', type: 'list', sample: 'nike, adidas', group: 'listing' },
-    { key: 'internal_view_count', type: 'number', group: 'listing' },
-    { key: 'internal_listing_count', type: 'number', group: 'listing' },
+    { key: 'internal_view_count', type: 'number', group: 'listing', note: true },
+    // Это не отбор объявлений, а предел на задачу: набрав столько, она
+    // закрывается. Поэтому стоит отдельным разделом - рядом с условиями отбора
+    // он читался бы как "объявлений у продавца" и вводил в заблуждение.
+    { key: 'internal_listing_count', type: 'number', group: 'task', note: true },
 
     { key: 'seller_email', type: 'bool', group: 'seller' },
     { key: 'seller_has_reviews', type: 'bool', group: 'seller' },
@@ -131,7 +134,7 @@ const CATALOG = {
  * продавец. Условий больше десятка, и сплошной сеткой они не читаются.
  * "other" - для полей из справочника площадки, о которых документация молчит.
  */
-const GROUPS = ['item', 'listing', 'seller', 'other'];
+const GROUPS = ['item', 'listing', 'seller', 'task', 'other'];
 
 /**
  * Тип незнакомого фильтра из живой схемы. Схема отдаёт только имена, поэтому

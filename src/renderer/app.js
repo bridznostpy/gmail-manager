@@ -4370,7 +4370,10 @@ function filterFieldHtml(f, values) {
       data-k="${esc(f.key)}" value="${esc(v)}" placeholder="${esc(f.sample || '')}"/>`;
   }
 
-  return `<div class="field flt-field ${v === '' ? '' : 'on'}">${head}${control}</div>`;
+  // Пояснение под полем - там, где по одному названию не догадаться, что
+  // условие делает.
+  const note = f.note ? `<div class="hint field-hint">${esc(t('flt.n.' + f.key))}</div>` : '';
+  return `<div class="field flt-field ${v === '' ? '' : 'on'}">${head}${control}${note}</div>`;
 }
 
 function wireFilterFields(el, data) {

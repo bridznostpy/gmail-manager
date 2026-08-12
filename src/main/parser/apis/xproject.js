@@ -230,6 +230,10 @@ async function _page(apiKey, task, { limit, peek } = {}) {
   }
   const data = await res.json();
   const listings = (data && data.listings) || [];
+  // Задача может остановиться сама: фильтр internal_listing_count - это предел
+  // объявлений на задачу, и по его достижении она закрывается. Запоминаем
+  // состояние, чтобы вызывающий не опрашивал мёртвую задачу до конца прогона.
+  task.status = (data && data.status) || '';
   // Advance the cursor so the next call returns the following page. When
   // has_more is false we keep the last cursor and re-poll later for new rows.
   if (!peek && data && data.next_cursor != null) task.cursor = data.next_cursor;
@@ -253,7 +257,15 @@ async function fetchBatch({ apiKey, platform: want, countries, filters: extra, l
       _tasks.set(key, task);
       logger.success('parser', t('xp.taskStarted', { taskId, platform }));
     }
-    return await _page(apiKey, task, { limit });
+    const leads = await _page(apiKey, task, { limit });
+    // Задача закрылась - это её предел объявлений (internal_listing_count).
+    // Забываем её: следующее пополнение очереди заведёт новую с теми же
+    // условиями, иначе прогон до самого конца опрашивал бы мёртвую.
+    if (task.status === 'stopped') {
+      _tasks.delete(key);
+      logger.info('parser', t('xp.taskFinished', { taskId: task.taskId }));
+    }
+    return leads;
   } catch (e) {
     logger.error('parser', t('xp.error', { error: e.message }));
     return [];

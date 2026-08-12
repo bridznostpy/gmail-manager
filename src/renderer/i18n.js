@@ -287,6 +287,7 @@ const DICT = {
     'flt.g.item': 'Товар',
     'flt.g.listing': 'Объявление',
     'flt.g.seller': 'Продавец',
+    'flt.g.task': 'Предел сбора',
     'flt.g.other': 'Из справочника площадки',
 
     // Проверка фильтров одним запросом.
@@ -361,6 +362,11 @@ const DICT = {
     'flt.c.ho': 'Для дома',
     'flt.c.el': 'Электроника',
     'flt.c.pe': 'Питомцы',
+
+    'flt.k.internal_view_count': 'Просмотров у объявления',
+    'flt.k.internal_listing_count': 'Собрать объявлений',
+    'flt.n.internal_view_count': 'Сколько раз объявление посмотрели на площадке.',
+    'flt.n.internal_listing_count': 'Набрав столько, сбор закрывается сам. Рассылке это не мешает: приложение заведёт следующий с теми же условиями.',
 
     'flt.noOptions': 'Площадка не прислала список значений.',
 
@@ -1258,6 +1264,7 @@ const DICT = {
     'flt.g.item': 'Item',
     'flt.g.listing': 'Listing',
     'flt.g.seller': 'Seller',
+    'flt.g.task': 'Collection limit',
     'flt.g.other': 'From the platform directory',
 
     'flt.test': 'Check the filters',
@@ -1324,6 +1331,11 @@ const DICT = {
     'flt.c.ho': 'Home',
     'flt.c.el': 'Electronics',
     'flt.c.pe': 'Pets',
+
+    'flt.k.internal_view_count': 'Listing views',
+    'flt.k.internal_listing_count': 'Collect listings',
+    'flt.n.internal_view_count': 'How many times the listing was viewed on the platform.',
+    'flt.n.internal_listing_count': 'Once this many are collected, the run closes itself. The outreach is unaffected: the app starts the next one with the same conditions.',
 
     'flt.noOptions': 'The platform did not send a list of values.',
 

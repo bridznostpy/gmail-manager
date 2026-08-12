@@ -1,6 +1,6 @@
 {
   "name": "gmail-manager",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Настольное приложение для работы с аккаунтами Gmail через отдельные профили Chrome: сбор лидов, рассылка первых писем и автоответчик.",
   "main": "src/main/main.js",
   "scripts": {

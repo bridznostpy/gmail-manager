@@ -13,6 +13,9 @@ const logger = require('../../logger');
 const { t } = require('../../i18n');
 
 const CONFIG = {
+  // Сколько живёт схема площадок в памяти процесса. Она меняется на стороне
+  // API редко, а спрашивают её при каждом заходе в настройки фильтров.
+  schemaTtlMs: 30 * 60 * 1000,
   baseUrl: 'https://api.xproject.icu',
   endpoints: {
     start: '/api/v1/parser/start',
@@ -32,8 +35,12 @@ const CONFIG = {
   countryCase: 'lower',
 };
 
-// "apiKey|platform|country" -> { taskId, cursor } for the process lifetime.
+// "apiKey|platform|country|фильтры" -> { taskId, cursor } for the process
+// lifetime. Фильтры входят в ключ: другой набор - другая задача на стороне API,
+// и брать для неё курсор от прошлой значило бы пропустить начало выдачи.
 const _tasks = new Map();
+// Схема площадок, полученная с /parser/schema: { at, data } по ключу API.
+const _schema = new Map();
 // Указатель обхода стран, свой на площадку: за один вызов API отдаёт объявления
 // одной страны, поэтому несколько стран обходим по очереди.
 const _rr = new Map();
@@ -66,6 +73,34 @@ function _resolve(platform, countries) {
   return { platform: known, filters };
 }
 
+/**
+ * Справочник площадок: страны, категории и допустимые ключи фильтров.
+ *
+ * Нужен настройкам фильтров - в документации перечня категорий нет, его знает
+ * только API. Держим в памяти процесса: настройки открывают часто, а меняется
+ * справочник редко. Неудача не ломает ничего - меню покажет документированный
+ * минимум.
+ */
+async function fetchSchema(apiKey, opts) {
+  if (!apiKey) return null;
+  const force = !!(opts && opts.force);
+  const hit = _schema.get(apiKey);
+  if (!force && hit && Date.now() - hit.at < CONFIG.schemaTtlMs) return hit.data;
+  try {
+    const res = await fetch(CONFIG.baseUrl + CONFIG.endpoints.schema, { headers: _headers(apiKey) });
+    if (!res.ok) {
+      logger.warn('parser', t('xp.schemaFailed', { status: res.status }));
+      return hit ? hit.data : null;
+    }
+    const data = await res.json();
+    _schema.set(apiKey, { at: Date.now(), data });
+    return data;
+  } catch (e) {
+    logger.warn('parser', t('xp.schemaError', { error: e.message }));
+    return hit ? hit.data : null;
+  }
+}
+
 async function _startTask(apiKey, platform, filters) {
   const res = await fetch(CONFIG.baseUrl + CONFIG.endpoints.start, {
     method: 'POST', headers: _headers(apiKey),
@@ -73,6 +108,14 @@ async function _startTask(apiKey, platform, filters) {
   });
   if (res.status === 409) {
     logger.warn('parser', t('xp.taskActive', { platform }));
+    return null;
+  }
+  // 422 - это всегда фильтры: неизвестный ключ или значение, которого площадка
+  // не знает. Общее "не удалось запустить задачу" тут не помогает - человеку
+  // надо знать, что править в настройках.
+  if (res.status === 422) {
+    const keys = Object.keys(filters || {}).join(', ');
+    logger.warn('parser', t('xp.filtersRejected', { platform, filters: keys || '-' }));
     return null;
   }
   if (!res.ok) {
@@ -83,13 +126,17 @@ async function _startTask(apiKey, platform, filters) {
   return data && data.task_id != null ? data.task_id : null;
 }
 
-async function fetchBatch({ apiKey, platform: want, countries, limit }) {
+async function fetchBatch({ apiKey, platform: want, countries, filters: extra, limit }) {
   if (!apiKey) {
     logger.warn('parser', t('xp.noKey'));
     return [];
   }
   const { platform, filters } = _resolve(want, countries);
-  const key = `${apiKey}|${platform}|${filters.country || ''}`;
+  // Фильтры из настроек кладём рядом со страной. Страну они перебить не могут:
+  // она зарезервирована за разделом "Цели" (см. filters.js).
+  Object.assign(filters, extra || {});
+  const sign = Object.keys(extra || {}).sort().map((k) => `${k}=${extra[k]}`).join('&');
+  const key = `${apiKey}|${platform}|${filters.country || ''}|${sign}`;
   let task = _tasks.get(key);
   try {
     if (!task) {
@@ -159,4 +206,4 @@ function normalizeLead(raw) {
   };
 }
 
-module.exports = { fetchBatch, normalizeLead, CONFIG };
+module.exports = { fetchBatch, fetchSchema, normalizeLead, CONFIG };

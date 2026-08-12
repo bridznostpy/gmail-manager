@@ -89,6 +89,10 @@ contextBridge.exposeInMainWorld('api', {
     list: () => ipcRenderer.invoke('contacts:list'),
     nudge: (email) => ipcRenderer.invoke('contacts:nudge', { email }),
   },
+  parser: {
+    // force просит перезапросить список у API, минуя память процесса.
+    filterFields: (force) => ipcRenderer.invoke('parser:filterFields', { force }),
+  },
   cdp: {
     detectChrome: () => ipcRenderer.invoke('cdp:detectChrome'),
   },

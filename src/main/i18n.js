@@ -171,6 +171,9 @@ const DICT = {
     'xp.noKey': 'XProject: ключ API не задан',
     'xp.taskStarted': 'XProject: задача {taskId} запущена для {platform}',
     'xp.pageFailed': 'XProject: не удалось получить страницу (HTTP {status})',
+    'xp.filtersRejected': 'XProject: площадка {platform} не приняла фильтры (422): {filters} - поправьте их в настройках',
+    'xp.schemaFailed': 'XProject: не удалось получить список фильтров (HTTP {status})',
+    'xp.schemaError': 'XProject: не удалось получить список фильтров: {error}',
     'xp.error': 'XProject: {error}',
 
     // ── VVS ─────────────────────────────────────────────────
@@ -342,6 +345,9 @@ const DICT = {
     'xp.noKey': 'XProject: no API key set',
     'xp.taskStarted': 'XProject: task {taskId} started for {platform}',
     'xp.pageFailed': 'XProject: page fetch failed (HTTP {status})',
+    'xp.filtersRejected': 'XProject: platform {platform} rejected the filters (422): {filters} - fix them in settings',
+    'xp.schemaFailed': 'XProject: could not fetch the filter list (HTTP {status})',
+    'xp.schemaError': 'XProject: could not fetch the filter list: {error}',
     'xp.error': 'XProject: {error}',
 
     'vvs.noKey': 'VVS: no API key set',

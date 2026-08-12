@@ -13,6 +13,7 @@ const logger = require('../logger');
 const { t } = require('../i18n');
 const xproject = require('./apis/xproject');
 const vvs = require('./apis/vvs');
+const parserFilters = require('./filters');
 
 class ParserEngine {
   constructor(store) {
@@ -79,6 +80,9 @@ class ParserEngine {
         apiKey: parser.apiKey,
         platform: parser.platform,
         countries: parser.countries,
+        // Фильтры хранятся отдельно на каждую пару "тип API + площадка" и
+        // приводятся к виду своего контракта - см. parser/filters.js.
+        filters: parserFilters.forRun(parser),
         limit: sys.parserBatchSize,
       });
       if (leads.length) {

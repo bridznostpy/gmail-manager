@@ -49,7 +49,7 @@ function _resolve(platform, countries) {
   return { platform: known, country };
 }
 
-async function fetchBatch({ apiKey, platform: want, countries, limit }) {
+async function fetchBatch({ apiKey, platform: want, countries, filters, limit }) {
   if (!apiKey) {
     logger.warn('parser', t('vvs.noKey'));
     return [];
@@ -59,6 +59,10 @@ async function fetchBatch({ apiKey, platform: want, countries, limit }) {
   if (country) params.set('country', country);
   if (CONFIG.emailOnly) params.set('email', 'true');
   if (typeof limit === 'number') params.set('limit', String(limit));
+  // Фильтры из настроек идут последними, но перебить country, email и limit не
+  // могут: эти три ключа зарезервированы за своими разделами настроек и до
+  // сюда не доходят (см. RESERVED в parser/filters.js).
+  for (const [key, value] of Object.entries(filters || {})) params.set(key, String(value));
   const url = CONFIG.baseUrl
     + CONFIG.endpoints.ads.replace('{platform}', encodeURIComponent(platform))
     + (params.toString() ? `?${params}` : '');

@@ -2247,6 +2247,73 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
 .tg-c.on .tg-c-box { background: var(--accent-soft); border-color: var(--accent); }
 .card .tg-c-note, .tg-c-note { margin: 12px 0 0; }
 
+/* ── Фильтры парсинга ────────────────────────────────────── */
+/* Условия отбора относятся к паре "парсер + площадка", и шапка карточки
+   показывает эту пару первой: без неё непонятно, чьи это поля. */
+.flt-scope {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 10px 22px;
+  padding: 12px 14px; margin-bottom: 4px;
+  border-radius: var(--radius-sm);
+  background: var(--control-bg); border: 1px solid var(--border);
+}
+.flt-cell { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.flt-cell .pf-avatar { width: 26px; height: 26px; font-size: 12px; }
+.flt-cap { color: var(--text-dim); font-size: var(--fs-2xs); text-transform: uppercase; letter-spacing: 0.06em; }
+.flt-val { font-size: 13.5px; font-weight: 650; }
+.flt-cell a { color: var(--accent); font-size: var(--fs-2xs); text-decoration: none; }
+.flt-cell a:hover { text-decoration: underline; }
+.flt-count {
+  margin-left: auto; flex-shrink: 0;
+  padding: 4px 10px; border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05); border: 1px solid var(--border);
+  color: var(--text-dim); font-size: var(--fs-2xs);
+}
+.flt-count.on { background: var(--accent-soft); border-color: var(--accent); color: var(--text); }
+
+/* Отступ снизу задаём в паре с .set-panel: там у всех подсказок margin: 0, и
+   без такой же точности строка прилипла бы к первому полю. */
+.set-panel .flt-note { margin-bottom: 16px; }
+.flt-note[hidden] { display: none; }
+
+/* Заполненное условие подсвечено: по сетке из десятка полей иначе не видно,
+   какие из них вообще участвуют в запросе. */
+.set-panel .flt-field > label { display: flex; align-items: center; gap: 8px; }
+.flt-label { flex-shrink: 0; }
+.flt-field.on > label .flt-label { color: var(--text); }
+.flt-field.on input, .flt-field.on select { border-color: var(--border-strong); }
+.flt-tag {
+  padding: 2px 7px; border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05); border: 1px solid var(--border);
+  color: var(--text-dim); font-size: var(--fs-2xs); white-space: nowrap;
+}
+.flt-x {
+  margin-left: auto; flex-shrink: 0;
+  width: 20px; height: 20px; display: grid; place-items: center;
+  border: 0; border-radius: 6px; background: transparent;
+  color: var(--text-dim); cursor: pointer;
+  opacity: 0; pointer-events: none;
+  transition: opacity var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.flt-field.on .flt-x { opacity: 0.6; pointer-events: auto; }
+.flt-x:hover { opacity: 1; color: var(--text); background: rgba(255, 255, 255, 0.06); }
+.flt-x svg { width: 11px; height: 11px; }
+/* Три кнопки делят ширину поля поровну и не переносят подпись: перенос делал
+   ряд выше соседних, и сетка условий шла ступеньками. Высоту держим как у
+   полей ввода - иначе троичные условия висят выше соседей по строке. */
+.flt-bool { display: flex; width: 100%; }
+.flt-bool button { flex: 1 1 0; white-space: nowrap; padding: 9px 8px; }
+
+/* Превью запроса. Моноширинный, потому что показывает не текст, а данные:
+   число без кавычек и строка в кавычках - это разные запросы. */
+.flt-preview {
+  margin: 0; padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--control-bg); border: 1px solid var(--border);
+  color: var(--text); font-family: var(--font-mono); font-size: var(--fs-2xs);
+  line-height: 1.7; white-space: pre; overflow-x: auto;
+}
+.flt-preview.empty { color: var(--text-dim); font-family: inherit; white-space: normal; }
+
 /* ── Панель "Оформление" ─────────────────────────────────── */
 .drawer-scrim {
   position: fixed; inset: 0; background: rgba(6, 8, 12, 0.4);

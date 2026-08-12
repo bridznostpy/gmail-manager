@@ -15,6 +15,8 @@ const { resolveChrome } = require('./cdp/chromeManager');
 const { scanAndPersist } = require('./profiles/autoScan');
 const appearance = require('./appearance');
 const updater = require('./updater');
+const parserFilters = require('./parser/filters');
+const xproject = require('./parser/apis/xproject');
 
 // Данные для превью HTML-шаблона, когда контактов рассылки ещё нет. Ссылка
 // заведомо нерабочая: настоящую выдаёт API только под реальный заказ.
@@ -340,6 +342,32 @@ function register(ctx) {
     return { ok: !!parser.pushLead(lead), lead };
   });
   ipcMain.handle('logs:recent', (_e, n) => logger.recent(n || 200));
+
+  // ── фильтры парсинга ──────────────────────────────────────────────
+  /**
+   * Какие фильтры можно задать текущей паре "тип API + площадка".
+   *
+   * У XProject список зависит от площадки и живёт на стороне API - пробуем
+   * получить его и говорим окну, настоящий он или документированный минимум
+   * (live). Ключ API берём из настроек: через мост он не ходит.
+   */
+  ipcMain.handle('parser:filterFields', async (_e, opts) => {
+    const p = store.get('parser');
+    let live = null;
+    if (p.apiType === 'xproject') {
+      live = await xproject.fetchSchema(p.apiKey, { force: !!(opts && opts.force) });
+    }
+    return {
+      apiType: p.apiType,
+      platform: p.platform,
+      live: !!live,
+      fields: parserFilters.fields(p.apiType, p.platform, live),
+      // Готовые значения - ровно то, что уйдёт в запрос. Окно их только
+      // показывает: правила приведения живут в одном месте (filters.js), и
+      // повторять их в рендере значило бы однажды разойтись.
+      prepared: parserFilters.forRun(p),
+    };
+  });
 
   // ── статистика ────────────────────────────────────────────────────
   ipcMain.handle('stats:overview', (_e, days) => {

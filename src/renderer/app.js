@@ -3400,6 +3400,13 @@ const SETTINGS_GROUPS = [
     terms: ['set.g.targets'],
   },
   {
+    // Своего раздела настроек у фильтров нет - они часть parser, и кнопка
+    // сброса группы снесла бы вместе с ними ключ API. Сброс у карточки свой.
+    id: 'filters', section: 'data', icon: 'filter', build: buildSetFilters,
+    terms: ['flt.k.category', 'flt.k.price', 'flt.k.min_price', 'flt.k.delivery',
+      'flt.k.publication', 'flt.k.blacklist', 'flt.k.views'],
+  },
+  {
     id: 'link', section: 'data', icon: 'link', reset: 'link', build: buildSetLink,
     terms: ['link.apiKey', 'link.team', 'link.mode', 'link.profileId', 'link.country'],
   },
@@ -3979,6 +3986,281 @@ function openTargetsModal() {
       });
     },
   );
+}
+
+// ── Фильтры парсинга ───────────────────────────────────────────────
+// Набор полей задаёт не приложение, а API: у VVS он описан в документации, у
+// XProject площадка отдаёт его сама (GET /parser/schema). Поэтому карточка
+// сначала спрашивает main, что вообще можно задать этой паре "парсер +
+// площадка", и только потом рисует поля. Держать в рендере вторую копию чужого
+// контракта нельзя - она однажды разойдётся с настоящей.
+
+// Список полей на пару "парсер + площадка". Переживает уход в другую группу
+// настроек: он не меняется от того, что человек вышел и вернулся, а пустая
+// карточка на полсекунды выглядела бы поломкой.
+const filterFieldsCache = new Map();
+
+// Номер карточки, которая сейчас на экране. Ответ на запрос полей может прийти,
+// когда человек уже ушёл в другую группу и карточку пересобрали, - рисовать в
+// неё нечего. Проверять "вставлена ли карточка в страницу" нельзя: при ответе
+// из памяти отрисовка идёт раньше, чем карточку вставляют в панель, и такая
+// проверка оставляла раздел пустым.
+let filterCardToken = 0;
+const filterCardStale = (el) => Number(el.dataset.fltToken) !== filterCardToken;
+
+/**
+ * Подпись из словаря, а если её там нет - запасная строка. Имена фильтров
+ * приходят из справочника площадки, и знать их все словарь не может: показать
+ * само имя честнее, чем непереведённый ключ.
+ */
+function tOr(key, fallback) {
+  const s = t(key);
+  return s === key ? fallback : s;
+}
+
+/** Текущая пара "парсер + площадка" и её условия отбора. */
+function currentFilters() {
+  const p = state.settings.parser || {};
+  const apiType = p.apiType || 'xproject';
+  const platform = p.platform || '';
+  return { apiType, platform, values: ((p.filters || {})[apiType] || {})[platform] || {} };
+}
+
+/**
+ * Записать условия отбора текущей пары целиком.
+ *
+ * Фильтры лежат деревом filters[парсер][площадка], и пишем мы весь узел:
+ * сменив площадку, человек должен найти свои прежние условия на месте, а не
+ * подставленными новой. Пустых значений в узле не держим - "не задано" и
+ * "задано пустым" для API не одно и то же.
+ */
+async function saveFilterValues(values) {
+  const { apiType, platform } = currentFilters();
+  const p = state.settings.parser || {};
+  const tree = { ...(p.filters || {}) };
+  tree[apiType] = { ...(tree[apiType] || {}), [platform]: values };
+  await saveSection('parser', { filters: tree });
+}
+
+/** Записать одно условие. Пустое значение убирает его совсем. */
+async function saveFilterValue(key, value) {
+  const next = { ...currentFilters().values };
+  const v = String(value == null ? '' : value).trim();
+  if (v === '') delete next[key]; else next[key] = v;
+  await saveFilterValues(next);
+}
+
+function buildSetFilters() {
+  const el = h(setCard('filters', `
+    <div class="flt-scope" id="fltScope"></div>
+
+    ${setBlock('set.b.fltFields', 'set.fltHint', `
+      <div class="hint flt-note" id="fltNote">${esc(t('flt.loading'))}</div>
+      <div class="set-grid" id="fltFields"></div>`)}
+
+    ${setBlock('set.b.fltPreview', 'set.fltPreviewHint', `
+      <pre class="flt-preview empty" id="fltPreview">${esc(t('flt.none'))}</pre>
+      <div class="ar-acts" style="margin-top:14px">
+        <button class="btn ghost" id="fltReload" hidden>${ICONS.reset}<span>${esc(t('flt.reload'))}</span></button>
+        <button class="btn ghost" id="fltClear">${ICONS.trash}<span>${esc(t('flt.clear'))}</span></button>
+      </div>`)}`));
+
+  el.dataset.fltToken = String(++filterCardToken);
+  paintFilterScope(el);
+  loadFilterFields(el);
+
+  $('#fltReload', el).addEventListener('click', async () => {
+    await loadFilterFields(el, true);
+    toast(t('flt.reloaded'), 'success');
+  });
+  $('#fltClear', el).addEventListener('click', async () => {
+    await saveFilterValues({});
+    toast(t('flt.cleared'), 'success');
+    await loadFilterFields(el);
+    paintFilterScope(el);
+  });
+  return el;
+}
+
+/** Строка "к чему относятся условия": парсер и площадка со ссылками на их разделы. */
+function paintFilterScope(el) {
+  const box = $('#fltScope', el);
+  if (!box) return;
+  const { apiType, values } = currentFilters();
+  const { platform } = currentTarget();
+  const n = Object.keys(values).length;
+  box.innerHTML = `
+    <div class="flt-cell">
+      <span class="flt-cap">${esc(t('flt.scopeApi'))}</span>
+      <span class="flt-val">${esc(apiType)}</span>
+      <a href="#" data-go="parser">${esc(t('flt.changeApi'))}</a>
+    </div>
+    <div class="flt-cell" id="fltCellPlatform">
+      <span class="flt-cap">${esc(t('flt.scopePlatform'))}</span>
+      <span class="flt-val">${esc(platform.label)}</span>
+      <a href="#" data-go="targets">${esc(t('flt.changeTarget'))}</a>
+    </div>
+    <span class="flt-count ${n ? 'on' : ''}">${esc(t('flt.count', { n }))}</span>`;
+  // Аватарку собираем кодом: внутри картинка с обработчиком загрузки.
+  $('#fltCellPlatform', box).prepend(platformAvatar(platform));
+  $$('a[data-go]', box).forEach((a) => a.addEventListener('click', (e) => {
+    e.preventDefault();
+    goSettings(a.dataset.go);
+  }));
+}
+
+/**
+ * Спросить у main, какие условия принимает текущая пара, и нарисовать поля.
+ * `force` просит перезапросить справочник у самой площадки.
+ */
+async function loadFilterFields(el, force) {
+  const { apiType, platform } = currentFilters();
+  const key = apiType + '|' + platform;
+  const cached = force ? null : filterFieldsCache.get(key);
+  const data = cached || await api.parser.filterFields(!!force);
+  filterFieldsCache.set(data.apiType + '|' + data.platform, data);
+  // Пока шёл запрос, карточку могли пересобрать - рисовать некуда.
+  if (filterCardStale(el)) return;
+  paintFilterFields(el, data);
+}
+
+function paintFilterFields(el, data) {
+  const box = $('#fltFields', el);
+  const note = $('#fltNote', el);
+  const values = currentFilters().values;
+  box.innerHTML = (data.fields || []).map((f) => filterFieldHtml(f, values[f.key])).join('');
+
+  // Строка о происхождении списка. Она важна: пустое место под заголовком не
+  // отличает "площадка сказала, что фильтров нет" от "мы её не спросили".
+  let hint = '';
+  if (!(data.fields || []).length) hint = t('flt.empty');
+  else if (data.live) hint = t('flt.live');
+  else if (data.apiType === 'xproject') hint = t('flt.partial');
+  note.textContent = hint;
+  note.hidden = !hint;
+
+  // Обновить список есть смысл только у XProject: у VVS он из документации и
+  // по сети не меняется.
+  $('#fltReload', el).hidden = data.apiType !== 'xproject';
+
+  wireFilterFields(el, data);
+  // Сначала показываем то, что пришло с полями - иначе превью моргнуло бы
+  // пустотой. Потом переспрашиваем: ответ мог остаться от прошлого захода в
+  // раздел, а условия с тех пор менялись.
+  paintFilterPreview(el, data);
+  refreshFilterPreview(el);
+  markSettingsHits($('.settings') || el, state.settingsQuery.trim().toLowerCase());
+}
+
+function filterFieldHtml(f, value) {
+  const v = value == null ? '' : String(value);
+  const id = 'flt_' + f.key.replace(/[^a-z0-9_]/gi, '');
+  const label = tOr('flt.k.' + f.key, f.key);
+  // Поле, о котором документация молчит: пришло из справочника площадки.
+  const tag = f.fromSchema ? `<span class="flt-tag">${esc(t('flt.fromSchema'))}</span>` : '';
+  const clear = `<button class="flt-x" data-clear="${esc(f.key)}" title="${esc(t('flt.clearField'))}">${ICONS.x}</button>`;
+
+  let control;
+  if (f.type === 'bool') {
+    // Троичный: "не важно" - это не то же самое, что "нет". Первое не
+    // фильтрует вовсе, второе просит объявления без телефона или самовывозом.
+    control = `<div class="seg flt-bool" data-k="${esc(f.key)}">
+      <button data-v="" class="${v === '' ? 'active' : ''}">${esc(t('flt.any'))}</button>
+      <button data-v="true" class="${v === 'true' ? 'active' : ''}">${esc(t('flt.yes'))}</button>
+      <button data-v="false" class="${v === 'false' ? 'active' : ''}">${esc(t('flt.no'))}</button>
+    </div>`;
+  } else if (f.type === 'enum' && (f.options || []).length) {
+    const options = f.options.map((o) => (
+      `<option value="${esc(o)}" ${v === String(o) ? 'selected' : ''}>${esc(tOr('flt.o.' + o, o))}</option>`
+    ));
+    // Сохранённое значение, которого нет в списке площадки, тоже показываем:
+    // иначе оно пропало бы с экрана, но осталось в запросе.
+    if (v && !f.options.some((o) => String(o) === v)) {
+      options.push(`<option value="${esc(v)}" selected>${esc(v)}</option>`);
+    }
+    control = `<select id="${id}" data-k="${esc(f.key)}">
+      <option value="">${esc(t('flt.any'))}</option>${options.join('')}</select>`;
+  } else {
+    // Список значений может быть неизвестен: у XProject категории перечисляет
+    // только справочник площадки. Выпадающий список из одного "не важно" ничего
+    // не даёт, поэтому в этом случае значение вводится руками.
+    control = `<input type="${f.type === 'number' ? 'number' : 'text'}" id="${id}"
+      data-k="${esc(f.key)}" value="${esc(v)}" placeholder="${esc(f.sample || '')}"/>`;
+  }
+
+  return `<div class="field flt-field ${v === '' ? '' : 'on'}">
+    <label for="${id}"><span class="flt-label">${esc(label)}</span>${tag}${clear}</label>
+    ${control}
+  </div>`;
+}
+
+function wireFilterFields(el, data) {
+  // Значение изменилось: подсветка поля, счётчик в шапке и превью. Целиком
+  // блок не пересобираем - при вводе с клавиатуры это отняло бы фокус.
+  const after = (node, filled) => {
+    const field = node.closest ? node.closest('.field') : null;
+    if (field) field.classList.toggle('on', filled);
+    paintFilterScope(el);
+    refreshFilterPreview(el);
+  };
+
+  $$('#fltFields input', el).forEach((input) => input.addEventListener('input', debounce(async () => {
+    await saveFilterValue(input.dataset.k, input.value);
+    markSaved(input);
+    after(input, input.value.trim() !== '');
+  })));
+
+  $$('#fltFields select', el).forEach((sel) => sel.addEventListener('change', async () => {
+    await saveFilterValue(sel.dataset.k, sel.value);
+    markSaved(sel);
+    after(sel, sel.value !== '');
+  }));
+
+  $$('#fltFields .flt-bool', el).forEach((seg) => $$('button', seg).forEach((b) => {
+    b.addEventListener('click', async () => {
+      $$('button', seg).forEach((x) => x.classList.toggle('active', x === b));
+      await saveFilterValue(seg.dataset.k, b.dataset.v);
+      markSaved(seg);
+      after(seg, b.dataset.v !== '');
+    });
+  }));
+
+  $$('#fltFields [data-clear]', el).forEach((b) => b.addEventListener('click', async () => {
+    await saveFilterValue(b.dataset.clear, '');
+    // Здесь пересобрать блок можно: поле очищено, и терять фокус уже нечему.
+    paintFilterFields(el, data);
+    paintFilterScope(el);
+  }));
+
+  wireRipples($('#fltFields', el));
+}
+
+/**
+ * Превью после правки. Значения приводит main (parser/filters.js) - там же, где
+ * их получает API, поэтому спрашиваем его заново, а не пересчитываем сами.
+ */
+async function refreshFilterPreview(el) {
+  const data = await api.parser.filterFields(false);
+  filterFieldsCache.set(data.apiType + '|' + data.platform, data);
+  if (!filterCardStale(el)) paintFilterPreview(el, data);
+}
+
+function paintFilterPreview(el, data) {
+  const box = $('#fltPreview', el);
+  if (!box) return;
+  const prepared = data.prepared || {};
+  const keys = Object.keys(prepared);
+  box.classList.toggle('empty', !keys.length);
+  if (!keys.length) {
+    box.textContent = t('flt.none');
+    return;
+  }
+  // У XProject условия уходят объектом в теле задачи, у VVS - параметрами
+  // адреса. Показываем в том виде, в каком их получит API: число без кавычек и
+  // строка в кавычках - это разные запросы.
+  box.textContent = data.apiType === 'vvs'
+    ? keys.map((k) => `${k}=${prepared[k]}`).join('\n')
+    : JSON.stringify(prepared, null, 2);
 }
 
 function buildSetCdp() {

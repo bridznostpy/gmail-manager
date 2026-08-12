@@ -442,7 +442,9 @@ function register(ctx) {
   // строкой и после первого же обновления показывала бы неправду.
   ipcMain.handle('app:version', () => require('electron').app.getVersion());
   ipcMain.handle('update:state', () => updater.current());
-  ipcMain.handle('update:check', () => updater.check());
+  // Из окна проверку всегда просит человек - о неудаче ей говорить прямо, в
+  // отличие от проверки по расписанию (см. updater.js).
+  ipcMain.handle('update:check', () => updater.check({ manual: true }));
   ipcMain.handle('update:download', () => updater.download());
   ipcMain.handle('update:install', () => updater.install());
   updater.register((payload) => send('update:state', payload));

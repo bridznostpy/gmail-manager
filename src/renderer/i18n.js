@@ -285,6 +285,8 @@ const DICT = {
     'upd.checking': 'Проверяем...',
     'upd.upToDate': 'Установлена последняя версия ({version})',
     'upd.checkFailed': 'Не удалось проверить обновление',
+    // Причину присылает main - он один знает, чем именно кончился запрос.
+    'upd.checkFailedWhy': 'Не удалось проверить обновление: {error}',
     'upd.devBuild': 'Запуск из исходников - обновления проверяются только в собранном приложении',
 
     // ── Руководство ─────────────────────────────────────────
@@ -1136,6 +1138,7 @@ const DICT = {
     'upd.checking': 'Checking...',
     'upd.upToDate': 'You are on the latest version ({version})',
     'upd.checkFailed': 'Could not check for updates',
+    'upd.checkFailedWhy': 'Could not check for updates: {error}',
     'upd.devBuild': 'Running from source - updates are only checked in a built app',
 
     'nav.guide': 'Guide',

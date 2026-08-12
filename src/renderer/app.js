@@ -3345,13 +3345,22 @@ function paintUpdate(next) {
   wireRipples(box);
 }
 
-/** Проверка по нажатию - из руководства. Возвращает строку для показа рядом. */
+/**
+ * Проверка по нажатию - из руководства. Возвращает строку для показа рядом.
+ *
+ * main теперь дожидается ответа, поэтому здесь уже настоящий итог проверки, а
+ * не состояние предыдущей. Причину отказа показываем как есть: "не удалось" без
+ * объяснения человеку нечего делать, а "на GitHub нет опубликованного релиза"
+ * говорит, куда смотреть.
+ */
 async function checkUpdateNow() {
   const st = await api.update.check();
   paintUpdate(st);
   if (st.phase === 'dev') return t('upd.devBuild');
   if (st.phase === 'none') return t('upd.upToDate', { version: state.version });
-  if (st.phase === 'error') return t('upd.checkFailed');
+  if (st.phase === 'error') {
+    return st.error ? t('upd.checkFailedWhy', { error: st.error }) : t('upd.checkFailed');
+  }
   return t('upd.checking');
 }
 

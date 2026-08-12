@@ -52,6 +52,11 @@ const DICT = {
     'upd.downloaded': 'Версия {version} скачана, можно перезапускать',
     'upd.installing': 'Перезапуск для установки обновления',
     'upd.failed': 'Не удалось проверить обновление: {error}',
+    'upd.checkRetry': 'Обновление проверить не вышло ({error}), попробуем ещё раз',
+    'upd.downloadFailed': 'Не удалось скачать обновление: {error}',
+    // Причины отказа человеческими словами - см. describe() в updater.js.
+    'upd.errNetwork': 'нет связи с GitHub',
+    'upd.errNoRelease': 'на GitHub нет опубликованного релиза',
 
     // ── Ошибки ──────────────────────────────────────────────
     'err.profileNotFound': 'Профиль не найден',
@@ -227,6 +232,10 @@ const DICT = {
     'upd.downloaded': 'Version {version} downloaded, ready to restart',
     'upd.installing': 'Restarting to install the update',
     'upd.failed': 'Could not check for updates: {error}',
+    'upd.checkRetry': 'Update check did not go through ({error}), trying again later',
+    'upd.downloadFailed': 'Could not download the update: {error}',
+    'upd.errNetwork': 'no connection to GitHub',
+    'upd.errNoRelease': 'there is no published release on GitHub',
 
     'err.profileNotFound': 'Profile not found',
     'err.profileNotRunning': 'Profile is not running',

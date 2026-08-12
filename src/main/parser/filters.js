@@ -17,9 +17,11 @@
  * Каталог лежит здесь, а не в CONFIG клиентов, чтобы приведение значений было
  * одно на оба API: клиенты читают этот модуль, обратной зависимости нет.
  *
- * Типы полей: text | number | bool | enum. `bool` троичный - пусто означает
- * "не важно", и это не то же самое, что false: "только без телефона" и "телефон
- * не важен" дают разную выдачу.
+ * Типы полей: text | number | bool | enum | range. `bool` троичный - пусто
+ * означает "не важно", и это не то же самое, что false: "только без телефона" и
+ * "телефон не важен" дают разную выдачу. `range` - две границы, "от" и "до":
+ * в запрос они уходят одной строкой через оператор "..", но вводить их одним
+ * полем человек не должен - это два разных числа.
  */
 
 /**
@@ -38,26 +40,41 @@ const RESERVED = {
 const CATALOG = {
   xproject: [
     // Список значений приходит из живой схемы (categories площадки).
-    { key: 'category', type: 'enum', options: [] },
-    { key: 'min_price', type: 'number' },
+    { key: 'category', type: 'enum', options: [], group: 'item' },
+    { key: 'min_price', type: 'number', group: 'item' },
   ],
 
   vvs: [
-    { key: 'category', type: 'text' },
-    // Цена у VVS одной строкой: "100" (до), "10..100" (диапазон), "10.." (от).
-    { key: 'price', type: 'text', sample: '100  |  10..100  |  10..' },
-    { key: 'delivery', type: 'bool' },
-    { key: 'phone', type: 'bool' },
-    { key: 'publication', type: 'enum', options: ['5m', '15m', '30m', '24h'] },
-    { key: 'registration', type: 'text', sample: '01-01-2020..01-01-2023' },
-    { key: 'blacklist', type: 'text', sample: 'nike, adidas' },
-    { key: 'views', type: 'number' },
-    { key: 'domain', type: 'text', platforms: ['vinted'] },
-    // TODO(docs): ads, reviews, sells, buys документация называет
-    // платформо-специфичными, но не говорит, какие площадки их принимают.
-    // Появится список - строки добавляются сюда, остальное менять не нужно.
+    { key: 'category', type: 'text', group: 'item' },
+    // Цена: документация показывает "10..100" (промежуток), "10.." (от) и
+    // голое "100" (до). Поэтому одна верхняя граница пишется без оператора.
+    { key: 'price', type: 'range', unit: 'number', soloMax: 'bare', group: 'item' },
+    { key: 'delivery', type: 'bool', group: 'item' },
+    { key: 'domain', type: 'text', platforms: ['vinted'], group: 'item' },
+
+    { key: 'publication', type: 'enum', options: ['5m', '15m', '30m', '24h'], group: 'listing' },
+    { key: 'views', type: 'number', group: 'listing' },
+    { key: 'blacklist', type: 'text', sample: 'nike, adidas', group: 'listing' },
+
+    { key: 'phone', type: 'bool', group: 'seller' },
+    { key: 'registration', type: 'range', unit: 'date', sample: '01-01-2020', group: 'seller' },
+    // Счётчики продавца. Документация называет их платформо-специфичными и не
+    // говорит, какие площадки их принимают, - площадка вправе такой параметр
+    // не понять. Форма "от..до" здесь по указанию владельца ключа: перечень
+    // форматов документация даёт только для цены и даты регистрации.
+    { key: 'ads', type: 'range', unit: 'number', group: 'seller' },
+    { key: 'reviews', type: 'range', unit: 'number', group: 'seller' },
+    { key: 'sells', type: 'range', unit: 'number', group: 'seller' },
+    { key: 'buys', type: 'range', unit: 'number', group: 'seller' },
   ],
 };
+
+/**
+ * Порядок разделов на экране: сначала товар, потом само объявление, потом
+ * продавец. Условий больше десятка, и сплошной сеткой они не читаются.
+ * "other" - для полей из справочника площадки, о которых документация молчит.
+ */
+const GROUPS = ['item', 'listing', 'seller', 'other'];
 
 /**
  * Тип незнакомого фильтра из живой схемы. Схема отдаёт только имена, поэтому
@@ -65,6 +82,18 @@ const CATALOG = {
  */
 function guessType(key) {
   return /price|count|views|min|max|amount|age/i.test(String(key)) ? 'number' : 'text';
+}
+
+/**
+ * Разложить поля по разделам в порядке GROUPS. Сортировка устойчивая, поэтому
+ * внутри раздела остаётся порядок каталога - он осмысленный, а не алфавитный.
+ */
+function byGroup(list) {
+  const at = (f) => {
+    const i = GROUPS.indexOf(f.group || 'other');
+    return i === -1 ? GROUPS.length : i;
+  };
+  return list.sort((a, b) => at(a) - at(b));
 }
 
 /**
@@ -80,7 +109,7 @@ function fields(apiType, platform, live) {
     .map((f) => ({ ...f }));
 
   const schema = live && (live.platforms || []).find((p) => p.platform === platform);
-  if (!schema) return list;
+  if (!schema) return byGroup(list);
 
   const supported = schema.supported_filters || [];
   const reserved = RESERVED[apiType] || [];
@@ -97,9 +126,27 @@ function fields(apiType, platform, live) {
     if (seen.has(key) || reserved.includes(key)) continue;
     // fromSchema помечает поле, о котором документация молчит: интерфейс
     // показывает его отдельно, чтобы было видно, откуда оно взялось.
-    list.push({ key, type: guessType(key), fromSchema: true });
+    list.push({ key, type: guessType(key), group: 'other', fromSchema: true });
   }
-  return list;
+  return byGroup(list);
+}
+
+/**
+ * Диапазон одной строкой.
+ *
+ * Оператор ".." документирован: "10..100" - промежуток, "10.." - от. Одна
+ * верхняя граница пишется по-разному, поэтому её форму указывает само поле:
+ * у цены документация показывает голое "100" (до), в остальных случаях
+ * оставляем оператор - он читается однозначно и не путается с точным значением.
+ */
+function composeRange(field, value) {
+  const side = (k) => String(value && value[k] != null ? value[k] : '').trim();
+  const from = side('from');
+  const to = side('to');
+  if (from && to) return `${from}..${to}`;
+  if (from) return `${from}..`;
+  if (to) return field && field.soloMax === 'bare' ? to : `..${to}`;
+  return '';
 }
 
 /**
@@ -119,7 +166,12 @@ function prepare(apiType, platform, raw) {
     if (v === '' || v == null) continue;
     const field = byKey.get(key);
     const type = field ? field.type : guessType(key);
-    if (type === 'number') {
+    if (type === 'range') {
+      // Границы хранятся парой { from, to }. Строку тоже принимаем: так лежали
+      // диапазоны, заданные до появления двух полей, и терять их незачем.
+      const s = typeof v === 'string' ? v : composeRange(field, v);
+      if (s) out[key] = s;
+    } else if (type === 'number') {
       const n = Number(v);
       if (Number.isFinite(n)) out[key] = n;
     } else if (type === 'bool') {
@@ -147,4 +199,4 @@ function forRun(parser) {
   return prepare(apiType, platform, raw);
 }
 
-module.exports = { CATALOG, RESERVED, fields, prepare, forRun };
+module.exports = { CATALOG, RESERVED, GROUPS, fields, prepare, forRun };

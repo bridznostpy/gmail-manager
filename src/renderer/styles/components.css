@@ -2297,6 +2297,26 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
 .flt-field.on .flt-x { opacity: 0.6; pointer-events: auto; }
 .flt-x:hover { opacity: 1; color: var(--text); background: rgba(255, 255, 255, 0.06); }
 .flt-x svg { width: 11px; height: 11px; }
+/* Разделы условий: товар, объявление, продавец. */
+.flt-group + .flt-group { margin-top: 20px; }
+.flt-group > .section-label { display: block; margin-bottom: 10px; }
+
+/* Итог проверки фильтров. Цвет несёт смысл: пусто - повод не запускать
+   рассылку, а разбираться с условиями. */
+.set-panel .flt-test-note { margin-top: 12px; }
+.flt-test-note.good { color: var(--green); }
+.flt-test-note.bad { color: var(--red); }
+
+/* Диапазон: две границы рядом, каждая со своей подписью. На широкой панели
+   пара занимает два места сетки - в одно два поля с числами не влезают
+   читаемо, а на узкой сетка и так в одну колонку. */
+.flt-pair { display: flex; gap: 8px; }
+.flt-side { display: flex; align-items: center; gap: 7px; flex: 1 1 0; min-width: 0; margin: 0; }
+.flt-side-cap { flex-shrink: 0; color: var(--text-faint); font-size: var(--fs-2xs); }
+@media (min-width: 1180px) {
+  .set-grid > .flt-range { grid-column: span 2; }
+}
+
 /* Три кнопки делят ширину поля поровну и не переносят подпись: перенос делал
    ряд выше соседних, и сетка условий шла ступеньками. Высоту держим как у
    полей ввода - иначе троичные условия висят выше соседей по строке. */

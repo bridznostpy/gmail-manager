@@ -126,7 +126,12 @@ async function _startTask(apiKey, platform, filters) {
   return data && data.task_id != null ? data.task_id : null;
 }
 
-async function fetchBatch({ apiKey, platform: want, countries, filters: extra, limit }) {
+/**
+ * @param peek Не двигать курсор. Нужно проверке фильтров из настроек: она
+ *   показывает, сколько объявлений отдаёт запрос, и забрать этим страницу у
+ *   рассылки не должна - прогон потом получил бы уже следующую.
+ */
+async function fetchBatch({ apiKey, platform: want, countries, filters: extra, limit, peek }) {
   if (!apiKey) {
     logger.warn('parser', t('xp.noKey'));
     return [];
@@ -157,7 +162,7 @@ async function fetchBatch({ apiKey, platform: want, countries, filters: extra, l
     const listings = (data && data.listings) || [];
     // Advance the cursor so the next call returns the following page. When
     // has_more is false we keep the last cursor and re-poll later for new rows.
-    if (data && data.next_cursor != null) task.cursor = data.next_cursor;
+    if (!peek && data && data.next_cursor != null) task.cursor = data.next_cursor;
     const leads = listings.map(normalizeLead).filter((l) => l.email);
     return typeof limit === 'number' ? leads.slice(0, limit) : leads;
   } catch (e) {

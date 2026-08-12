@@ -92,6 +92,7 @@ contextBridge.exposeInMainWorld('api', {
   parser: {
     // force просит перезапросить список у API, минуя память процесса.
     filterFields: (force) => ipcRenderer.invoke('parser:filterFields', { force }),
+    test: () => ipcRenderer.invoke('parser:test'),
   },
   cdp: {
     detectChrome: () => ipcRenderer.invoke('cdp:detectChrome'),

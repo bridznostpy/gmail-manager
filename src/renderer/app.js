@@ -4042,12 +4042,43 @@ async function saveFilterValues(values) {
   await saveSection('parser', { filters: tree });
 }
 
-/** Записать одно условие. Пустое значение убирает его совсем. */
+/**
+ * Записать одно условие. Пустое значение убирает его совсем.
+ *
+ * Диапазон приходит парой { from, to } и парой же хранится: склеивать границы
+ * в строку - дело main, он один знает, как их принимает API.
+ */
 async function saveFilterValue(key, value) {
   const next = { ...currentFilters().values };
-  const v = String(value == null ? '' : value).trim();
-  if (v === '') delete next[key]; else next[key] = v;
+  const clean = (x) => String(x == null ? '' : x).trim();
+  if (value && typeof value === 'object') {
+    const from = clean(value.from);
+    const to = clean(value.to);
+    if (!from && !to) delete next[key]; else next[key] = { from, to };
+  } else {
+    const v = clean(value);
+    if (v === '') delete next[key]; else next[key] = v;
+  }
   await saveFilterValues(next);
+}
+
+/**
+ * Границы диапазона для показа в полях.
+ *
+ * Пара { from, to } - обычный случай. Строку разбираем ради значений, заданных
+ * до появления двух полей: "10..100" - обе границы, "10.." - нижняя, а голое
+ * число означает верхнюю там, где документация так и говорит (цена).
+ */
+function rangeParts(f, value) {
+  if (value && typeof value === 'object') {
+    return { from: String(value.from || ''), to: String(value.to || '') };
+  }
+  const s = String(value == null ? '' : value);
+  if (s.includes('..')) {
+    const [from, to] = s.split('..');
+    return { from: from || '', to: to || '' };
+  }
+  return f.soloMax === 'bare' ? { from: '', to: s } : { from: s, to: '' };
 }
 
 function buildSetFilters() {
@@ -4056,14 +4087,16 @@ function buildSetFilters() {
 
     ${setBlock('set.b.fltFields', 'set.fltHint', `
       <div class="hint flt-note" id="fltNote">${esc(t('flt.loading'))}</div>
-      <div class="set-grid" id="fltFields"></div>`)}
+      <div id="fltFields"></div>`)}
 
     ${setBlock('set.b.fltPreview', 'set.fltPreviewHint', `
       <pre class="flt-preview empty" id="fltPreview">${esc(t('flt.none'))}</pre>
       <div class="ar-acts" style="margin-top:14px">
+        <button class="btn primary" id="fltTest">${ICONS.play}<span>${esc(t('flt.test'))}</span></button>
         <button class="btn ghost" id="fltReload" hidden>${ICONS.reset}<span>${esc(t('flt.reload'))}</span></button>
         <button class="btn ghost" id="fltClear">${ICONS.trash}<span>${esc(t('flt.clear'))}</span></button>
-      </div>`)}`));
+      </div>
+      <div class="hint flt-test-note" id="fltTestOut">${esc(t('flt.testHint'))}</div>`)}`));
 
   el.dataset.fltToken = String(++filterCardToken);
   paintFilterScope(el);
@@ -4079,7 +4112,42 @@ function buildSetFilters() {
     await loadFilterFields(el);
     paintFilterScope(el);
   });
+  $('#fltTest', el).addEventListener('click', () => runFilterTest(el));
   return el;
+}
+
+/**
+ * Проверка фильтров: один запрос теми же условиями, что и рассылка.
+ *
+ * Настроив отбор, узнать что-либо о нём можно было только запустив прогон, а
+ * это уже письма живым людям. Здесь тот же запрос, но без единой отправки:
+ * видно, сколько объявлений вообще приходит - пусто значит, что условия
+ * слишком узкие, и это лучше выяснить до рассылки.
+ */
+async function runFilterTest(el) {
+  const btn = $('#fltTest', el);
+  const out = $('#fltTestOut', el);
+  if (!btn || btn.disabled) return;
+  btn.disabled = true;
+  out.textContent = t('flt.testRunning');
+  out.className = 'hint flt-test-note';
+  try {
+    const res = await api.parser.test();
+    if (!el.isConnected) return;
+    if (!res.ok) {
+      out.textContent = t(res.reason === 'no_key' ? 'flt.testNoKey' : 'flt.testFailed');
+      out.className = 'hint flt-test-note bad';
+      return;
+    }
+    // Ноль - это и "условия слишком узкие", и "запрос не прошёл": разницу
+    // знает только журнал, туда и отправляем.
+    out.textContent = res.count
+      ? t('flt.testOk', { count: res.count, sec: (res.ms / 1000).toFixed(1) })
+      : t('flt.testEmpty');
+    out.className = 'hint flt-test-note ' + (res.count ? 'good' : 'bad');
+  } finally {
+    if (el.isConnected) btn.disabled = false;
+  }
 }
 
 /** Строка "к чему относятся условия": парсер и площадка со ссылками на их разделы. */
@@ -4128,7 +4196,25 @@ function paintFilterFields(el, data) {
   const box = $('#fltFields', el);
   const note = $('#fltNote', el);
   const values = currentFilters().values;
-  box.innerHTML = (data.fields || []).map((f) => filterFieldHtml(f, values[f.key])).join('');
+
+  // Условий бывает больше десятка, и сплошной сеткой они не читаются: что
+  // относится к товару, что к продавцу, видно только по названиям. Разделы и
+  // их порядок задаёт main (GROUPS в parser/filters.js), здесь берём их по
+  // первому появлению - список уже разложен.
+  const groups = [];
+  for (const f of data.fields || []) {
+    const id = f.group || 'other';
+    let group = groups.find((g) => g.id === id);
+    if (!group) { group = { id, items: [] }; groups.push(group); }
+    group.items.push(f);
+  }
+  box.innerHTML = groups.map((g) => {
+    const cap = tOr('flt.g.' + g.id, '');
+    return `<section class="flt-group">
+      ${cap ? `<div class="section-label">${esc(cap)}</div>` : ''}
+      <div class="set-grid">${g.items.map((f) => filterFieldHtml(f, values[f.key])).join('')}</div>
+    </section>`;
+  }).join('');
 
   // Строка о происхождении списка. Она важна: пустое место под заголовком не
   // отличает "площадка сказала, что фильтров нет" от "мы её не спросили".
@@ -4153,13 +4239,34 @@ function paintFilterFields(el, data) {
 }
 
 function filterFieldHtml(f, value) {
-  const v = value == null ? '' : String(value);
   const id = 'flt_' + f.key.replace(/[^a-z0-9_]/gi, '');
   const label = tOr('flt.k.' + f.key, f.key);
   // Поле, о котором документация молчит: пришло из справочника площадки.
   const tag = f.fromSchema ? `<span class="flt-tag">${esc(t('flt.fromSchema'))}</span>` : '';
   const clear = `<button class="flt-x" data-clear="${esc(f.key)}" title="${esc(t('flt.clearField'))}">${ICONS.x}</button>`;
+  const head = `<label for="${id}"><span class="flt-label">${esc(label)}</span>${tag}${clear}</label>`;
 
+  // Диапазон - два отдельных поля в одной строке. Одно поле с "10..100" внутри
+  // требовало знать чужой синтаксис и не показывало, что границ на самом деле
+  // две.
+  if (f.type === 'range') {
+    const { from, to } = rangeParts(f, value);
+    const kind = f.unit === 'date' ? 'text' : 'number';
+    const capFrom = f.unit === 'date' ? t('flt.dateFrom') : t('flt.from');
+    const capTo = f.unit === 'date' ? t('flt.dateTo') : t('flt.to');
+    const side = (which, cap, val, sideId) => `
+      <label class="flt-side" for="${sideId}">
+        <span class="flt-side-cap">${esc(cap)}</span>
+        <input type="${kind}" id="${sideId}" data-k="${esc(f.key)}" data-side="${which}"
+          value="${esc(val)}" placeholder="${esc(f.sample || '')}"/>
+      </label>`;
+    return `<div class="field flt-field flt-range ${from || to ? 'on' : ''}">
+      ${head}
+      <div class="flt-pair">${side('from', capFrom, from, id)}${side('to', capTo, to, id + '_to')}</div>
+    </div>`;
+  }
+
+  const v = value == null ? '' : String(value);
   let control;
   if (f.type === 'bool') {
     // Троичный: "не важно" - это не то же самое, что "нет". Первое не
@@ -4188,10 +4295,7 @@ function filterFieldHtml(f, value) {
       data-k="${esc(f.key)}" value="${esc(v)}" placeholder="${esc(f.sample || '')}"/>`;
   }
 
-  return `<div class="field flt-field ${v === '' ? '' : 'on'}">
-    <label for="${id}"><span class="flt-label">${esc(label)}</span>${tag}${clear}</label>
-    ${control}
-  </div>`;
+  return `<div class="field flt-field ${v === '' ? '' : 'on'}">${head}${control}</div>`;
 }
 
 function wireFilterFields(el, data) {
@@ -4205,6 +4309,17 @@ function wireFilterFields(el, data) {
   };
 
   $$('#fltFields input', el).forEach((input) => input.addEventListener('input', debounce(async () => {
+    // У диапазона границы живут парой: правка одной стороны не должна стирать
+    // вторую, поэтому пишем обе.
+    if (input.dataset.side) {
+      const box = input.closest('.flt-field');
+      const from = $('[data-side="from"]', box).value;
+      const to = $('[data-side="to"]', box).value;
+      await saveFilterValue(input.dataset.k, { from, to });
+      markSaved(input);
+      after(input, from.trim() !== '' || to.trim() !== '');
+      return;
+    }
     await saveFilterValue(input.dataset.k, input.value);
     markSaved(input);
     after(input, input.value.trim() !== '');

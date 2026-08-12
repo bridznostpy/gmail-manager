@@ -267,6 +267,11 @@ const DICT = {
     'flt.any': 'не важно',
     'flt.yes': 'да',
     'flt.no': 'нет',
+    // Границы диапазона. У дат "с/по" - у чисел "от/до": так их называют вслух.
+    'flt.from': 'от',
+    'flt.to': 'до',
+    'flt.dateFrom': 'с',
+    'flt.dateTo': 'по',
     'flt.clearField': 'Очистить поле',
     'flt.clear': 'Сбросить фильтры',
     'flt.cleared': 'Фильтры сброшены',
@@ -277,6 +282,21 @@ const DICT = {
     'flt.partial': 'Показан список из документации. Полный отдаёт сама площадка - для этого нужен ключ API и связь с ней.',
     'flt.empty': 'У этой площадки фильтров нет.',
     'flt.fromSchema': 'из справочника площадки',
+
+    // Разделы условий.
+    'flt.g.item': 'Товар',
+    'flt.g.listing': 'Объявление',
+    'flt.g.seller': 'Продавец',
+    'flt.g.other': 'Из справочника площадки',
+
+    // Проверка фильтров одним запросом.
+    'flt.test': 'Проверить фильтры',
+    'flt.testHint': 'Один запрос теми же условиями, что и рассылка. Письма при этом не уходят.',
+    'flt.testRunning': 'Спрашиваем площадку...',
+    'flt.testOk': 'Пришло объявлений с почтой: {count} (за {sec} с)',
+    'flt.testEmpty': 'Ни одного объявления. Условия слишком узкие или запрос не прошёл - смотрите живые логи.',
+    'flt.testNoKey': 'Сначала укажите ключ API в разделе "Парсер".',
+    'flt.testFailed': 'Проверка не удалась - смотрите живые логи.',
 
     // Подписи фильтров. Ключ - имя параметра в API; незнакомые приходят из
     // справочника площадки и показываются как есть.
@@ -291,6 +311,10 @@ const DICT = {
     'flt.k.blacklist': 'Исключить слова',
     'flt.k.views': 'Просмотров не больше',
     'flt.k.domain': 'Доменная зона',
+    'flt.k.ads': 'Объявлений у продавца',
+    'flt.k.reviews': 'Отзывов у продавца',
+    'flt.k.sells': 'Продаж у продавца',
+    'flt.k.buys': 'Покупок у продавца',
 
     'flt.o.5m': 'последние 5 минут',
     'flt.o.15m': 'последние 15 минут',
@@ -1168,6 +1192,10 @@ const DICT = {
     'flt.any': 'any',
     'flt.yes': 'yes',
     'flt.no': 'no',
+    'flt.from': 'from',
+    'flt.to': 'to',
+    'flt.dateFrom': 'from',
+    'flt.dateTo': 'to',
     'flt.clearField': 'Clear the field',
     'flt.clear': 'Reset filters',
     'flt.cleared': 'Filters reset',
@@ -1178,6 +1206,19 @@ const DICT = {
     'flt.partial': 'This is the list from the documentation. The full one comes from the platform itself - that needs an API key and a connection.',
     'flt.empty': 'This platform has no filters.',
     'flt.fromSchema': 'from the platform directory',
+
+    'flt.g.item': 'Item',
+    'flt.g.listing': 'Listing',
+    'flt.g.seller': 'Seller',
+    'flt.g.other': 'From the platform directory',
+
+    'flt.test': 'Check the filters',
+    'flt.testHint': 'One request with the same conditions the outreach uses. No mail is sent.',
+    'flt.testRunning': 'Asking the platform...',
+    'flt.testOk': 'Listings with an email: {count} (in {sec} s)',
+    'flt.testEmpty': 'No listings at all. The conditions are too narrow or the request failed - check the live logs.',
+    'flt.testNoKey': 'Set the API key in the "Parser" section first.',
+    'flt.testFailed': 'The check failed - see the live logs.',
 
     'flt.k.category': 'Category',
     'flt.k.price': 'Price',
@@ -1190,6 +1231,10 @@ const DICT = {
     'flt.k.blacklist': 'Exclude words',
     'flt.k.views': 'Views at most',
     'flt.k.domain': 'Domain zone',
+    'flt.k.ads': 'Seller listings',
+    'flt.k.reviews': 'Seller reviews',
+    'flt.k.sells': 'Seller sales',
+    'flt.k.buys': 'Seller purchases',
 
     'flt.o.5m': 'last 5 minutes',
     'flt.o.15m': 'last 15 minutes',

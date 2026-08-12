@@ -17,6 +17,7 @@ const appearance = require('./appearance');
 const updater = require('./updater');
 const parserFilters = require('./parser/filters');
 const xproject = require('./parser/apis/xproject');
+const vvs = require('./parser/apis/vvs');
 
 // Данные для превью HTML-шаблона, когда контактов рассылки ещё нет. Ссылка
 // заведомо нерабочая: настоящую выдаёт API только под реальный заказ.
@@ -367,6 +368,45 @@ function register(ctx) {
       // повторять их в рендере значило бы однажды разойтись.
       prepared: parserFilters.forRun(p),
     };
+  });
+
+  /**
+   * Проверка фильтров: один запрос теми же настройками, что и рассылка.
+   *
+   * Никакой отдельной "тестовой" ветки нет нарочно - проверять надо ровно тот
+   * запрос, который потом пойдёт в прогон. Отличается только одно: курсор
+   * XProject не двигается, иначе проверка забрала бы страницу у рассылки.
+   *
+   * Ошибку запроса клиент пишет в журнал и возвращает пустой список, поэтому
+   * "ноль объявлений" - это и "фильтры слишком узкие", и "запрос не прошёл";
+   * окно отправляет человека в журнал за подробностями.
+   */
+  ipcMain.handle('parser:test', async () => {
+    const p = store.get('parser');
+    if (!p.apiKey) return { ok: false, reason: 'no_key' };
+    const sys = store.get('system');
+    const client = p.apiType === 'vvs' ? vvs : xproject;
+    const filters = parserFilters.forRun(p);
+    const at = Date.now();
+    logger.info('parser', t('parser.testStarted', {
+      platform: p.platform,
+      filters: Object.keys(filters).length ? JSON.stringify(filters) : '-',
+    }));
+    try {
+      const leads = await client.fetchBatch({
+        apiKey: p.apiKey,
+        platform: p.platform,
+        countries: p.countries,
+        filters,
+        limit: sys.parserBatchSize,
+        peek: true,
+      });
+      logger.success('parser', t('parser.testResult', { count: leads.length }));
+      return { ok: true, count: leads.length, ms: Date.now() - at };
+    } catch (e) {
+      logger.error('parser', t('parser.testFailed', { error: e.message }));
+      return { ok: false, reason: 'failed', error: e.message };
+    }
   });
 
   // ── статистика ────────────────────────────────────────────────────

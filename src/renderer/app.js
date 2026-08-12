@@ -4008,6 +4008,28 @@ const filterFieldsCache = new Map();
 let filterCardToken = 0;
 const filterCardStale = (el) => Number(el.dataset.fltToken) !== filterCardToken;
 
+// Поля, нарисованные в карточке. Нужны счётчику в шапке: у парных границ два
+// ключа настроек на одно условие, и по одним только ключам "цена от 10 до 100"
+// сосчиталась бы как два условия.
+const filterFieldsOf = new WeakMap();
+
+/** Сколько условий задано. Пара границ - одно условие, а не два. */
+function activeFilterCount(values, fields) {
+  if (!fields || !fields.length) return Object.keys(values).length;
+  const filled = (key) => values[key] != null && values[key] !== '';
+  const counted = new Set();
+  let n = 0;
+  for (const f of fields) {
+    const keys = f.pair ? [f.pair.from, f.pair.to] : [f.key];
+    keys.forEach((k) => counted.add(k));
+    if (keys.some(filled)) n++;
+  }
+  // Условие, которого больше нет среди полей, всё ещё лежит в настройках и в
+  // запрос пойдёт - молчать о нём нельзя.
+  for (const key of Object.keys(values)) if (!counted.has(key)) n++;
+  return n;
+}
+
 /**
  * Подпись из словаря, а если её там нет - запасная строка. Имена фильтров
  * приходят из справочника площадки, и знать их все словарь не может: показать
@@ -4063,13 +4085,35 @@ async function saveFilterValue(key, value) {
 }
 
 /**
+ * Записать обе границы, каждую своим ключом.
+ *
+ * Так устроен XProject: min_x и max_x - два отдельных условия, и склеивать их
+ * в строку нельзя. Пишем сразу обе, иначе правка одной стирала бы вторую.
+ */
+async function saveFilterPair(pair, from, to) {
+  const next = { ...currentFilters().values };
+  const put = (key, val) => {
+    const s = String(val == null ? '' : val).trim();
+    if (s === '') delete next[key]; else next[key] = s;
+  };
+  put(pair.from, from);
+  put(pair.to, to);
+  await saveFilterValues(next);
+}
+
+/**
  * Границы диапазона для показа в полях.
  *
- * Пара { from, to } - обычный случай. Строку разбираем ради значений, заданных
- * до появления двух полей: "10..100" - обе границы, "10.." - нижняя, а голое
- * число означает верхнюю там, где документация так и говорит (цена).
+ * У XProject они лежат двумя ключами, у VVS - одним значением: парой
+ * { from, to } или строкой, если условие задали до появления двух полей
+ * ("10..100" - обе границы, "10.." - нижняя, голое число - верхняя там, где
+ * документация так и говорит).
  */
-function rangeParts(f, value) {
+function rangeParts(f, values) {
+  if (f.pair) {
+    return { from: String(values[f.pair.from] || ''), to: String(values[f.pair.to] || '') };
+  }
+  const value = values[f.key];
   if (value && typeof value === 'object') {
     return { from: String(value.from || ''), to: String(value.to || '') };
   }
@@ -4156,7 +4200,7 @@ function paintFilterScope(el) {
   if (!box) return;
   const { apiType, values } = currentFilters();
   const { platform } = currentTarget();
-  const n = Object.keys(values).length;
+  const n = activeFilterCount(values, filterFieldsOf.get(el));
   box.innerHTML = `
     <div class="flt-cell">
       <span class="flt-cap">${esc(t('flt.scopeApi'))}</span>
@@ -4196,6 +4240,7 @@ function paintFilterFields(el, data) {
   const box = $('#fltFields', el);
   const note = $('#fltNote', el);
   const values = currentFilters().values;
+  filterFieldsOf.set(el, data.fields || []);
 
   // Условий бывает больше десятка, и сплошной сеткой они не читаются: что
   // относится к товару, что к продавцу, видно только по названиям. Разделы и
@@ -4212,7 +4257,7 @@ function paintFilterFields(el, data) {
     const cap = tOr('flt.g.' + g.id, '');
     return `<section class="flt-group">
       ${cap ? `<div class="section-label">${esc(cap)}</div>` : ''}
-      <div class="set-grid">${g.items.map((f) => filterFieldHtml(f, values[f.key])).join('')}</div>
+      <div class="set-grid">${g.items.map((f) => filterFieldHtml(f, values)).join('')}</div>
     </section>`;
   }).join('');
 
@@ -4235,38 +4280,66 @@ function paintFilterFields(el, data) {
   // раздел, а условия с тех пор менялись.
   paintFilterPreview(el, data);
   refreshFilterPreview(el);
+  // Счётчик в шапке считает условия по полям, а поля стали известны только
+  // сейчас - до загрузки он считал ключи настроек и мог показать лишнее.
+  paintFilterScope(el);
   markSettingsHits($('.settings') || el, state.settingsQuery.trim().toLowerCase());
 }
 
-function filterFieldHtml(f, value) {
+function filterFieldHtml(f, values) {
   const id = 'flt_' + f.key.replace(/[^a-z0-9_]/gi, '');
-  const label = tOr('flt.k.' + f.key, f.key);
-  // Поле, о котором документация молчит: пришло из справочника площадки.
-  const tag = f.fromSchema ? `<span class="flt-tag">${esc(t('flt.fromSchema'))}</span>` : '';
-  const clear = `<button class="flt-x" data-clear="${esc(f.key)}" title="${esc(t('flt.clearField'))}">${ICONS.x}</button>`;
+  // Название есть не у всякого условия: площадка вправе объявить ключ, о
+  // котором приложение не знает. Тогда показываем само имя и говорим, откуда
+  // оно, - метка на поле с понятной подписью была бы просто шумом.
+  const known = tOr('flt.k.' + f.key, '');
+  const label = known || f.key;
+  const tag = known ? '' : `<span class="flt-tag">${esc(t('flt.fromSchema'))}</span>`;
+  // Крестик чистит все ключи условия: у парных границ их два.
+  const keys = f.pair ? `${f.pair.from},${f.pair.to}` : f.key;
+  const clear = `<button class="flt-x" data-clear="${esc(keys)}" title="${esc(t('flt.clearField'))}">${ICONS.x}</button>`;
   const head = `<label for="${id}"><span class="flt-label">${esc(label)}</span>${tag}${clear}</label>`;
 
   // Диапазон - два отдельных поля в одной строке. Одно поле с "10..100" внутри
   // требовало знать чужой синтаксис и не показывало, что границ на самом деле
   // две.
   if (f.type === 'range') {
-    const { from, to } = rangeParts(f, value);
+    const { from, to } = rangeParts(f, values);
     const kind = f.unit === 'date' ? 'text' : 'number';
     const capFrom = f.unit === 'date' ? t('flt.dateFrom') : t('flt.from');
     const capTo = f.unit === 'date' ? t('flt.dateTo') : t('flt.to');
+    // Ключ поля: у парных границ каждая сторона пишется своим, у остальных обе
+    // уходят одним значением.
+    const sideKey = (which) => (f.pair ? f.pair[which] : f.key);
     const side = (which, cap, val, sideId) => `
       <label class="flt-side" for="${sideId}">
         <span class="flt-side-cap">${esc(cap)}</span>
-        <input type="${kind}" id="${sideId}" data-k="${esc(f.key)}" data-side="${which}"
+        <input type="${kind}" id="${sideId}" data-k="${esc(sideKey(which))}" data-side="${which}"
           value="${esc(val)}" placeholder="${esc(f.sample || '')}"/>
       </label>`;
-    return `<div class="field flt-field flt-range ${from || to ? 'on' : ''}">
+    return `<div class="field flt-field flt-range ${from || to ? 'on' : ''}"
+      ${f.pair ? `data-pair="${esc(keys)}"` : ''}>
       ${head}
       <div class="flt-pair">${side('from', capFrom, from, id)}${side('to', capTo, to, id + '_to')}</div>
     </div>`;
   }
 
-  const v = value == null ? '' : String(value);
+  const v = values[f.key] == null ? '' : String(values[f.key]);
+
+  // Несколько значений из списка площадки: отмечаются кнопками, хранятся через
+  // запятую. Выпадающий список с одним выбором тут врал бы - категорий можно
+  // отметить сколько угодно.
+  if (f.type === 'multi') {
+    const picked = v.split(',').map((x) => x.trim()).filter(Boolean);
+    const chips = (f.options || []).map((o) => `
+      <button class="flt-chip ${picked.includes(String(o)) ? 'on' : ''}" data-k="${esc(f.key)}" data-v="${esc(o)}">
+        ${esc(tOr('flt.c.' + o, o))}
+      </button>`).join('');
+    return `<div class="field flt-field flt-multi ${picked.length ? 'on' : ''}">
+      ${head}
+      <div class="flt-chips">${chips || `<span class="hint">${esc(t('flt.noOptions'))}</span>`}</div>
+    </div>`;
+  }
+
   let control;
   if (f.type === 'bool') {
     // Троичный: "не важно" - это не то же самое, что "нет". Первое не
@@ -4313,9 +4386,15 @@ function wireFilterFields(el, data) {
     // вторую, поэтому пишем обе.
     if (input.dataset.side) {
       const box = input.closest('.flt-field');
-      const from = $('[data-side="from"]', box).value;
-      const to = $('[data-side="to"]', box).value;
-      await saveFilterValue(input.dataset.k, { from, to });
+      const fromInput = $('[data-side="from"]', box);
+      const toInput = $('[data-side="to"]', box);
+      const from = fromInput.value;
+      const to = toInput.value;
+      if (box.dataset.pair) {
+        await saveFilterPair({ from: fromInput.dataset.k, to: toInput.dataset.k }, from, to);
+      } else {
+        await saveFilterValue(input.dataset.k, { from, to });
+      }
       markSaved(input);
       after(input, from.trim() !== '' || to.trim() !== '');
       return;
@@ -4331,6 +4410,15 @@ function wireFilterFields(el, data) {
     after(sel, sel.value !== '');
   }));
 
+  $$('#fltFields .flt-chip', el).forEach((chip) => chip.addEventListener('click', async () => {
+    const box = chip.closest('.flt-field');
+    chip.classList.toggle('on');
+    const picked = $$('.flt-chip.on', box).map((x) => x.dataset.v);
+    await saveFilterValue(chip.dataset.k, picked.join(','));
+    markSaved(chip);
+    after(chip, picked.length > 0);
+  }));
+
   $$('#fltFields .flt-bool', el).forEach((seg) => $$('button', seg).forEach((b) => {
     b.addEventListener('click', async () => {
       $$('button', seg).forEach((x) => x.classList.toggle('active', x === b));
@@ -4341,7 +4429,10 @@ function wireFilterFields(el, data) {
   }));
 
   $$('#fltFields [data-clear]', el).forEach((b) => b.addEventListener('click', async () => {
-    await saveFilterValue(b.dataset.clear, '');
+    // У парных границ ключей два - чистим все, что относятся к условию.
+    const next = { ...currentFilters().values };
+    for (const key of b.dataset.clear.split(',')) delete next[key];
+    await saveFilterValues(next);
     // Здесь пересобрать блок можно: поле очищено, и терять фокус уже нечему.
     paintFilterFields(el, data);
     paintFilterScope(el);

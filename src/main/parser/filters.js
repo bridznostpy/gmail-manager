@@ -9,20 +9,36 @@
  *   GET /ads/{platform}. Универсальные перечислены в разделе параметров,
  *   domain там же назван параметром Vinted.
  * - XProject (OpenAPI, POST /api/v1/parser/start) - объект `filters` в теле
- *   задачи. Документация называет напрямую только `category`, `country` и
- *   `min_price` (пример к /start), а полный список для площадки отдаёт
- *   GET /api/v1/parser/schema. Живую схему подмешиваем в fields(), когда она
- *   получена; без неё остаётся документированный минимум.
+ *   задачи. Полный список ключей отдаёт GET /api/v1/parser/schema: поле
+ *   filter_columns - все возможные, supported_filters площадки - её
+ *   собственные. Имена там во множественном числе (countries, categories), а
+ *   границы стоят суффиксами (price_min, price_max), - пример из описания
+ *   /start с ключами country и min_price устарел, и запрос по нему получает
+ *   422. Значения типизированы жёстко: неверный тип отдаёт 500, а не
+ *   объяснение, поэтому типы ниже проверены запросами.
  *
  * Каталог лежит здесь, а не в CONFIG клиентов, чтобы приведение значений было
  * одно на оба API: клиенты читают этот модуль, обратной зависимости нет.
  *
- * Типы полей: text | number | bool | enum | range. `bool` троичный - пусто
- * означает "не важно", и это не то же самое, что false: "только без телефона" и
- * "телефон не важен" дают разную выдачу. `range` - две границы, "от" и "до":
- * в запрос они уходят одной строкой через оператор "..", но вводить их одним
- * полем человек не должен - это два разных числа.
+ * Типы полей:
+ *   text   - строка;
+ *   number - число (у XProject именно число, строка роняет запрос);
+ *   bool   - троичный: пусто означает "не важно", и это не то же самое, что
+ *            "нет" - "только без телефона" и "телефон не важен" дают разную
+ *            выдачу;
+ *   enum   - одно значение из списка;
+ *   multi  - несколько значений из списка, уходят массивом;
+ *   list   - свой список через запятую, уходит массивом;
+ *   range  - две границы, "от" и "до". У XProject это два отдельных ключа
+ *            (pair), у VVS - одна строка через оператор "..".
  */
+
+/**
+ * Насколько свежим должно быть объявление или регистрация продавца. Формат
+ * относительного времени у XProject: список назван в ответе на неверное
+ * значение ("Expected formats: 'fresh', '5min', ...").
+ */
+const XP_PERIODS = ['fresh', '5min', '3h', '7d', '2w', '6m', '1y'];
 
 /**
  * Ключи, которыми меню фильтров не распоряжается: у них уже есть своё место в
@@ -30,18 +46,59 @@
  * на один вопрос.
  */
 const RESERVED = {
-  // Страну выбирают в разделе "Цели" - клиенты обходят список по очереди.
-  xproject: ['country'],
+  // Страны выбирают в разделе "Цели" - клиент отправляет их списком.
+  xproject: ['countries'],
   // limit - это размер пачки из раздела "Парсер"; email клиент всегда просит
   // сам, иначе в выдачу пойдут объявления без адреса, а писать по ним некуда.
   vvs: ['country', 'limit', 'email'],
 };
 
 const CATALOG = {
+  // Набор ключей - filter_columns из /parser/schema; какие из них принимает
+  // конкретная площадка, говорит supported_filters, и лишние fields() убирает.
   xproject: [
-    // Список значений приходит из живой схемы (categories площадки).
-    { key: 'category', type: 'enum', options: [], group: 'item' },
-    { key: 'min_price', type: 'number', group: 'item' },
+    // Значения категорий свои у каждой площадки и приходят из схемы.
+    { key: 'categories', type: 'multi', options: [], group: 'item' },
+    { key: 'price', type: 'range', unit: 'number', pair: { from: 'price_min', to: 'price_max' }, group: 'item' },
+    { key: 'delivery', type: 'bool', group: 'item' },
+
+    { key: 'created_at_period', type: 'enum', options: XP_PERIODS, group: 'listing' },
+    { key: 'stop_words', type: 'list', sample: 'nike, adidas', group: 'listing' },
+    { key: 'internal_view_count', type: 'number', group: 'listing' },
+    { key: 'internal_listing_count', type: 'number', group: 'listing' },
+
+    { key: 'seller_email', type: 'bool', group: 'seller' },
+    { key: 'seller_has_reviews', type: 'bool', group: 'seller' },
+    { key: 'seller_online', type: 'bool', group: 'seller' },
+    { key: 'seller_created_at_period', type: 'enum', options: XP_PERIODS, group: 'seller' },
+    {
+      key: 'seller_created_at',
+      type: 'range',
+      unit: 'date',
+      pair: { from: 'seller_created_at_min', to: 'seller_created_at_max' },
+      group: 'seller',
+    },
+    {
+      key: 'seller_review_count',
+      type: 'range',
+      unit: 'number',
+      pair: { from: 'seller_review_count_min', to: 'seller_review_count_max' },
+      group: 'seller',
+    },
+    {
+      key: 'seller_sell_count',
+      type: 'range',
+      unit: 'number',
+      pair: { from: 'seller_sell_count_min', to: 'seller_sell_count_max' },
+      group: 'seller',
+    },
+    {
+      key: 'seller_listing_count',
+      type: 'range',
+      unit: 'number',
+      pair: { from: 'seller_listing_count_min', to: 'seller_listing_count_max' },
+      group: 'seller',
+    },
   ],
 
   vvs: [
@@ -85,6 +142,15 @@ function guessType(key) {
 }
 
 /**
+ * Раздел для ключа, которого нет в каталоге. Всё про продавца площадка
+ * называет с одной приставки - этого хватает, чтобы незнакомое условие не
+ * свалилось в "прочее" рядом с условиями о товаре.
+ */
+function guessGroup(key) {
+  return /^seller/.test(String(key)) ? 'seller' : 'other';
+}
+
+/**
  * Разложить поля по разделам в порядке GROUPS. Сортировка устойчивая, поэтому
  * внутри раздела остаётся порядок каталога - он осмысленный, а не алфавитный.
  */
@@ -113,22 +179,55 @@ function fields(apiType, platform, live) {
 
   const supported = schema.supported_filters || [];
   const reserved = RESERVED[apiType] || [];
-  if (supported.length) list = list.filter((f) => supported.includes(f.key));
+  if (!supported.length) return byGroup(list);
 
-  // Категории площадки перечислены только в схеме - в документации их нет.
-  const category = list.find((f) => f.key === 'category');
-  if (category && (schema.categories || []).length) {
-    category.options = schema.categories.slice();
+  // Ключи, из которых собрано условие: у границ их два.
+  const covers = (f) => (f.pair ? [f.pair.from, f.pair.to] : [f.key]);
+  const out = [];
+  const used = new Set();
+
+  for (const f of list) {
+    const keys = covers(f).filter((k) => supported.includes(k));
+    if (!keys.length) continue;
+    keys.forEach((k) => used.add(k));
+    // Площадка может принимать только одну границу условия. Показывать вторым
+    // полем то, чего она не примет, нельзя - вырождаем в обычное число.
+    if (f.pair && keys.length === 1) {
+      out.push({ key: keys[0], type: f.unit === 'number' ? 'number' : 'text', group: f.group });
+      continue;
+    }
+    out.push(f);
   }
 
-  const seen = new Set(list.map((f) => f.key));
+  // Значения категорий свои у каждой площадки и живут только в схеме.
+  const categories = out.find((f) => f.key === 'categories');
+  if (categories) categories.options = (schema.categories || []).slice();
+
+  // Ключи, которых нет в каталоге. Площадка вправе объявить свои, и молчать о
+  // них нельзя: человек всё равно захочет ими воспользоваться.
   for (const key of supported) {
-    if (seen.has(key) || reserved.includes(key)) continue;
-    // fromSchema помечает поле, о котором документация молчит: интерфейс
-    // показывает его отдельно, чтобы было видно, откуда оно взялось.
-    list.push({ key, type: guessType(key), group: 'other', fromSchema: true });
+    if (used.has(key) || reserved.includes(key)) continue;
+    used.add(key);
+    // Границы приходят суффиксами _min и _max. Двумя полями это спрашивало бы
+    // одно и то же дважды, поэтому сводим их в одно условие; в запрос они
+    // уходят обратно теми же двумя ключами.
+    const bound = /^(.+)_min$/.exec(key);
+    const twin = bound && bound[1] + '_max';
+    if (bound && supported.includes(twin)) {
+      used.add(twin);
+      out.push({
+        key: bound[1],
+        type: 'range',
+        unit: guessType(bound[1]) === 'number' ? 'number' : 'date',
+        pair: { from: key, to: twin },
+        group: guessGroup(bound[1]),
+        fromSchema: true,
+      });
+      continue;
+    }
+    out.push({ key, type: guessType(key), group: guessGroup(key), fromSchema: true });
   }
-  return byGroup(list);
+  return byGroup(out);
 }
 
 /**
@@ -157,7 +256,18 @@ function composeRange(field, value) {
  * означал бы фильтр по пустому значению, а не его отсутствие.
  */
 function prepare(apiType, platform, raw) {
-  const byKey = new Map(fields(apiType, platform, null).map((f) => [f.key, f]));
+  // Границы у XProject лежат в настройках своими ключами (price_min и т.д.), а
+  // в каталоге стоят одним условием. Регистрируем и стороны тоже, иначе тип
+  // пришлось бы угадывать по имени - а неверный тип там роняет запрос.
+  const byKey = new Map();
+  for (const f of fields(apiType, platform, null)) {
+    byKey.set(f.key, f);
+    if (!f.pair) continue;
+    const side = { type: f.unit === 'number' ? 'number' : 'text' };
+    byKey.set(f.pair.from, side);
+    byKey.set(f.pair.to, side);
+  }
+
   const reserved = RESERVED[apiType] || [];
   const out = {};
   for (const [key, value] of Object.entries(raw || {})) {
@@ -167,8 +277,8 @@ function prepare(apiType, platform, raw) {
     const field = byKey.get(key);
     const type = field ? field.type : guessType(key);
     if (type === 'range') {
-      // Границы хранятся парой { from, to }. Строку тоже принимаем: так лежали
-      // диапазоны, заданные до появления двух полей, и терять их незачем.
+      // Сюда попадают только диапазоны одной строкой (VVS). Строку принимаем
+      // как есть: так лежали значения, заданные до появления двух полей.
       const s = typeof v === 'string' ? v : composeRange(field, v);
       if (s) out[key] = s;
     } else if (type === 'number') {
@@ -176,6 +286,12 @@ function prepare(apiType, platform, raw) {
       if (Number.isFinite(n)) out[key] = n;
     } else if (type === 'bool') {
       out[key] = v === true || v === 'true';
+    } else if (type === 'multi' || type === 'list') {
+      // Списки уходят массивом. Хранятся строкой через запятую - так их вводят
+      // и так их проще держать в настройках.
+      const items = (Array.isArray(v) ? v : String(v).split(','))
+        .map((x) => String(x).trim()).filter(Boolean);
+      if (items.length) out[key] = items;
     } else {
       out[key] = String(v);
     }

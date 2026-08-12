@@ -118,6 +118,14 @@ function wireShotMode(win) {
         ipcMain.removeHandler('run:status');
         ipcMain.handle('run:status', () => fake);
       }
+      // Набор фильтров площадки. Настоящий приходит с /parser/schema по
+      // платному ключу, поэтому вёрстку условий иначе не посмотреть.
+      if (process.env.SHOT_PARSER_FIELDS) {
+        const { ipcMain } = require('electron');
+        const fake = JSON.parse(process.env.SHOT_PARSER_FIELDS);
+        ipcMain.removeHandler('parser:filterFields');
+        ipcMain.handle('parser:filterFields', () => fake);
+      }
       if (process.env.SHOT_UPDATE) {
         win.webContents.send('update:state', JSON.parse(process.env.SHOT_UPDATE));
         await new Promise((r) => setTimeout(r, 300));
@@ -272,5 +280,9 @@ app.on('window-all-closed', () => {
 app.on('before-quit', async () => {
   autoScan.stopAutoScan();
   require('./updater').stop();
+  // Задача парсинга живёт на стороне API и закрытие приложения переживает.
+  // Брошенная не даст завести такую же в следующий раз (409), а возобновить её
+  // нечем - идентификатор отдаётся один раз. Поэтому убираем за собой здесь же.
+  try { ctx && ctx.parser.stop(); } catch (_e) {}
   try { ctx && (await ctx.chrome.stopAll()); } catch (_e) {}
 });

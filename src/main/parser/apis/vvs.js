@@ -111,4 +111,16 @@ function normalizeLead(id, raw, platform, country) {
   };
 }
 
-module.exports = { fetchBatch, normalizeLead, CONFIG };
+/**
+ * Разовая проверка условий. У этого API задач нет - каждый запрос сам по себе,
+ * поэтому проверять нечем, кроме обычного запроса. Метод есть ради общего вида
+ * с XProject: вызывающему не нужно знать, у кого как устроено.
+ */
+async function probe(opts) {
+  return fetchBatch(opts);
+}
+
+/** Останавливать нечего: задач этот API не заводит. */
+async function stopAll() {}
+
+module.exports = { fetchBatch, probe, stopAll, normalizeLead, CONFIG };

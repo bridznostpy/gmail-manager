@@ -380,6 +380,10 @@ function register(ctx) {
    * Ошибку запроса клиент пишет в журнал и возвращает пустой список, поэтому
    * "ноль объявлений" - это и "фильтры слишком узкие", и "запрос не прошёл";
    * окно отправляет человека в журнал за подробностями.
+   *
+   * Первая пачка приходит не сразу: задача у XProject только заводится, и
+   * страница в этот момент пуста. Поэтому спрашиваем несколько раз - иначе
+   * проверка объявляла бы пустым любой первый запрос.
    */
   ipcMain.handle('parser:test', async () => {
     const p = store.get('parser');
@@ -393,13 +397,14 @@ function register(ctx) {
       filters: Object.keys(filters).length ? JSON.stringify(filters) : '-',
     }));
     try {
-      const leads = await client.fetchBatch({
+      // probe заводит задачу, ждёт первых объявлений и убирает её за собой -
+      // брошенная задача не даст завести такую же в следующий раз (409).
+      const leads = await client.probe({
         apiKey: p.apiKey,
         platform: p.platform,
         countries: p.countries,
         filters,
         limit: sys.parserBatchSize,
-        peek: true,
       });
       logger.success('parser', t('parser.testResult', { count: leads.length }));
       return { ok: true, count: leads.length, ms: Date.now() - at };

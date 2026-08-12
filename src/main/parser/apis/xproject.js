@@ -14,8 +14,11 @@ const { t } = require('../../i18n');
 
 const CONFIG = {
   // Сколько живёт схема площадок в памяти процесса. Она меняется на стороне
-  // API редко, а спрашивают её при каждом заходе в настройки фильтров.
+  // API редко, а спрашивают её перед каждым запросом пачки.
   schemaTtlMs: 30 * 60 * 1000,
+  // Неудачную попытку помним меньше: сеть могла отвалиться на минуту, но и
+  // долбить схему каждые три секунды при пополнении очереди незачем.
+  schemaFailTtlMs: 5 * 60 * 1000,
   baseUrl: 'https://api.xproject.icu',
   endpoints: {
     start: '/api/v1/parser/start',
@@ -30,8 +33,10 @@ const CONFIG = {
   // площадку, поэтому список тут только для проверки: неизвестное значение
   // вернуло бы 422, и лучше поймать это до запроса.
   platforms: ['depop', 'poshmark', 'vinted'],
-  // Ключ фильтра страны в start.filters и регистр кода (enum Country - нижний).
-  countryFilter: 'country',
+  // Ключ фильтра стран в start.filters. Именно countries, списком кодов ISO-2 в
+  // нижнем регистре: строку API разбирает по буквам ("us" -> 'u', 's'), а
+  // ключ country из примера в документации площадка не принимает вовсе (422).
+  countryFilter: 'countries',
   countryCase: 'lower',
 };
 
@@ -41,35 +46,29 @@ const CONFIG = {
 const _tasks = new Map();
 // Схема площадок, полученная с /parser/schema: { at, data } по ключу API.
 const _schema = new Map();
-// Указатель обхода стран, свой на площадку: за один вызов API отдаёт объявления
-// одной страны, поэтому несколько стран обходим по очереди.
-const _rr = new Map();
 
 function _headers(apiKey) {
   return { [CONFIG.authHeader]: CONFIG.authPrefix + apiKey, 'Content-Type': 'application/json' };
 }
 
 /**
- * Площадка и страна для очередного запроса.
+ * Площадка и страны для очередного запроса.
  *
- * Площадка одна - так устроен start: одна задача под одну платформу. Стран
- * может быть несколько, и каждая живёт своей задачей со своим курсором
- * (реестр _tasks ключуется вместе со страной), поэтому переключение между ними
- * не сбивает разбор страниц.
+ * Площадка одна - так устроен start: одна задача под одну платформу. Страны
+ * уходят все сразу списком: их ключ во множественном числе, и задача сама
+ * собирает объявления по всем отмеченным. Обходить страны по очереди, как
+ * делает VVS, здесь не нужно - это лишь дробило бы выдачу на несколько задач.
  */
 function _resolve(platform, countries) {
   const known = CONFIG.platforms.includes(platform) ? platform : CONFIG.defaultPlatform;
   if (known !== platform && platform) {
     logger.warn('parser', t('parser.unknownPlatform', { platform, used: known }));
   }
-  const list = (countries || []).filter(Boolean);
+  const list = (countries || []).filter(Boolean).map((c) => (
+    CONFIG.countryCase === 'lower' ? String(c).toLowerCase() : String(c).toUpperCase()
+  ));
   const filters = {};
-  if (list.length) {
-    const at = (_rr.get(known) || 0) % list.length;
-    _rr.set(known, at + 1);
-    const code = String(list[at]);
-    filters[CONFIG.countryFilter] = CONFIG.countryCase === 'lower' ? code.toLowerCase() : code.toUpperCase();
-  }
+  if (list.length) filters[CONFIG.countryFilter] = list;
   return { platform: known, filters };
 }
 
@@ -85,20 +84,62 @@ async function fetchSchema(apiKey, opts) {
   if (!apiKey) return null;
   const force = !!(opts && opts.force);
   const hit = _schema.get(apiKey);
-  if (!force && hit && Date.now() - hit.at < CONFIG.schemaTtlMs) return hit.data;
+  const ttl = hit && hit.data ? CONFIG.schemaTtlMs : CONFIG.schemaFailTtlMs;
+  if (!force && hit && Date.now() - hit.at < ttl) return hit.data;
+  const keep = (data) => {
+    _schema.set(apiKey, { at: Date.now(), data });
+    return data;
+  };
   try {
     const res = await fetch(CONFIG.baseUrl + CONFIG.endpoints.schema, { headers: _headers(apiKey) });
     if (!res.ok) {
       logger.warn('parser', t('xp.schemaFailed', { status: res.status }));
-      return hit ? hit.data : null;
+      return keep(hit ? hit.data : null);
     }
-    const data = await res.json();
-    _schema.set(apiKey, { at: Date.now(), data });
-    return data;
+    return keep(await res.json());
   } catch (e) {
     logger.warn('parser', t('xp.schemaError', { error: e.message }));
-    return hit ? hit.data : null;
+    return keep(hit ? hit.data : null);
   }
+}
+
+/**
+ * Оставить только те фильтры, которые площадка объявила своими.
+ *
+ * Любой лишний ключ - это 422 на старте задачи, то есть ни одного объявления за
+ * весь прогон. Так вышло со страной: клиент подставлял country всегда, а
+ * Poshmark его не принимает - страна у неё одна, и фильтровать по ней нечего.
+ * Пока схема не получена, отправляем как есть: выбрасывать условия по догадке
+ * хуже, чем попробовать.
+ */
+function _allowed(schema, platform, filters) {
+  const entry = schema && (schema.platforms || []).find((p) => p.platform === platform);
+  const supported = entry && entry.supported_filters;
+  if (!supported || !supported.length) return filters;
+  const out = {};
+  const dropped = [];
+  for (const [key, value] of Object.entries(filters)) {
+    if (supported.includes(key)) out[key] = value; else dropped.push(key);
+  }
+  if (dropped.length) {
+    logger.info('parser', t('xp.filtersSkipped', { platform, filters: dropped.join(', ') }));
+  }
+
+  // Страны площадка проверяет по своему списку и на чужой код отвечает отказом.
+  // В целях рассылки страна могла остаться от другой площадки - отбрасываем её
+  // здесь, а не получаем 422 на весь запрос.
+  const known = entry.countries || [];
+  const picked = out[CONFIG.countryFilter];
+  if (Array.isArray(picked) && known.length) {
+    const keep = picked.filter((c) => known.includes(c));
+    const lost = picked.filter((c) => !known.includes(c));
+    if (lost.length) {
+      logger.warn('parser', t('xp.countriesSkipped', { platform, countries: lost.join(', ') }));
+    }
+    if (keep.length) out[CONFIG.countryFilter] = keep;
+    else delete out[CONFIG.countryFilter];
+  }
+  return out;
 }
 
 async function _startTask(apiKey, platform, filters) {
@@ -126,24 +167,85 @@ async function _startTask(apiKey, platform, filters) {
   return data && data.task_id != null ? data.task_id : null;
 }
 
+/** Остановить задачу на стороне API. Ошибку глотаем: убирать за собой - не то,
+    из-за чего стоит ронять прогон или проверку. */
+async function _stopTask(apiKey, taskId) {
+  try {
+    const path = CONFIG.endpoints.stop.replace('{task_id}', String(taskId));
+    await fetch(CONFIG.baseUrl + path, { method: 'POST', headers: _headers(apiKey) });
+    logger.info('parser', t('xp.taskStopped', { taskId }));
+  } catch (e) {
+    logger.warn('parser', t('xp.stopFailed', { taskId, error: e.message }));
+  }
+}
+
 /**
- * @param peek Не двигать курсор. Нужно проверке фильтров из настроек: она
- *   показывает, сколько объявлений отдаёт запрос, и забрать этим страницу у
- *   рассылки не должна - прогон потом получил бы уже следующую.
+ * Остановить все заведённые задачи и забыть их.
+ *
+ * Зовётся по концу прогона и после проверки фильтров. Задача живёт на стороне
+ * API и переживает закрытие приложения, а завести такую же второй раз он не
+ * даёт (409) - и возобновить брошенную нельзя, идентификатор отдаётся ровно
+ * один раз. Поэтому за собой убираем всегда, иначе следующий запуск получит
+ * 409 и ни одного объявления.
  */
-async function fetchBatch({ apiKey, platform: want, countries, filters: extra, limit, peek }) {
+async function stopAll(apiKey) {
+  for (const [key, task] of Array.from(_tasks)) {
+    if (apiKey && !key.startsWith(apiKey + '|')) continue;
+    _tasks.delete(key);
+    await _stopTask(apiKey || key.split('|')[0], task.taskId);
+  }
+}
+
+/** Ключ реестра задач: одни и те же условия - одна задача. */
+function _key(apiKey, platform, filters) {
+  const sign = Object.keys(filters).sort().map((k) => `${k}=${filters[k]}`).join('&');
+  return `${apiKey}|${platform}|${sign}`;
+}
+
+/** Условия очередного запроса: цель рассылки плюс фильтры, минус то, чего
+    площадка не принимает. */
+async function _conditions(apiKey, want, countries, extra) {
+  const { platform, filters } = _resolve(want, countries);
+  // Фильтры из настроек кладём рядом со странами. Страны они перебить не могут:
+  // те зарезервированы за разделом "Цели" (см. filters.js).
+  Object.assign(filters, extra || {});
+  // Схема нужна до запроса: она говорит, какие ключи площадка вообще принимает.
+  // Ответ живёт в памяти, поэтому пополнение очереди её не дёргает.
+  return { platform, filters: _allowed(await fetchSchema(apiKey), platform, filters) };
+}
+
+/**
+ * Страница объявлений задачи.
+ *
+ * @param peek Не двигать курсор - страницу читает проверка, и забирать её у
+ *   рассылки нельзя: прогон получил бы уже следующую.
+ */
+async function _page(apiKey, task, { limit, peek } = {}) {
+  const path = CONFIG.endpoints.page.replace('{task_id}', String(task.taskId));
+  const url = CONFIG.baseUrl + path + (task.cursor != null ? `?cursor=${task.cursor}` : '');
+  const res = await fetch(url, { headers: _headers(apiKey) });
+  if (!res.ok) {
+    logger.warn('parser', t('xp.pageFailed', { status: res.status }));
+    return [];
+  }
+  const data = await res.json();
+  const listings = (data && data.listings) || [];
+  // Advance the cursor so the next call returns the following page. When
+  // has_more is false we keep the last cursor and re-poll later for new rows.
+  if (!peek && data && data.next_cursor != null) task.cursor = data.next_cursor;
+  const leads = listings.map(normalizeLead).filter((l) => l.email);
+  return typeof limit === 'number' ? leads.slice(0, limit) : leads;
+}
+
+async function fetchBatch({ apiKey, platform: want, countries, filters: extra, limit }) {
   if (!apiKey) {
     logger.warn('parser', t('xp.noKey'));
     return [];
   }
-  const { platform, filters } = _resolve(want, countries);
-  // Фильтры из настроек кладём рядом со страной. Страну они перебить не могут:
-  // она зарезервирована за разделом "Цели" (см. filters.js).
-  Object.assign(filters, extra || {});
-  const sign = Object.keys(extra || {}).sort().map((k) => `${k}=${extra[k]}`).join('&');
-  const key = `${apiKey}|${platform}|${filters.country || ''}|${sign}`;
-  let task = _tasks.get(key);
   try {
+    const { platform, filters } = await _conditions(apiKey, want, countries, extra);
+    const key = _key(apiKey, platform, filters);
+    let task = _tasks.get(key);
     if (!task) {
       const taskId = await _startTask(apiKey, platform, filters);
       if (taskId == null) return [];
@@ -151,20 +253,45 @@ async function fetchBatch({ apiKey, platform: want, countries, filters: extra, l
       _tasks.set(key, task);
       logger.success('parser', t('xp.taskStarted', { taskId, platform }));
     }
-    const path = CONFIG.endpoints.page.replace('{task_id}', String(task.taskId));
-    const url = CONFIG.baseUrl + path + (task.cursor != null ? `?cursor=${task.cursor}` : '');
-    const res = await fetch(url, { headers: _headers(apiKey) });
-    if (!res.ok) {
-      logger.warn('parser', t('xp.pageFailed', { status: res.status }));
+    return await _page(apiKey, task, { limit });
+  } catch (e) {
+    logger.error('parser', t('xp.error', { error: e.message }));
+    return [];
+  }
+}
+
+/**
+ * Разовая проверка условий: завести задачу, дождаться первых объявлений и
+ * убрать её за собой.
+ *
+ * Первая страница приходит пустой - задача только заводится, и площадке нужно
+ * несколько секунд. Если задача под эти же условия уже есть, значит идёт
+ * рассылка: читаем её страницу, курсор не двигаем и задачу не трогаем.
+ */
+async function probe({ apiKey, platform: want, countries, filters: extra, limit, attempts = 4, waitMs = 5000 }) {
+  if (!apiKey) {
+    logger.warn('parser', t('xp.noKey'));
+    return [];
+  }
+  try {
+    const { platform, filters } = await _conditions(apiKey, want, countries, extra);
+    const running = _tasks.get(_key(apiKey, platform, filters));
+    if (running) return await _page(apiKey, running, { limit, peek: true });
+
+    const taskId = await _startTask(apiKey, platform, filters);
+    if (taskId == null) return [];
+    logger.success('parser', t('xp.taskStarted', { taskId, platform }));
+    const task = { taskId, cursor: null };
+    try {
+      for (let i = 0; i < attempts; i++) {
+        const leads = await _page(apiKey, task, { limit, peek: true });
+        if (leads.length) return leads;
+        await new Promise((r) => setTimeout(r, waitMs));
+      }
       return [];
+    } finally {
+      await _stopTask(apiKey, taskId);
     }
-    const data = await res.json();
-    const listings = (data && data.listings) || [];
-    // Advance the cursor so the next call returns the following page. When
-    // has_more is false we keep the last cursor and re-poll later for new rows.
-    if (!peek && data && data.next_cursor != null) task.cursor = data.next_cursor;
-    const leads = listings.map(normalizeLead).filter((l) => l.email);
-    return typeof limit === 'number' ? leads.slice(0, limit) : leads;
   } catch (e) {
     logger.error('parser', t('xp.error', { error: e.message }));
     return [];
@@ -211,4 +338,4 @@ function normalizeLead(raw) {
   };
 }
 
-module.exports = { fetchBatch, fetchSchema, normalizeLead, CONFIG };
+module.exports = { fetchBatch, probe, stopAll, fetchSchema, normalizeLead, CONFIG };

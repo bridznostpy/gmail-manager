@@ -2277,14 +2277,16 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
 
 /* Заполненное условие подсвечено: по сетке из десятка полей иначе не видно,
    какие из них вообще участвуют в запросе. */
-.set-panel .flt-field > label { display: flex; align-items: center; gap: 8px; }
+.set-panel .flt-field > label { display: flex; align-items: center; gap: 8px; overflow: hidden; }
 .flt-label { flex-shrink: 0; }
 .flt-field.on > label .flt-label { color: var(--text); }
 .flt-field.on input, .flt-field.on select { border-color: var(--border-strong); }
+/* Метка ужимается первой: имя условия важнее пояснения, откуда оно взялось. */
 .flt-tag {
   padding: 2px 7px; border-radius: 999px;
   background: rgba(255, 255, 255, 0.05); border: 1px solid var(--border);
   color: var(--text-dim); font-size: var(--fs-2xs); white-space: nowrap;
+  flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
 }
 .flt-x {
   margin-left: auto; flex-shrink: 0;
@@ -2297,6 +2299,21 @@ body.drawer-docked .settings.wide .set-menu { display: none; }
 .flt-field.on .flt-x { opacity: 0.6; pointer-events: auto; }
 .flt-x:hover { opacity: 1; color: var(--text); background: rgba(255, 255, 255, 0.06); }
 .flt-x svg { width: 11px; height: 11px; }
+/* Отметки нескольких значений (категории площадки). */
+.flt-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.flt-chip {
+  padding: 7px 12px; border-radius: 999px;
+  background: var(--control-bg); border: 1px solid var(--border);
+  color: var(--text-dim); font-family: var(--font); font-size: var(--fs-xs); cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+.flt-chip:hover { border-color: var(--border-strong); color: var(--text); }
+.flt-chip.on { background: var(--accent-soft); border-color: var(--accent); color: var(--text); }
+@media (min-width: 1180px) {
+  .set-grid > .flt-multi { grid-column: span 2; }
+}
+
 /* Разделы условий: товар, объявление, продавец. */
 .flt-group + .flt-group { margin-top: 20px; }
 .flt-group > .section-label { display: block; margin-bottom: 10px; }

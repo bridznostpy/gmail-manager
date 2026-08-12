@@ -115,6 +115,14 @@ class ParserEngine {
     this.running = false;
     if (this._timer) clearTimeout(this._timer);
     this._timer = null;
+    // Задача парсинга живёт на стороне API и переживает закрытие приложения, а
+    // возобновить брошенную нельзя - её идентификатор отдаётся один раз. Не
+    // остановив её здесь, следующий прогон получил бы 409 и ни одного
+    // объявления. Ответа не ждём: остановка прогона не должна подвисать на
+    // чужой сети.
+    const { apiKey, apiType } = this.store.get('parser');
+    const client = apiType === 'vvs' ? vvs : xproject;
+    Promise.resolve(client.stopAll(apiKey)).catch(() => {});
     logger.info('parser', t('parser.stopped'));
   }
 }

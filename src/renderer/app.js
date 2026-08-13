@@ -164,7 +164,10 @@ const BG_PRESETS = {
 // сразу, и промах в нём виден только по сорванному прогону.
 const WAIT_SCALES = [1, 2, 3];
 
-const LOG_LEVELS = ['all', 'info', 'success', 'warn', 'error'];
+// Уровни фильтра живых логов. "all" показывает всё, КРОМЕ debug: подробности
+// прохода автоответа (кого увидели, кого пропустили) идут на каждое письмо и
+// забивают журнал одним и тем же. Они никуда не делись - у них своя кнопка.
+const LOG_LEVELS = ['all', 'info', 'success', 'warn', 'error', 'debug'];
 // Сколько строк держим в разметке. Буфер state.logs больше - он нужен фильтру
 // и поиску, но рисовать всю историю разом незачем.
 const LOG_DOM_MAX = 200;
@@ -1562,7 +1565,7 @@ function fmtAgo(ts) {
 // ── живые логи ─────────────────────────────────────────────────────
 function logPasses(entry) {
   const f = state.logFilter;
-  if (f.level !== 'all' && entry.level !== f.level) return false;
+  if (f.level === 'all' ? entry.level === 'debug' : entry.level !== f.level) return false;
   const q = f.query.trim().toLowerCase();
   if (!q) return true;
   return (entry.message + ' ' + entry.scope).toLowerCase().includes(q);
@@ -1621,7 +1624,10 @@ function paintLogLevels() {
   if (!box) return;
   for (const btn of $$('button', box)) {
     const lv = btn.dataset.v;
-    const n = lv === 'all' ? state.logs.length : state.logs.filter((e) => e.level === lv).length;
+    // У "all" считаем без debug - ровно то, что кнопка и покажет.
+    const n = lv === 'all'
+      ? state.logs.filter((e) => e.level !== 'debug').length
+      : state.logs.filter((e) => e.level === lv).length;
     let c = btn.querySelector('.count');
     if (!c) { c = h('<span class="count"></span>'); btn.appendChild(c); }
     c.textContent = String(n);

@@ -22,7 +22,7 @@
 const logger = require('../logger');
 const { t } = require('../i18n');
 const texts = require('../texts');
-const deepseek = require('./deepseek');
+const ai = require('./aiClient');
 
 // Что просим у модели. Слово "json" в задании обязательно: этого требует режим
 // строгого JSON у Deepseek (см. CONFIG.jsonMode в deepseek.js).
@@ -39,6 +39,31 @@ const SYSTEM_PROMPT = [
   '6. Plain text only: no HTML, no emoji spam, no signatures that were not there.',
   '7. Write natural, human, casual wording - not marketing copy.',
 ].join('\n');
+
+/**
+ * Разобрать ответ модели.
+ *
+ * Строгий JSON принимает не всякий провайдер, а без него модели любят обернуть
+ * объект в ```json ... ``` или подписать его словами. Снимаем обёртку и берём
+ * то, что лежит между первой скобкой и последней: терять из-за оформления
+ * годный ответ жалко.
+ */
+function _parseJson(answer) {
+  const raw = String(answer == null ? '' : answer).trim();
+  const attempts = [raw];
+  const fenced = /```(?:json)?\s*([\s\S]*?)```/i.exec(raw);
+  if (fenced) attempts.push(fenced[1].trim());
+  const first = raw.indexOf('{');
+  const last = raw.lastIndexOf('}');
+  if (first >= 0 && last > first) attempts.push(raw.slice(first, last + 1));
+  for (const text of attempts) {
+    try {
+      const parsed = JSON.parse(text);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
+    } catch (_e) { /* следующая попытка */ }
+  }
+  return null;
+}
 
 class TextSwapper {
   constructor(store) {
@@ -72,9 +97,14 @@ class TextSwapper {
   /** Состояние для окна настроек. */
   state() {
     const cfg = this.cfg();
+    const target = ai.resolve(cfg);
     return {
       enabled: !!cfg.enabled,
-      hasKey: deepseek.hasKey(cfg.apiKey),
+      hasKey: ai.hasKey(cfg.apiKey),
+      // Куда и чем на самом деле пойдёт запрос: провайдер и модель могут быть
+      // не заданы, и подставленное по умолчанию человеку тоже надо видеть.
+      baseUrl: target.baseUrl,
+      model: target.model,
       everyN: Number(cfg.everyN) || 0,
       swaps: Number(cfg.swaps) || 0,
       lastSwapAt: Number(cfg.lastSwapAt) || 0,
@@ -132,7 +162,7 @@ class TextSwapper {
   async swap({ auto = false } = {}) {
     const cfg = this.cfg();
     if (auto && !cfg.enabled) return { ok: false, reason: 'disabled' };
-    if (!deepseek.hasKey(cfg.apiKey)) {
+    if (!ai.hasKey(cfg.apiKey)) {
       logger.warn('ai', t('ai.noKey'));
       return { ok: false, reason: 'no_key' };
     }
@@ -163,16 +193,17 @@ class TextSwapper {
     this._busy = true;
     logger.info('ai', t('ai.started', { lang: String(lang).toUpperCase() }));
     try {
-      const answer = await deepseek.chat({
+      const answer = await ai.chat({
         apiKey: cfg.apiKey,
+        provider: cfg.provider,
+        baseUrl: cfg.baseUrl,
         model: cfg.model,
         system: SYSTEM_PROMPT,
         user: this._task(source, lang, cfg.instruction),
       });
       if (!answer) return { ok: false, reason: 'no_answer' };
 
-      let parsed = null;
-      try { parsed = JSON.parse(answer); } catch (_e) { parsed = null; }
+      const parsed = _parseJson(answer);
       if (!parsed) {
         logger.warn('ai', t('ai.badJson'));
         return { ok: false, reason: 'bad_json' };

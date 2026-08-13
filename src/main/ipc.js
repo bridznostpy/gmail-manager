@@ -18,7 +18,7 @@ const updater = require('./updater');
 const parserFilters = require('./parser/filters');
 const xproject = require('./parser/apis/xproject');
 const vvs = require('./parser/apis/vvs');
-const deepseek = require('./ai/deepseek');
+const aiClient = require('./ai/aiClient');
 
 // Данные для превью HTML-шаблона, когда контактов рассылки ещё нет. Ссылка
 // заведомо нерабочая: настоящую выдаёт API только под реальный заказ.
@@ -226,12 +226,12 @@ function register(ctx) {
   });
 
   // ── обновление текстов нейронкой ──────────────────────────────────
-  // Ключ Deepseek через мост не ходит - берём его из настроек здесь же.
+  // Ключ провайдера через мост не ходит - берём его из настроек здесь же.
   ipcMain.handle('ai:state', () => (aiTexts ? aiTexts.state() : null));
-  ipcMain.handle('ai:test', () => {
-    const cfg = store.get('ai') || {};
-    return deepseek.test(cfg.apiKey, cfg.model);
-  });
+  ipcMain.handle('ai:test', () => aiClient.test(store.get('ai') || {}));
+  // Адреса и известные модели провайдеров живут в клиенте: своей копии в окне
+  // быть не должно, иначе список моделей однажды разойдётся с настоящим.
+  ipcMain.handle('ai:providers', () => aiClient.PROVIDERS);
   ipcMain.handle('ai:swapNow', () => (aiTexts ? aiTexts.swap({ auto: false }) : { ok: false, reason: 'no_engine' }));
   ipcMain.handle('ai:restoreBaseline', () => (aiTexts ? aiTexts.restoreBaseline() : { ok: false, reason: 'no_engine' }));
   // Тексты могли смениться посреди рассылки - окно должно показать новые, а не

@@ -164,6 +164,11 @@ const BG_PRESETS = {
 // сразу, и промах в нём виден только по сорванному прогону.
 const WAIT_SCALES = [1, 2, 3];
 
+// Провайдеры нейронки: адреса и известные модели живут в main
+// (src/main/ai/aiClient.js) и приходят при запуске окна. Своей копии тут нет
+// нарочно - список моделей однажды разошёлся бы с настоящим.
+let AI_PROVIDERS = { deepseek: { baseUrl: '', defaultModel: 'deepseek-chat', models: [] } };
+
 // Уровни фильтра живых логов. "all" показывает всё, КРОМЕ debug: подробности
 // прохода автоответа (кого увидели, кого пропустили) идут на каждое письмо и
 // забивают журнал одним и тем же. Они никуда не делись - у них своя кнопка.
@@ -3839,12 +3844,22 @@ function buildSetParser() {
  */
 function buildSetAi() {
   const a = state.settings.ai || {};
+  const provider = AI_PROVIDERS[a.provider] ? a.provider : 'deepseek';
   const el = h(setCard('ai', `
     ${setBlock('set.b.api', 'ai.hint', `
-      <div class="set-grid">
-        <div class="field"><label for="aiKey">${esc(t('ai.apiKey'))}</label><input type="password" id="aiKey" value="${esc(a.apiKey || '')}" placeholder="${esc(t('ai.apiKeyPh'))}"/></div>
-        <div class="field"><label for="aiModel">${esc(t('ai.model'))}</label><input type="text" id="aiModel" value="${esc(a.model || '')}" placeholder="deepseek-chat"/></div>
+      <div class="field"><label>${esc(t('ai.provider'))}</label>
+        <div class="seg" id="aiProv">
+          ${Object.keys(AI_PROVIDERS).map((id) => `<button data-v="${esc(id)}" class="${id === provider ? 'active' : ''}">${esc(t('ai.p.' + id))}</button>`).join('')}
+        </div>
       </div>
+      <div class="set-grid">
+        <div class="field"><label for="aiKey">${esc(t('ai.apiKey'))}</label><input type="password" id="aiKey" value="${esc(a.apiKey || '')}" placeholder="${esc(t('ai.apiKeyPh.' + provider))}"/></div>
+        <div class="field"><label for="aiModel">${esc(t('ai.model'))}</label>
+          <input type="text" id="aiModel" list="aiModels" value="${esc(a.model || '')}" placeholder="${esc(AI_PROVIDERS[provider].defaultModel)}"/>
+          <datalist id="aiModels">${(AI_PROVIDERS[provider].models || []).map((m) => `<option value="${esc(m)}"></option>`).join('')}</datalist>
+        </div>
+      </div>
+      <div class="field"><label for="aiBase">${esc(t('ai.baseUrl'))}</label><input type="text" id="aiBase" value="${esc(a.baseUrl || '')}" placeholder="${esc(AI_PROVIDERS[provider].baseUrl)}"/></div>
       <div class="field"><label class="switch"><input type="checkbox" id="aiOn" ${a.enabled ? 'checked' : ''}/><span class="track"></span><span class="lbl">${esc(t('ai.enabled'))}</span></label></div>
       <div class="field" style="max-width:340px"><label for="aiEveryN">${esc(t('ai.everyN'))}</label><input type="number" id="aiEveryN" min="0" value="${Number(a.everyN) || 0}"/></div>
       <div class="field"><label for="aiInstr">${esc(t('ai.instruction'))}</label><textarea id="aiInstr" style="min-height:80px" spellcheck="false" placeholder="${esc(t('ai.instructionPh'))}">${esc(a.instruction || '')}</textarea></div>`)}
@@ -3859,9 +3874,23 @@ function buildSetAi() {
 
   bindText($('#aiKey', el), 'ai', 'apiKey');
   bindText($('#aiModel', el), 'ai', 'model');
+  bindText($('#aiBase', el), 'ai', 'baseUrl');
   bindText($('#aiInstr', el), 'ai', 'instruction');
   bindToggle($('#aiOn', el), 'ai', 'enabled');
   bindNumber($('#aiEveryN', el), 'ai', 'everyN', 0);
+
+  // Смена провайдера тянет за собой модель: имена у них разные, и оставленная
+  // от прошлого провайдера модель дала бы 404 на первом же обновлении. Свою,
+  // вписанную руками, не трогаем - её выбрал человек.
+  $$('#aiProv button', el).forEach((b) => b.addEventListener('click', async () => {
+    const next = b.dataset.v;
+    if (next === provider) return;
+    const known = Object.values(AI_PROVIDERS).some((p) => p.defaultModel === (a.model || ''));
+    const patch = { provider: next };
+    if (!a.model || known) patch.model = AI_PROVIDERS[next].defaultModel;
+    await saveSection('ai', patch);
+    renderSettingsGroup($('.settings'));
+  }));
 
   const busy = (on) => {
     for (const id of ['#aiTest', '#aiSwap', '#aiRestore']) {
@@ -3874,7 +3903,7 @@ function buildSetAi() {
     busy(true);
     const res = await api.ai.test();
     busy(false);
-    if (res && res.ok) toast(t('ai.testOk'), 'success');
+    if (res && res.ok) toast(t('ai.testOk', { model: res.model }), 'success');
     else toast(t(res && res.reason === 'no_key' ? 'ai.testNoKey' : 'ai.testFailed'), 'error');
     paintAiState($('#aiState', el));
   });
@@ -3917,10 +3946,12 @@ async function paintAiState(box) {
   if (!box) return;
   const st = await api.ai.state();
   if (!st) { box.textContent = ''; return; }
-  const rows = [t('ai.stSwaps', { n: st.swaps })];
+  const rows = [t('ai.stTarget', { model: st.model, url: st.baseUrl }), t('ai.stSwaps', { n: st.swaps })];
   if (st.lastSwapAt) rows.push(t('ai.stLast', { when: new Date(st.lastSwapAt).toLocaleString() }));
   if (st.enabled && st.everyN > 0) rows.push(t('ai.stLeft', { n: Math.max(0, st.everyN - st.sinceSwap) }));
-  if (!st.hasBaseline) rows.push(t('ai.stNoBaseline'));
+  // Эталона ещё нет: если тексты рассылки загружены, им он и станет при первом
+  // обновлении. Строка "исходных текстов нет" в этом случае врала бы.
+  if (!st.hasBaseline) rows.push(t(state.settings.texts ? 'ai.stBaselineLater' : 'ai.stNoBaseline'));
   if (st.busy) rows.push(t('ai.stBusy'));
   box.textContent = rows.join(' | ');
 }
@@ -6090,6 +6121,7 @@ async function boot() {
   render();
 
   state.logs = await api.logs.recent(200);
+  AI_PROVIDERS = (await api.ai.providers()) || AI_PROVIDERS;
   await refreshProfiles();
   await refreshRun();
   state.booted = true;

@@ -80,6 +80,7 @@ contextBridge.exposeInMainWorld('api', {
   },
   ai: {
     state: () => ipcRenderer.invoke('ai:state'),
+    providers: () => ipcRenderer.invoke('ai:providers'),
     test: () => ipcRenderer.invoke('ai:test'),
     swapNow: () => ipcRenderer.invoke('ai:swapNow'),
     restoreBaseline: () => ipcRenderer.invoke('ai:restoreBaseline'),

@@ -49,6 +49,11 @@ const T_LONG = 10000;
 const T_MED = 6000;
 const T_SHORT = 3000;
 
+// Сколько ждём ПОЯВЛЕНИЯ полосы "Loading..." после нажатия "Обновить". Ждать
+// долго тут нечего: на быстром обновлении она может не отрисоваться вовсе, и
+// решение всё равно принимает проверка "полоса ушла, список на месте".
+const LOADING_APPEAR_MS = 1500;
+
 // Инбокс конкретной почты собирает mailbox.inboxUrl: при мультилогине адрес
 // зависит от индекса аккаунта, и одного общего адреса больше нет.
 
@@ -249,9 +254,16 @@ const SEL = {
   body: 'div[role="textbox"][g_editable="true"], div[role="textbox"][contenteditable="true"]',
   send: 'div[role="button"].aoO, div[role="button"][data-tooltip^="Send"], div[role="button"][aria-label^="Send"]',
   close: 'button.Ha, button[aria-label^="Save"]',
-  refreshBtn: '[data-tooltip="Refresh"], [aria-label="Refresh"], .T-I.J-J5-Ji.nu.T-I-ax7.L3',
+  refreshBtn: '[data-tooltip="Refresh"], [aria-label="Refresh"], [data-tooltip="Обновить"], [aria-label="Обновить"], .T-I.J-J5-Ji.nu.T-I-ax7.L3',
   row: 'tr.zA',
   unreadRow: 'tr.zA.zE',
+  // Полоса "Loading..." над списком писем. Живёт в шапке списка
+  // (div.vZ > span.v1) и появляется на время обновления. Это НЕ #loading -
+  // тот показывается только при первой загрузке Gmail.
+  loadingBar: 'div.vZ span.v1',
+  // Сам список писем как таблица. Нужен отдельно от строк: у пустого инбокса
+  // строк нет вовсе, а список при этом на месте и свежий.
+  listBox: 'table.F.cf.zt, div[role="main"] table[role="grid"]',
   // Поле ввода в открытом окне ответа: своего мини-окна у него нет.
   replyBox: 'div[role=textbox][g_editable="true"][aria-label*=Body], div[role=textbox][aria-label*=Body], div[role=textbox]',
   // Признак раскрытой переписки.
@@ -520,21 +532,40 @@ function putBodyFn(node, put) {
 }
 
 /**
- * Список писем дорисован и с ним можно работать: строки есть, а полоса загрузки
- * Gmail ушла.
+ * Список писем дорисован и с ним можно работать: полоса загрузки ушла, а сам
+ * список на месте.
  *
- * TODO(gmail-dom): #loading - блок "Загрузка..." самого Gmail. Он скрывается
- * стилем, поэтому смотрим на размеры, а не на наличие в разметке.
+ * Наличие СТРОК признаком свежести быть не может: у пустого инбокса их нет
+ * никогда, и проход автоответа пропускался бы вечно. Признак списка - его
+ * таблица, она есть и без единого письма.
+ *
+ * TODO(gmail-dom): полоса загрузки - span.v1 внутри шапки списка (div.vZ),
+ * плюс #loading первой загрузки Gmail. Оба скрываются стилем, поэтому смотрим
+ * на размеры, а не на наличие в разметке.
  */
 function gmailListReadyFn(arg) {
-  var rows = document.querySelectorAll(arg.row);
-  if (!rows.length) return false;
-  var loading = document.getElementById('loading');
-  if (loading) {
-    var r = loading.getBoundingClientRect();
-    if (r.width > 0 && r.height > 0) return false;
+  var visible = function (el) {
+    if (!el) return false;
+    var r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  };
+  var bars = document.querySelectorAll(arg.loadingBar);
+  for (var i = 0; i < bars.length; i++) {
+    if (visible(bars[i])) return false;
   }
-  return true;
+  if (visible(document.getElementById('loading'))) return false;
+  if (document.querySelector(arg.row)) return true;
+  return !!document.querySelector(arg.listBox);
+}
+
+/** Полоса "Loading..." видна прямо сейчас: обновление списка идёт. */
+function gmailLoadingFn(arg) {
+  var bars = document.querySelectorAll(arg.loadingBar);
+  for (var i = 0; i < bars.length; i++) {
+    var r = bars[i].getBoundingClientRect();
+    if (r.width > 0 && r.height > 0) return true;
+  }
+  return false;
 }
 
 /** Вход в аккаунт приоритетнее страницы входа: инбокс может нести оба признака. */
@@ -1002,26 +1033,37 @@ class PlaywrightManager {
   }
 
   /**
-   * Нажать "Обновить" в списке писем. Без этого сканируем то, что осело во
-   * вкладке: она может висеть открытой часами, и новый ответ в DOM не появится.
+   * Нажать "Обновить" в списке писем и дождаться, пока уйдёт "Loading...".
+   * Без этого сканируем то, что осело во вкладке: она может висеть открытой
+   * часами, и новый ответ в DOM не появится.
+   *
+   * Возвращает причину: 'ok' | 'stale' | 'reload_failed'. Вызывающему нужна не
+   * только неудача, но и то, чем она кончилась, - иначе в журнале одна строка
+   * на три разных случая.
    */
   async _refreshInbox(page) {
-    if (await this._clickIf(page, SEL.refreshBtn)) {
-      // Ждём не "какое-то время", а состояние: строки на месте, полоса загрузки
-      // Gmail ушла. Пока она висит, список дорисовывается, и читать его рано.
-      return !!(await this._waitFn(page, gmailListReadyFn, { row: SEL.row }, this._t(T_MED)));
+    const ready = { row: SEL.row, listBox: SEL.listBox, loadingBar: SEL.loadingBar };
+    // Две попытки клика: Gmail мог перерисовать шапку списка ровно в момент
+    // нажатия, и один промах - это ещё не повод перезагружать вкладку.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (!(await this._clickIf(page, SEL.refreshBtn))) break;
+      // Появления полосы ждём коротко и без последствий: на быстром обновлении
+      // она может не успеть отрисоваться, и это нормально.
+      await this._waitFn(page, gmailLoadingFn, { loadingBar: SEL.loadingBar }, LOADING_APPEAR_MS);
+      if (await this._waitFn(page, gmailListReadyFn, ready, this._t(T_MED))) return 'ok';
     }
-    // Кнопку не нашли или она не нажалась. Читать список "как есть" НЕЛЬЗЯ:
-    // он может быть протухшим, и тогда уже отвеченная переписка снова выглядит
-    // непрочитанной - именно так уходил второй автоответ в ту же переписку.
-    // Перезагружаем страницу: это медленнее, зато список заведомо свежий.
+    // Кнопку не нашли, она не нажалась или список так и не устоялся. Читать
+    // его "как есть" НЕЛЬЗЯ: он может быть протухшим, и тогда уже отвеченная
+    // переписка снова выглядит непрочитанной - именно так уходил второй
+    // автоответ в ту же переписку. Перезагружаем страницу: это медленнее, зато
+    // список заведомо свежий.
     logger.debug('gmail', t('gmail.refreshMissing'));
     try {
       await page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
     } catch (_e) {
-      return false;
+      return 'reload_failed';
     }
-    return !!(await this._waitFn(page, gmailListReadyFn, { row: SEL.row }, this._t(T_LONG)));
+    return (await this._waitFn(page, gmailListReadyFn, ready, this._t(T_LONG))) ? 'ok' : 'stale';
   }
 
   /**
@@ -1366,8 +1408,9 @@ class PlaywrightManager {
     // Свежесть списка обязательна. Не удалось обновить - лучше вернуть пусто,
     // чем отдать протухшие строки: по ним автоответ уйдёт повторно в переписку,
     // на которую уже отвечали. Так же поступает и расширение.
-    if (!(await this._refreshInbox(page))) {
-      logger.warn('gmail', t('gmail.listStale'));
+    const fresh = await this._refreshInbox(page);
+    if (fresh !== 'ok') {
+      logger.warn('gmail', t(fresh === 'reload_failed' ? 'gmail.reloadFailed' : 'gmail.listStale'));
       return [];
     }
     let list = [];
@@ -1383,24 +1426,31 @@ class PlaywrightManager {
   }
 
   /**
-   * Вернуть вкладку в список писем. Признак списка - строки tr.zA: они есть и в
-   * инбоксе, и в ярлыке, где пользователь мог остаться сам. Уводим на инбокс
-   * только когда строк нет (открытый тред, другой сайт, окно письма).
+   * Вернуть вкладку в список писем. Признак списка - его таблица (а если писем
+   * нет, то она и есть всё, что там осталось) либо строки tr.zA: и то, и другое
+   * встречается и в инбоксе, и в ярлыке, где пользователь мог остаться сам.
+   * Уводим на инбокс только когда списка нет вовсе (открытый тред, другой сайт,
+   * окно письма).
    */
+  async _onList(page, timeout) {
+    if (timeout == null) return this._exists(page, SEL.row) || this._exists(page, SEL.listBox);
+    return this._wait(page, SEL.row + ', ' + SEL.listBox, timeout);
+  }
+
   async _ensureInbox(page, userIndex = 0) {
     // Своя вкладка почты: возвращать её надо на СВОЙ инбокс, чужой индекс u/N
     // увёл бы вкладку другого аккаунта.
     if (mailboxes.sameMailbox(page.url(), userIndex)) {
-      if (await this._exists(page, SEL.row)) return true;
+      if (await this._onList(page)) return true;
       // Из открытой переписки возвращаемся стрелкой "Назад", как это сделал бы
       // человек: Gmail тут одностраничный, и перезагрузка ради возврата в
       // список - лишние секунды на каждом ответе.
       if (await this._clickOrdered(page, SEL_ORDERED.backToInbox, this._t(T_SHORT))) {
-        if (await this._wait(page, SEL.row, this._t(T_MED))) return true;
+        if (await this._onList(page, this._t(T_MED))) return true;
       }
     }
     await page.goto(mailboxes.inboxUrl(userIndex), { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
-    return this._wait(page, SEL.row, this._t(T_MED));
+    return this._onList(page, this._t(T_MED));
   }
 
   /**

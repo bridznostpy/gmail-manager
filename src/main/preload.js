@@ -70,6 +70,19 @@ contextBridge.exposeInMainWorld('api', {
   texts: {
     openFile: () => ipcRenderer.invoke('texts:openFile'),
     saveFile: (content) => ipcRenderer.invoke('texts:saveFile', content),
+    // Тексты сменились в главном процессе (нейронка обновила их посреди
+    // рассылки): раздел текстов подхватывает новые сам.
+    onChanged: (cb) => {
+      const handler = (_e, payload) => cb(payload);
+      ipcRenderer.on('texts:changed', handler);
+      return () => ipcRenderer.removeListener('texts:changed', handler);
+    },
+  },
+  ai: {
+    state: () => ipcRenderer.invoke('ai:state'),
+    test: () => ipcRenderer.invoke('ai:test'),
+    swapNow: () => ipcRenderer.invoke('ai:swapNow'),
+    restoreBaseline: () => ipcRenderer.invoke('ai:restoreBaseline'),
   },
   autoReply: {
     defaultHtml: () => ipcRenderer.invoke('autoreply:defaultHtml'),

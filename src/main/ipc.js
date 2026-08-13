@@ -18,6 +18,7 @@ const updater = require('./updater');
 const parserFilters = require('./parser/filters');
 const xproject = require('./parser/apis/xproject');
 const vvs = require('./parser/apis/vvs');
+const deepseek = require('./ai/deepseek');
 
 // Данные для превью HTML-шаблона, когда контактов рассылки ещё нет. Ссылка
 // заведомо нерабочая: настоящую выдаёт API только под реальный заказ.
@@ -32,7 +33,7 @@ const DEMO_CONTACT = {
 const DEMO_LINK = 'https://example.com/confirm/demo';
 
 function register(ctx) {
-  const { store, profileStore, contactStore, chrome, parser, sender, mainWindow, userData } = ctx;
+  const { store, profileStore, contactStore, chrome, parser, sender, aiTexts, mainWindow, userData } = ctx;
 
   const send = (channel, payload) => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload);
@@ -86,7 +87,7 @@ function register(ctx) {
 
   // Ключи API - самое ценное в файле, и уносить их в копию нужно не всегда:
   // настройками делятся, чтобы повторить лимиты и оформление, а не доступы.
-  const SECRET_FIELDS = [['parser', 'apiKey'], ['link', 'apiKey'], ['telegram', 'botToken']];
+  const SECRET_FIELDS = [['parser', 'apiKey'], ['link', 'apiKey'], ['telegram', 'botToken'], ['ai', 'apiKey']];
 
   ipcMain.handle('settings:export', async (_e, { withSecrets } = {}) => {
     const res = await dialog.showSaveDialog(mainWindow || null, {
@@ -214,11 +215,28 @@ function register(ctx) {
     return { ...built, source: real ? 'contact' : 'demo', title: contact.title || '' };
   });
 
+  // Тексты пришли ОТ ЧЕЛОВЕКА (загрузил файл, поправил строку) - значит это и
+  // есть эталон, от которого нейронка будет отталкиваться на каждом обновлении.
+  // Своей выдачей эталон она не переписывает, см. ai/textSwap.js.
   ipcMain.handle('settings:loadTexts', (_e, json) => {
     store.set('texts', json);
+    if (aiTexts) aiTexts.rememberBaseline(json);
     logger.success('system', t('sys.textsLoaded'));
     return store.get('texts');
   });
+
+  // ── обновление текстов нейронкой ──────────────────────────────────
+  // Ключ Deepseek через мост не ходит - берём его из настроек здесь же.
+  ipcMain.handle('ai:state', () => (aiTexts ? aiTexts.state() : null));
+  ipcMain.handle('ai:test', () => {
+    const cfg = store.get('ai') || {};
+    return deepseek.test(cfg.apiKey, cfg.model);
+  });
+  ipcMain.handle('ai:swapNow', () => (aiTexts ? aiTexts.swap({ auto: false }) : { ok: false, reason: 'no_engine' }));
+  ipcMain.handle('ai:restoreBaseline', () => (aiTexts ? aiTexts.restoreBaseline() : { ok: false, reason: 'no_engine' }));
+  // Тексты могли смениться посреди рассылки - окно должно показать новые, а не
+  // те, что оно прочитало при открытии раздела.
+  if (aiTexts) aiTexts.onChange((payload) => send('texts:changed', payload));
 
   // ── profiles ──────────────────────────────────────────────────────
   // Работает профиль или нет, знает менеджер браузеров, а не profiles.json:

@@ -32,7 +32,7 @@ const htmlTemplate = require('../htmlTemplate');
 const mailboxes = require('../mailbox');
 
 class SenderEngine {
-  constructor({ store, profileStore, chrome, parser, contactStore, dialogStore, statsStore, messageStore }) {
+  constructor({ store, profileStore, chrome, parser, contactStore, dialogStore, statsStore, messageStore, aiTexts }) {
     this.store = store;
     this.profileStore = profileStore;
     this.chrome = chrome;
@@ -47,6 +47,9 @@ class SenderEngine {
     // Журнал переписки для экрана чатов: dialogStore хранит только решения
     // автоответчика, тексты писем нужны отдельно.
     this.messageStore = messageStore;
+    // Обновление текстов нейронкой по счётчику писем. Движок только считает
+    // отправленные письма, всё остальное - забота ai/textSwap.js.
+    this.aiTexts = aiTexts || null;
     this.running = false;
     // Пауза - это остановленная ОТПРАВКА при живом прогоне: автоответчик
     // продолжает опрашивать почту, аптайм идёт, очередь не теряется.
@@ -172,6 +175,9 @@ class SenderEngine {
     this.linksThisSession = 0;
     this._notifiedAllLimits = false;
     this._rr = 0;
+    // Счётчик писем до обновления текстов - про текущий прогон, а не про всю
+    // историю: между запусками человек мог поменять и тексты, и настройку.
+    if (this.aiTexts) this.aiTexts.reset();
     // Очередь начинаем с чистого листа: лиды прошлого прогона собраны под
     // прошлую цель рассылки, а парсер дольёт свежие за первые же секунды.
     this.parser.clear();
@@ -253,6 +259,9 @@ class SenderEngine {
       if (this.contactStore) this.contactStore.recordSent({ lead, profile, mailbox });
       if (this.statsStore) this.statsStore.note('sent');
       this.parser.noteSent();
+      // Тексты обновляются по счётчику отправленных писем. Ждать обновление
+      // здесь нельзя: рассылка продолжает идти, пока модель думает.
+      if (this.aiTexts) this.aiTexts.noteSent();
     } catch (e) {
       if (e && e.code === 'no_tab') {
         // Вкладку почты закрыли посреди прогона. Лид возвращаем в очередь - он
@@ -722,6 +731,8 @@ class SenderEngine {
     this.repliesThisSession = 0;
     this.linksThisSession = 0;
     this._notifiedAllLimits = false;
+    // Обновление текстов, начатое этим прогоном, применять уже некуда.
+    if (this.aiTexts) this.aiTexts.reset();
     if (this._sendTimer) clearTimeout(this._sendTimer);
     if (this._replyTimer) clearTimeout(this._replyTimer);
     this.parser.stop();

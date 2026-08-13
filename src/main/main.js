@@ -16,6 +16,7 @@ const { MessageStore } = require('./messages/messageStore');
 const { PlaywrightManager } = require('./cdp/chromeManager');
 const { ParserEngine } = require('./parser/parserEngine');
 const { SenderEngine } = require('./sender/senderEngine');
+const { TextSwapper } = require('./ai/textSwap');
 const ipc = require('./ipc');
 const autoScan = require('./profiles/autoScan');
 const appearance = require('./appearance');
@@ -75,8 +76,9 @@ function buildContext() {
   const messageStore = new MessageStore(path.join(userData, 'messages.json'));
   const chrome = new PlaywrightManager(store, userData);
   const parser = new ParserEngine(store);
-  const sender = new SenderEngine({ store, profileStore, chrome, parser, contactStore, dialogStore, statsStore, messageStore });
-  return { store, profileStore, contactStore, dialogStore, statsStore, messageStore, chrome, parser, sender, userData };
+  const aiTexts = new TextSwapper(store);
+  const sender = new SenderEngine({ store, profileStore, chrome, parser, contactStore, dialogStore, statsStore, messageStore, aiTexts });
+  return { store, profileStore, contactStore, dialogStore, statsStore, messageStore, chrome, parser, sender, aiTexts, userData };
 }
 
 /** Иконка окна и панели задач. Генерируется скриптом `npm run icon`; если её

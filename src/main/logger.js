@@ -21,7 +21,7 @@ class Logger {
     const entry = {
       ts: Date.now(),
       level, // 'info' | 'warn' | 'error' | 'success' | 'debug'
-      scope, // 'parser' | 'cdp' | 'sender' | 'gmail' | 'telegram' | 'system'
+      scope, // 'parser' | 'cdp' | 'sender' | 'gmail' | 'telegram' | 'ai' | 'system'
       message: String(message),
       extra: extra || null,
     };

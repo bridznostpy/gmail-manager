@@ -10,7 +10,10 @@
  *     until it reaches `mailsPerAccount`, then we move to the next account.
  *   • The auto-responder runs the WHOLE time (during send and after all limits
  *     are hit), polling every `checkIntervalSec` for seller replies and sending
- *     the configured auto-reply, capped at `maxRepliesPerDialog`.
+ *     the configured auto-reply, capped at `maxRepliesPerDialog`. Плюс к
+ *     таймеру проход делается сразу после КАЖДОГО отправленного письма, по той
+ *     почте, с которой оно ушло: список там всё равно надо обновить, а ответ
+ *     продавца иначе ждал бы общего прохода.
  *   • When every account has hit its limit, the user is notified via Telegram
  *     and the system stays alive in auto-reply-only mode until stopped.
  *
@@ -239,8 +242,10 @@ class SenderEngine {
       return;
     }
     const { profile, mailbox } = slot;
+    let sent = false;
     try {
       await this._sendFirstMessage(slot, lead);
+      sent = true;
       this.profileStore.bumpMailbox(profile.id, mailbox.email);
       this.sentThisSession++;
       // Сохраняем контакт с данными товара и почтой, с которой ушло письмо:
@@ -264,9 +269,34 @@ class SenderEngine {
         }));
       }
     }
+    // Письмо ушло - сразу нажимаем "Обновить" в ЭТОЙ вкладке, ждём, пока уйдёт
+    // "Loading...", и разбираем новые письма. Проход стоит ЗА пределами try
+    // отправки нарочно: его отказ не должен выглядеть отказом отправки и
+    // возвращать уже отправленный лид обратно в очередь.
+    if (sent) await this._pollAfterSend(slot);
     // Пауза между письмами - из настроек. Ждём именно здесь, после отправки:
     // очередь и лимиты уже сошлись, и следующий заход начнётся с чистого места.
     this._sendTimer = setTimeout(() => this._sendLoop(), this._sendDelayMs());
+  }
+
+  /**
+   * Проход автоответа по одной почте сразу после отправки с неё письма.
+   *
+   * Флаг `_replying` держим на всё время: пока разбираем список, отправка с
+   * этой же вкладки идти не должна, и проход по таймеру тоже (иначе один и тот
+   * же тред разобрали бы дважды и ответили на него два раза).
+   */
+  async _pollAfterSend(slot) {
+    const cfg = this._replyConfig();
+    if (!cfg) return;
+    this._replying = true;
+    try {
+      await this._pollMailbox(slot, cfg);
+    } catch (e) {
+      logger.error('sender', t('reply.pollError', { error: e.message }));
+    } finally {
+      this._replying = false;
+    }
   }
 
   /**
@@ -306,6 +336,12 @@ class SenderEngine {
   async _replyLoop() {
     if (!this.running) return;
     const intervalMs = Math.max(3, this.store.get('system').checkIntervalSec) * 1000;
+    // Проход уже идёт (его начала отправка) - этот тик пропускаем. Два прохода
+    // разом прочитали бы один и тот же тред до записи ответа и ответили дважды.
+    if (this._replying) {
+      this._replyTimer = setTimeout(() => this._replyLoop(), intervalMs);
+      return;
+    }
     // Флаг держим на ВЕСЬ проход, включая скан непрочитанных: скан тоже водит
     // вкладку почты (обновляет список), и отправка в это время мешала бы.
     this._replying = true;
@@ -320,6 +356,25 @@ class SenderEngine {
   }
 
   /**
+   * Общие для прохода настройки: лимит ответов, тексты и язык. Возвращает null,
+   * если автоответ выключен, - тогда проход не нужен вовсе.
+   */
+  _replyConfig() {
+    const loaded = this.store.get('texts');
+    // Автоответ включён, если в JSON нет явного выключателя.
+    const enabled = !loaded || !loaded.autoReply || loaded.autoReply.enabled !== false;
+    if (!enabled) {
+      logger.debug('sender', t('reply.disabled'));
+      return null;
+    }
+    return {
+      maxReplies: this.store.get('system').maxRepliesPerDialog,
+      loaded,
+      lang: texts.outreachLang(this.store),
+    };
+  }
+
+  /**
    * Проход автоответчика.
    *
    * Сценарий: продавец ответил - отвечаем ему. Написал после нашего ответа
@@ -329,122 +384,122 @@ class SenderEngine {
    * в dialogStore, и он переживает перезапуск приложения.
    */
   async _pollReplies() {
-    const maxReplies = this.store.get('system').maxRepliesPerDialog;
-    const loaded = this.store.get('texts');
-    const lang = texts.outreachLang(this.store);
-    // Автоответ включён, если в JSON нет явного выключателя.
-    const enabled = !loaded || !loaded.autoReply || loaded.autoReply.enabled !== false;
-    if (!enabled) {
-      logger.debug('sender', t('reply.disabled'));
-      return;
-    }
+    const cfg = this._replyConfig();
+    if (!cfg) return;
     // Проход идёт по ПОЧТАМ, а не по профилям: в одном профиле их несколько, и
     // список писем у каждой свой.
     const slots = this._mailboxes();
-    logger.debug('sender', t('reply.poll', { count: slots.length, cap: maxReplies }));
-    for (const { profile, mailbox } of slots) {
-      const account = profile;
-      const box = mailboxes.label(mailbox);
-      const key = mailboxes.accountKey(profile.id, mailbox.email);
-      let rows = [];
+    logger.debug('sender', t('reply.poll', { count: slots.length, cap: cfg.maxReplies }));
+    for (const slot of slots) await this._pollMailbox(slot, cfg);
+  }
+
+  /**
+   * Проход по ОДНОЙ почте. Вынесен отдельно, потому что зовётся из двух мест:
+   * из общего прохода по таймеру и сразу после отправки письма с этой почты.
+   */
+  async _pollMailbox({ profile, mailbox }, cfg) {
+    const { maxReplies, loaded, lang } = cfg;
+    const account = profile;
+    const box = mailboxes.label(mailbox);
+    const key = mailboxes.accountKey(profile.id, mailbox.email);
+    let rows = [];
+    try {
+      // Берём весь список, а не только непрочитанное: что новое, а что нет,
+      // решаем сами по идентификатору последнего письма треда.
+      rows = await this.chrome.gmailListThreads(account.id, { mailbox, max: 25 });
+    } catch (e) {
+      if (e && e.code === 'no_tab') {
+        this.profileStore.setMailboxTab(profile.id, mailbox.email, false);
+        logger.warn('sender', t('reply.mailboxGone', { label: account.label, email: box }));
+        return;
+      }
+      logger.warn('sender', t('reply.unreadFailed', {
+        label: account.label + ' / ' + box, error: e.message,
+      }));
+      return;
+    }
+    for (const thread of rows) {
+      // Отвечаем ТОЛЬКО тем, кому сами писали в этой рассылке. Иначе PASTE со
+      // ссылкой ушёл бы на любое письмо в инбоксе (промо, служебные письма
+      // Gmail), а не на реальный ответ покупателя.
+      const contact = this.contactStore ? this.contactStore.get(thread.from) : null;
+      if (!contact) {
+        logger.debug('sender', t('reply.skipUnknown', { from: thread.from || '?' }));
+        continue;
+      }
+      const verdict = this.dialogStore.decide(
+        key, thread.threadId, thread.lastMessageId, maxReplies,
+      );
+      if (verdict === 'same') continue;
+      if (verdict === 'limit') {
+        // Запоминаем письмо, чтобы не разбирать эту переписку каждый проход.
+        this.dialogStore.noteSeen(key, thread.threadId, thread.lastMessageId);
+        logger.debug('sender', t('reply.capReached', { tid: thread.threadId, cap: maxReplies }));
+        continue;
+      }
+      if (verdict === 'own') {
+        // Последнее письмо треда - наш же прошлый ответ, а не новое от
+        // продавца. Просто запоминаем его.
+        this.dialogStore.noteSeen(key, thread.threadId, thread.lastMessageId);
+        logger.debug('sender', t('reply.ownMessage', { tid: thread.threadId }));
+        continue;
+      }
       try {
-        // Берём весь список, а не только непрочитанное: что новое, а что нет,
-        // решаем сами по идентификатору последнего письма треда.
-        rows = await this.chrome.gmailListThreads(account.id, { mailbox, max: 25 });
+        // Ответ продавца записываем ДО отправки автоответа: если отправка
+        // сорвётся, письмо в переписке всё равно было, и в чате оно должно
+        // остаться. Идентификатор треда известен только сейчас - привязываем
+        // к нему первое письмо, которое ушло ещё без него.
+        if (this.messageStore) {
+          this.messageStore.attachThread({
+            accountKey: key, email: thread.from, threadId: thread.threadId,
+          });
+          this.messageStore.add({
+            accountKey: key, profileId: account.id, mailbox: mailbox.email,
+            email: thread.from, threadId: thread.threadId,
+            dir: 'in', kind: 'reply',
+            subject: thread.subject || '',
+            body: thread.body || thread.snippet || '',
+            partial: !thread.body,
+          });
+        }
+        // Ссылку строим по сохранённым данным товара этого адресата - у самой
+        // переписки названия товара и цены нет.
+        const url = await this._linkFor(thread.from, thread, account.id);
+        const body = this._autoReplyBody(loaded, lang, url, contact);
+        const res = await this.chrome.gmailReply(account.id, mailbox, thread, body);
+        if (!res || !res.ok) {
+          logger.warn('sender', t('reply.failed', { tid: thread.threadId, error: t('reply.notConfirmed') }));
+          continue;
+        }
+        if (this.statsStore) this.statsStore.note('replies');
+        this.repliesThisSession++;
+        if (this.messageStore) {
+          this.messageStore.add({
+            accountKey: key, profileId: account.id, mailbox: mailbox.email,
+            email: thread.from, threadId: thread.threadId,
+            dir: 'out', kind: 'auto', subject: thread.subject || '',
+            // В журнал кладём и текст, и разметку: лента чата показывает
+            // текст, а посмотреть письмо целиком можно по разметке.
+            body: body.text, html: body.html,
+          });
+        }
+        const rec = this.dialogStore.recordReply(key, thread.threadId, {
+          profileId: account.id,
+          mailbox: mailbox.email,
+          email: thread.from,
+          seenMessageId: thread.lastMessageId,
+          ownMessageId: res.lastMessageId,
+        });
+        logger.info('sender', t('reply.sent', {
+          label: account.label + ' / ' + box, n: rec.replies, cap: maxReplies,
+        }));
       } catch (e) {
         if (e && e.code === 'no_tab') {
           this.profileStore.setMailboxTab(profile.id, mailbox.email, false);
           logger.warn('sender', t('reply.mailboxGone', { label: account.label, email: box }));
-          continue;
+          break;
         }
-        logger.warn('sender', t('reply.unreadFailed', {
-          label: account.label + ' / ' + box, error: e.message,
-        }));
-        continue;
-      }
-      for (const thread of rows) {
-        // Отвечаем ТОЛЬКО тем, кому сами писали в этой рассылке. Иначе PASTE со
-        // ссылкой ушёл бы на любое письмо в инбоксе (промо, служебные письма
-        // Gmail), а не на реальный ответ покупателя.
-        const contact = this.contactStore ? this.contactStore.get(thread.from) : null;
-        if (!contact) {
-          logger.debug('sender', t('reply.skipUnknown', { from: thread.from || '?' }));
-          continue;
-        }
-        const verdict = this.dialogStore.decide(
-          key, thread.threadId, thread.lastMessageId, maxReplies,
-        );
-        if (verdict === 'same') continue;
-        if (verdict === 'limit') {
-          // Запоминаем письмо, чтобы не разбирать эту переписку каждый проход.
-          this.dialogStore.noteSeen(key, thread.threadId, thread.lastMessageId);
-          logger.debug('sender', t('reply.capReached', { tid: thread.threadId, cap: maxReplies }));
-          continue;
-        }
-        if (verdict === 'own') {
-          // Последнее письмо треда - наш же прошлый ответ, а не новое от
-          // продавца. Просто запоминаем его.
-          this.dialogStore.noteSeen(key, thread.threadId, thread.lastMessageId);
-          logger.debug('sender', t('reply.ownMessage', { tid: thread.threadId }));
-          continue;
-        }
-        try {
-          // Ответ продавца записываем ДО отправки автоответа: если отправка
-          // сорвётся, письмо в переписке всё равно было, и в чате оно должно
-          // остаться. Идентификатор треда известен только сейчас - привязываем
-          // к нему первое письмо, которое ушло ещё без него.
-          if (this.messageStore) {
-            this.messageStore.attachThread({
-              accountKey: key, email: thread.from, threadId: thread.threadId,
-            });
-            this.messageStore.add({
-              accountKey: key, profileId: account.id, mailbox: mailbox.email,
-              email: thread.from, threadId: thread.threadId,
-              dir: 'in', kind: 'reply',
-              subject: thread.subject || '',
-              body: thread.body || thread.snippet || '',
-              partial: !thread.body,
-            });
-          }
-          // Ссылку строим по сохранённым данным товара этого адресата - у самой
-          // переписки названия товара и цены нет.
-          const url = await this._linkFor(thread.from, thread, account.id);
-          const body = this._autoReplyBody(loaded, lang, url, contact);
-          const res = await this.chrome.gmailReply(account.id, mailbox, thread, body);
-          if (!res || !res.ok) {
-            logger.warn('sender', t('reply.failed', { tid: thread.threadId, error: t('reply.notConfirmed') }));
-            continue;
-          }
-          if (this.statsStore) this.statsStore.note('replies');
-          this.repliesThisSession++;
-          if (this.messageStore) {
-            this.messageStore.add({
-              accountKey: key, profileId: account.id, mailbox: mailbox.email,
-              email: thread.from, threadId: thread.threadId,
-              dir: 'out', kind: 'auto', subject: thread.subject || '',
-              // В журнал кладём и текст, и разметку: лента чата показывает
-              // текст, а посмотреть письмо целиком можно по разметке.
-              body: body.text, html: body.html,
-            });
-          }
-          const rec = this.dialogStore.recordReply(key, thread.threadId, {
-            profileId: account.id,
-            mailbox: mailbox.email,
-            email: thread.from,
-            seenMessageId: thread.lastMessageId,
-            ownMessageId: res.lastMessageId,
-          });
-          logger.info('sender', t('reply.sent', {
-            label: account.label + ' / ' + box, n: rec.replies, cap: maxReplies,
-          }));
-        } catch (e) {
-          if (e && e.code === 'no_tab') {
-            this.profileStore.setMailboxTab(profile.id, mailbox.email, false);
-            logger.warn('sender', t('reply.mailboxGone', { label: account.label, email: box }));
-            break;
-          }
-          logger.warn('sender', t('reply.failed', { tid: thread.threadId, error: e.message }));
-        }
+        logger.warn('sender', t('reply.failed', { tid: thread.threadId, error: e.message }));
       }
     }
   }

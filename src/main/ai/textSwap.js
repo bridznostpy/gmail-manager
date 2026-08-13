@@ -2,9 +2,9 @@
 /**
  * Обновление текстов рассылки нейронкой прямо во время прогона.
  *
- * Замысел: письма не должны быть узнаваемыми. Каждые N отправленных писем
- * шаблон переписывается целиком - те же по смыслу тексты, но другими словами, -
- * и рассылка продолжает идти уже новыми.
+ * Замысел: тексты рассылки не застаиваются. Каждые N отправленных писем шаблон
+ * переписывается целиком - те же по смыслу тексты, но другими словами, - и
+ * рассылка продолжает идти уже новыми.
  *
  * Три правила, на которых всё держится:
  *
@@ -24,20 +24,53 @@ const { t } = require('../i18n');
 const texts = require('../texts');
 const ai = require('./aiClient');
 
-// Что просим у модели. Слово "json" в задании обязательно: этого требует режим
-// строгого JSON у Deepseek (см. CONFIG.jsonMode в deepseek.js).
+/**
+ * Задание модели.
+ *
+ * Приложение проверяет только формат выдачи (см. texts.validate), слова выбирает
+ * модель. Поэтому в задании ровно две вещи: что сделать с текстами
+ * (перефразировать, оставив смысл) и в каком виде вернуть.
+ *
+ * Слово "json" в задании обязательно - этого требует режим строгого JSON
+ * (см. CONFIG.jsonMode в aiClient.js).
+ */
 const SYSTEM_PROMPT = [
-  'You rewrite short outreach e-mail texts for a marketplace seller outreach tool.',
-  'You always answer with a single JSON object and nothing else - no markdown, no comments.',
-  'Rules you must never break:',
-  '1. Keep exactly the same JSON keys and the same language code as in the input.',
-  '2. Keep exactly the same number of variants in every array.',
-  '3. Keep every placeholder ({link}, {title}, {price}, {seller_username}, {image_url},',
-  '   {date}, {ad_url}) literally as it is, in the same variant it appeared in.',
-  '4. If a variant ends with "link:" keep that ending - the tool appends a URL there.',
-  '5. Keep the meaning, the tone and roughly the length of every variant.',
-  '6. Plain text only: no HTML, no emoji spam, no signatures that were not there.',
-  '7. Write natural, human, casual wording - not marketing copy.',
+  'You are a rewriting assistant. The input is a json object with short message',
+  'templates used in e-mails to marketplace sellers. Your task is to paraphrase',
+  'every template: say the same thing in different words.',
+  '',
+  'OUTPUT FORMAT',
+  '1. Answer with ONE json object and nothing else: no markdown fences, no',
+  '   comments, no explanations before or after it.',
+  '2. Use exactly the same keys as the input, including the language code.',
+  '3. Every array must have exactly the same number of items as in the input and',
+  '   in the same order: item i of your answer replaces item i of the input.',
+  '',
+  'HOW TO PARAPHRASE',
+  '4. Keep the meaning and the intent of every template. Do not add facts,',
+  '   promises, prices, names or questions that were not there, and do not drop',
+  '   the ones that were.',
+  '5. Stay close to the original: same tone, same register, roughly the same',
+  '   length. One short line stays one short line.',
+  '6. Do not copy a template word for word - change the wording, not the message.',
+  '7. Keep the language of the input. Never translate.',
+  '',
+  'KEEP LITERALLY',
+  '8. Placeholders {link} {title} {price} {seller_username} {image_url} {date}',
+  '   {ad_url}: copy them exactly, keep them in the template they came from, and',
+  '   never invent new ones. They are filled with real data later.',
+  '9. If a template ends with "link:" keep exactly that ending - the tool appends',
+  '   the URL right after it.',
+  '10. Keep line breaks (\\n) where they were: they are paragraphs of the mail.',
+  '',
+  'STYLE',
+  '11. Plain everyday wording, the way a person types a short message. No',
+  '    marketing tone, no HTML, no markdown, no emoji, no greetings or signatures',
+  '    that were not in the input.',
+  '',
+  'EXAMPLE',
+  'input:  {"MESSAGES_DICT":{"en":["hi, is this still available?"]}}',
+  'output: {"MESSAGES_DICT":{"en":["hey, do you still have this one?"]}}',
 ].join('\n');
 
 /**
@@ -266,13 +299,25 @@ class TextSwapper {
     return next;
   }
 
-  /** Задание модели: эталон целиком плюс приписка пользователя, если она есть. */
+  /**
+   * Задание модели: эталон целиком плюс приписка пользователя, если она есть.
+   *
+   * Главные требования повторены здесь, рядом с самими текстами, а не только в
+   * роли: длинное задание модель держит хуже к концу, а решение принимается
+   * именно на этом сообщении.
+   */
   _task(source, lang, instruction) {
     const extra = String(instruction || '').trim();
+    const count = texts.DICTS
+      .map((d) => (source[d] && source[d][lang] ? d + ': ' + source[d][lang].length : null))
+      .filter(Boolean).join(', ');
     return [
-      'Rewrite every variant in this JSON. Language code: "' + lang + '".',
-      'Answer with a JSON object of exactly the same shape.',
-      extra ? 'Extra instruction from the user: ' + extra : '',
+      'Paraphrase every template in the json below. Language code: "' + lang + '".',
+      'Number of items you must return: ' + count + '.',
+      'Keep the meaning, the tone and roughly the length; change the wording.',
+      'Keep the placeholders, the "link:" endings and the line breaks as they are.',
+      'Answer with a json object of exactly the same shape and nothing else.',
+      extra ? 'Extra instruction from the user, follow it too: ' + extra : '',
       '',
       JSON.stringify(source, null, 2),
     ].filter(Boolean).join('\n');

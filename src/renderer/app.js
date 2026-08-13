@@ -3397,8 +3397,15 @@ const SETTINGS_GROUPS = [
     terms: ['txt.outreachLang', 'txt.editJson', 'txt.d.first', 'txt.d.reply', 'txt.d.nudge'],
   },
   {
+    // Обновление текстов нейронкой стоит рядом с самими текстами: настраивают
+    // одно и то же, и искать это в разделе парсера человеку неоткуда.
+    id: 'ai', section: 'run', icon: 'parser', reset: 'ai', build: buildSetAi,
+    terms: ['ai.apiKey', 'ai.enabled', 'ai.everyN', 'ai.model', 'ai.instruction',
+      'ai.test', 'ai.swapNow', 'ai.restore'],
+  },
+  {
     id: 'parser', section: 'data', icon: 'parser', reset: 'parser', build: buildSetParser,
-    terms: ['parser.apiKey', 'parser.type', 'parser.enabled', 'parser.aiSwap', 'parser.swapN',
+    terms: ['parser.apiKey', 'parser.type', 'parser.enabled', 'parser.swapN',
       'set.batch', 'set.threshold'],
   },
   {
@@ -3801,7 +3808,6 @@ function buildSetParser() {
         </div>
       </div>
       <div class="field"><label class="switch"><input type="checkbox" id="pEnabled" ${p.enabled ? 'checked' : ''}/><span class="track"></span><span class="lbl">${esc(t('parser.enabled'))}</span></label></div>
-      <div class="field"><label class="switch"><input type="checkbox" id="pAi" ${p.aiTemplateSwap ? 'checked' : ''}/><span class="track"></span><span class="lbl">${esc(t('parser.aiSwap'))}</span></label></div>
       <div class="field" style="max-width:340px"><label for="pSwapN">${esc(t('parser.swapN'))}</label><input type="number" id="pSwapN" min="0" value="${p.swapKeyEveryN}"/></div>`)}
 
     ${setBlock('set.b.queue', 'set.queueHint', `
@@ -3815,7 +3821,6 @@ function buildSetParser() {
   bindText($('#pKey', el), 'parser', 'apiKey');
   bindSeg($('#pType', el), 'parser', 'apiType');
   bindToggle($('#pEnabled', el), 'parser', 'enabled');
-  bindToggle($('#pAi', el), 'parser', 'aiTemplateSwap');
   bindNumber($('#pSwapN', el), 'parser', 'swapKeyEveryN', 0);
   // Размер пачки и порог пополнения живут в разделе system, но настраивают они
   // именно парсер - поэтому стоят здесь, а не в лимитах рассылки.
@@ -3823,6 +3828,101 @@ function buildSetParser() {
   bindNumber($('#mThresh', el), 'system', 'queueRefillThreshold', 1);
   $('#pToTargets', el).addEventListener('click', (e) => { e.preventDefault(); goSettings('targets'); });
   return el;
+}
+
+/**
+ * Обновление текстов рассылки нейронкой.
+ *
+ * Ключ вводится здесь и через мост не ходит: все запросы к Deepseek делает
+ * главный процесс, окно только просит его проверить ключ или обновить тексты
+ * прямо сейчас.
+ */
+function buildSetAi() {
+  const a = state.settings.ai || {};
+  const el = h(setCard('ai', `
+    ${setBlock('set.b.api', 'ai.hint', `
+      <div class="set-grid">
+        <div class="field"><label for="aiKey">${esc(t('ai.apiKey'))}</label><input type="password" id="aiKey" value="${esc(a.apiKey || '')}" placeholder="${esc(t('ai.apiKeyPh'))}"/></div>
+        <div class="field"><label for="aiModel">${esc(t('ai.model'))}</label><input type="text" id="aiModel" value="${esc(a.model || '')}" placeholder="deepseek-chat"/></div>
+      </div>
+      <div class="field"><label class="switch"><input type="checkbox" id="aiOn" ${a.enabled ? 'checked' : ''}/><span class="track"></span><span class="lbl">${esc(t('ai.enabled'))}</span></label></div>
+      <div class="field" style="max-width:340px"><label for="aiEveryN">${esc(t('ai.everyN'))}</label><input type="number" id="aiEveryN" min="0" value="${Number(a.everyN) || 0}"/></div>
+      <div class="field"><label for="aiInstr">${esc(t('ai.instruction'))}</label><textarea id="aiInstr" style="min-height:80px" spellcheck="false" placeholder="${esc(t('ai.instructionPh'))}">${esc(a.instruction || '')}</textarea></div>`)}
+
+    ${setBlock('ai.b.actions', 'ai.actionsHint', `
+      <div class="ar-acts">
+        <button class="btn" id="aiTest">${ICONS.check}<span>${esc(t('ai.test'))}</span></button>
+        <button class="btn primary" id="aiSwap">${ICONS.reset}<span>${esc(t('ai.swapNow'))}</span></button>
+        <button class="btn ghost" id="aiRestore">${ICONS.inbox}<span>${esc(t('ai.restore'))}</span></button>
+      </div>
+      <div class="hint" id="aiState" style="margin-top:12px"></div>`)}`));
+
+  bindText($('#aiKey', el), 'ai', 'apiKey');
+  bindText($('#aiModel', el), 'ai', 'model');
+  bindText($('#aiInstr', el), 'ai', 'instruction');
+  bindToggle($('#aiOn', el), 'ai', 'enabled');
+  bindNumber($('#aiEveryN', el), 'ai', 'everyN', 0);
+
+  const busy = (on) => {
+    for (const id of ['#aiTest', '#aiSwap', '#aiRestore']) {
+      const btn = $(id, el);
+      if (btn) btn.disabled = on;
+    }
+  };
+
+  $('#aiTest', el).addEventListener('click', async () => {
+    busy(true);
+    const res = await api.ai.test();
+    busy(false);
+    if (res && res.ok) toast(t('ai.testOk'), 'success');
+    else toast(t(res && res.reason === 'no_key' ? 'ai.testNoKey' : 'ai.testFailed'), 'error');
+    paintAiState($('#aiState', el));
+  });
+
+  $('#aiSwap', el).addEventListener('click', async () => {
+    busy(true);
+    const res = await api.ai.swapNow();
+    busy(false);
+    if (res && res.ok) {
+      // Тексты приходят и событием texts:changed, но кнопку нажал человек - он
+      // ждёт ответа прямо сейчас, а не когда долетит событие.
+      if (res.texts) state.settings.texts = res.texts;
+      toast(t('ai.swapDone'), 'success');
+      renderSettingsGroup($('.settings'));
+      return;
+    }
+    toast(t('ai.swapFailed'), 'error');
+    paintAiState($('#aiState', el));
+  });
+
+  $('#aiRestore', el).addEventListener('click', async () => {
+    const ok = await askConfirm(t('ai.restoreTitle'), t('ai.restoreText'), { okLabel: t('ai.restore') });
+    if (!ok) return;
+    const res = await api.ai.restoreBaseline();
+    if (res && res.ok) {
+      state.settings.texts = res.texts;
+      toast(t('ai.restored'), 'success');
+      renderSettingsGroup($('.settings'));
+      return;
+    }
+    toast(t('ai.noBaseline'), 'error');
+  });
+
+  paintAiState($('#aiState', el));
+  return el;
+}
+
+/** Строка состояния: сколько раз обновляли, когда и сколько писем до следующего. */
+async function paintAiState(box) {
+  if (!box) return;
+  const st = await api.ai.state();
+  if (!st) { box.textContent = ''; return; }
+  const rows = [t('ai.stSwaps', { n: st.swaps })];
+  if (st.lastSwapAt) rows.push(t('ai.stLast', { when: new Date(st.lastSwapAt).toLocaleString() }));
+  if (st.enabled && st.everyN > 0) rows.push(t('ai.stLeft', { n: Math.max(0, st.everyN - st.sinceSwap) }));
+  if (!st.hasBaseline) rows.push(t('ai.stNoBaseline'));
+  if (st.busy) rows.push(t('ai.stBusy'));
+  box.textContent = rows.join(' | ');
 }
 
 function buildSetTargets() {
@@ -6005,6 +6105,17 @@ async function boot() {
   // окно догрузилось.
   api.update.onState((st) => paintUpdate(st));
   paintUpdate(await api.update.state());
+
+  // Тексты рассылки могла переписать нейронка прямо во время прогона. Открытый
+  // раздел текстов показывал бы старые до перехода по разделам.
+  api.texts.onChanged((payload) => {
+    if (!payload || !payload.texts) return;
+    state.settings.texts = payload.texts;
+    if (state.route === 'settings' && ['texts', 'ai'].includes(state.settingsGroup)) {
+      renderSettingsGroup($('.settings'));
+    }
+    if (payload.reason === 'swapped') toast(t('ai.swapDone'), 'success');
+  });
 
   // Мастер первого запуска - последним делом: он перекрывает окно, и показывать
   // его поверх наполовину собранного экрана нельзя.

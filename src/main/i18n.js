@@ -187,7 +187,7 @@ const DICT = {
 
     // ── VVS ─────────────────────────────────────────────────
     'vvs.noKey': 'VVS: ключ API не задан',
-    'vvs.rateLimited': 'VVS: превышен лимит запросов (429) - жду',
+    'vvs.rateLimited': 'VVS: лимит запросов (429) - жду и повторяю запрос',
     'vvs.noSubscription': 'VVS: нет активной подписки (402)',
     'vvs.badKey': 'VVS: неверный api-key (403)',
     'vvs.fetchFailed': 'VVS: запрос не удался (HTTP {status})',
@@ -369,7 +369,7 @@ const DICT = {
     'xp.error': 'XProject: {error}',
 
     'vvs.noKey': 'VVS: no API key set',
-    'vvs.rateLimited': 'VVS: rate limited (429) - backing off',
+    'vvs.rateLimited': 'VVS: rate limited (429) - waiting and retrying',
     'vvs.noSubscription': 'VVS: no active subscription (402)',
     'vvs.badKey': 'VVS: invalid api-key (403)',
     'vvs.fetchFailed': 'VVS: fetch failed (HTTP {status})',

@@ -79,11 +79,27 @@ const DEFAULTS = {
     html: '',
   },
 
+  // ── Обновление текстов нейронкой ─────────────────────────────────
+  // Deepseek переписывает ТОЛЬКО текстовые словари рассылки (MESSAGES/PASTE/
+  // CONFIRM). HTML-шаблон автоответа живёт в секции autoReply и нейронке не
+  // показывается вовсе - он свёрстан руками.
+  ai: {
+    enabled: false, // обновлять тексты по счётчику писем
+    apiKey: '', // ключ Deepseek, вводит пользователь
+    model: 'deepseek-chat',
+    everyN: 0, // через сколько отправленных писем обновлять (0 = никогда)
+    instruction: '', // необязательная приписка пользователя к заданию
+    // Эталон - тексты, которые загрузил человек. Переписываем всегда ЕГО, а не
+    // прошлую выдачу: иначе после десятка обновлений смысл писем уезжает.
+    baseline: null,
+    swaps: 0, // сколько раз обновляли
+    lastSwapAt: 0,
+  },
+
   // ── Parser ───────────────────────────────────────────────────────
   parser: {
     apiKey: '',
     apiType: 'xproject', // 'xproject' | 'vvs'
-    aiTemplateSwap: false, // rotate message templates via AI
     enabled: false,
     swapKeyEveryN: 0, // rotate API key after N messages (0 = never)
     // Цель рассылки. Площадка ОДНА: оба парсера принимают ровно одну за вызов
@@ -146,27 +162,38 @@ const DEFAULTS = {
 };
 
 /**
- * Разовый перенос старых форм настроек.
+ * Разовые переносы старых форм настроек.
  *
- * Цели рассылки раньше лежали плоским списком чипов (platforms: ['usa',
- * 'poshmark']), из которого клиенты парсера всё равно собирали одну площадку и
- * одну страну. Теперь это явные поля. Без переноса после обновления рассылка
- * молча ушла бы на площадку по умолчанию - то есть собирала бы не то, что
- * человек выбрал.
+ * 1. Цели рассылки раньше лежали плоским списком чипов (platforms: ['usa',
+ *    'poshmark']), из которого клиенты парсера всё равно собирали одну площадку
+ *    и одну страну. Теперь это явные поля. Без переноса после обновления
+ *    рассылка молча ушла бы на площадку по умолчанию - то есть собирала бы не
+ *    то, что человек выбрал.
+ * 2. Переключатель "менять шаблоны через ИИ" жил в секции парсера и ничего не
+ *    делал. Теперь у обновления текстов своя секция, и старый флаг переезжает
+ *    в неё - человек его когда-то включил, и это его выбор.
  *
  * Возвращает true, если что-то изменилось и файл надо переписать.
  */
 function migrate(data) {
+  let changed = false;
   const p = data.parser;
-  if (!p || !Array.isArray(p.platforms)) return false;
-  const old = p.platforms;
-  const known = ['depop', 'poshmark', 'vinted'];
-  const platform = old.find((x) => known.includes(x));
-  if (platform) p.platform = platform;
-  // Единственной страной в старом списке была отметка "usa".
-  if (old.includes('usa')) p.countries = ['us'];
-  delete p.platforms;
-  return true;
+  if (p && Array.isArray(p.platforms)) {
+    const old = p.platforms;
+    const known = ['depop', 'poshmark', 'vinted'];
+    const platform = old.find((x) => known.includes(x));
+    if (platform) p.platform = platform;
+    // Единственной страной в старом списке была отметка "usa".
+    if (old.includes('usa')) p.countries = ['us'];
+    delete p.platforms;
+    changed = true;
+  }
+  if (p && p.aiTemplateSwap !== undefined) {
+    if (p.aiTemplateSwap && data.ai) data.ai.enabled = true;
+    delete p.aiTemplateSwap;
+    changed = true;
+  }
+  return changed;
 }
 
 function deepMerge(base, over) {

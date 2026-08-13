@@ -121,6 +121,63 @@ function withLink(text, url) {
   return s.trimEnd() + '\n\n' + link;
 }
 
+// Словари, из которых состоят тексты рассылки. Порядок не важен, важен состав:
+// по нему сверяется и то, что прислала нейронка.
+const DICTS = ['MESSAGES_DICT', 'PASTE_DICT', 'CONFIRM_DICT'];
+
+// Известные плейсхолдеры. Один список с placeholderValues: выдумав свой
+// {seller_name}, модель оставила бы его в письме как есть.
+const SLOTS = Object.keys(placeholderValues(null, ''));
+
+/** Есть ли в тексте место под ссылку: явный {link} или хвост "link:". */
+function hasLinkSlot(text) {
+  const s = String(text == null ? '' : text);
+  return /\{link\}/.test(s) || /(link|lien|enlace)\s*:\s*$/i.test(s.trimEnd());
+}
+
+/**
+ * Проверить набор текстов ОДНОГО языка против эталона.
+ *
+ * Нужна для обновления текстов нейронкой: доверять её выдаче нельзя, а
+ * подсунутый в рассылку кривой набор виден только по ушедшим письмам, когда
+ * уже поздно. Возвращает { ok, reason }: reason - ключ строки для лога.
+ *
+ * Что требуем:
+ *  - три словаря на месте, у каждого нужный язык, массив непустых строк;
+ *  - число вариантов совпадает с эталонным - иначе разнообразие писем молча
+ *    схлопнулось бы до одного текста;
+ *  - встречаются только известные плейсхолдеры;
+ *  - где в эталоне было место под ссылку, оно есть и в новом тексте: без него
+ *    автоответ уйдёт без ссылки, то есть впустую;
+ *  - без разметки и без выросшей втрое длины (модель любит "улучшить" письмо
+ *    до простыни).
+ */
+function validate(json, reference, lang) {
+  if (!json || typeof json !== 'object' || Array.isArray(json)) return { ok: false, reason: 'ai.errRoot' };
+  for (const dict of DICTS) {
+    const ref = (reference && reference[dict] && reference[dict][lang]) || null;
+    if (!Array.isArray(ref) || !ref.length) continue; // в эталоне пусто - проверять нечего
+    const arr = json[dict] && json[dict][lang];
+    if (!Array.isArray(arr)) return { ok: false, reason: 'ai.errDict', dict };
+    if (arr.length !== ref.length) return { ok: false, reason: 'ai.errCount', dict };
+    for (let i = 0; i < arr.length; i++) {
+      const s = arr[i];
+      if (typeof s !== 'string' || !s.trim()) return { ok: false, reason: 'ai.errEmpty', dict };
+      if (/<[a-z/][^>]*>/i.test(s)) return { ok: false, reason: 'ai.errHtml', dict };
+      if (s.length > ref[i].length * 3 + 200) return { ok: false, reason: 'ai.errLong', dict };
+      const unknown = (s.match(/\{(\w+)\}/g) || [])
+        .map((m) => m.slice(1, -1))
+        .find((name) => !SLOTS.includes(name));
+      if (unknown) return { ok: false, reason: 'ai.errSlot', dict };
+      if (dict !== 'MESSAGES_DICT' && hasLinkSlot(ref[i]) && !hasLinkSlot(s)) {
+        return { ok: false, reason: 'ai.errNoLink', dict };
+      }
+    }
+  }
+  return { ok: true };
+}
+
 module.exports = {
   firstMessage, autoReply, nudge, withLink, fillPlaceholders, placeholderValues, outreachLang,
+  validate, hasLinkSlot, DICTS, SLOTS,
 };
